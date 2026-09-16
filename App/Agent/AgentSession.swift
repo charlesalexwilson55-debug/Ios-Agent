@@ -127,8 +127,7 @@ final class AgentSession {
 
     private func runTurn() async {
         let tools = registry.specs
-        let modelName = await runner.loadedName
-        let systemPrompt = SystemPrompt.build(tools: tools, modelName: modelName)
+        let systemPrompt = SystemPrompt.build(tools: tools)
 
         for iteration in 0..<maxToolIterations {
             if Task.isCancelled { return }
@@ -293,19 +292,18 @@ final class AgentSession {
         transcript[index].text = text
     }
 
-    /// Keeps history bounded, preserving the oldest user message.
+    /// Keeps history bounded.
     ///
     /// Trimming from the front can orphan a tool result whose preceding
     /// assistant turn was dropped, which some chat templates reject. So the
-    /// window is walked backwards and cut at a user message.
+    /// window is walked backwards and cut at a user message. No second system
+    /// message is added: the full prompt already leads every request.
     private func trimmedHistory() -> [ModelRunner.Message] {
         guard history.count > maxHistoryMessages else { return history }
 
         let tail = history.suffix(maxHistoryMessages)
         if let offset = tail.firstIndex(where: { $0.role == .user }) {
-            var window = Array(tail[offset...])
-            window.insert(.system(SystemPrompt.compactReminder), at: 0)
-            return window
+            return Array(tail[offset...])
         }
         return Array(tail)
     }

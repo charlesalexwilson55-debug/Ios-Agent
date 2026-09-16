@@ -62,7 +62,7 @@ final class CalendarTools: ToolProviding {
         ToolDescriptor(
             name: "delete_event",
             description: "Delete a calendar event by its id. Get ids from find_events. "
-                + "Confirm with the user in your reply before deleting anything you are unsure about.",
+                + "Deletes immediately. If several events could match, delete only the one the user meant.",
             params: [
                 .required("event_id", .string, "The event_id returned by find_events."),
             ],

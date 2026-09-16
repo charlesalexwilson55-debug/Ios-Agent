@@ -238,7 +238,7 @@
     "type": "function",
     "function": {
       "name": "delete_event",
-      "description": "Delete a calendar event by its id. Get ids from find_events. Confirm with the user in your reply before deleting anything you are unsure about.",
+      "description": "Delete a calendar event by its id. Get ids from find_events. Deletes immediately. If several events could match, delete only the one the user meant.",
       "parameters": {
         "type": "object",
         "properties": {

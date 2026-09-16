@@ -125,6 +125,37 @@ def verify_notes_match() -> None:
     print(f"  status note check passed ({len(expected)} notes match ToolKit.swift)")
 
 
+def swift_prompt_blocks() -> list[str]:
+    """The literal sections of SystemPrompt.swift, as Swift renders them.
+
+    Each multiline string is dedented and its trailing-backslash continuations
+    joined, which is what Swift does at compile time. The friction lists are
+    built from the registry at runtime and are not covered here.
+    """
+    source = (SWIFT_TOOL_DIR / "SystemPrompt.swift").read_text(encoding="utf-8")
+    blocks = []
+    for raw in re.findall(r'"""\n(.*?)\n[ \t]*"""', source, re.S):
+        lines = raw.split("\n")
+        indent = min((len(l) - len(l.lstrip()) for l in lines if l.strip()), default=0)
+        blocks.append("\n".join(l[indent:] for l in lines).replace("\\\n", ""))
+    return blocks
+
+
+def verify_prompt_matches(system_prompt: str) -> None:
+    blocks = swift_prompt_blocks()
+    if not blocks:
+        print("  ! Could not read SystemPrompt.swift; skipping prompt check")
+        return
+    for block in blocks:
+        if block not in system_prompt:
+            raise SystemExit(
+                "system_prompt.md is out of sync with SystemPrompt.swift. This section "
+                f"is missing or reworded:\n\n{block}\n\n"
+                "The model must be trained under the same prompt it runs under."
+            )
+    print(f"  prompt check passed ({len(blocks)} sections match SystemPrompt.swift)")
+
+
 # --------------------------------------------------------------------------
 # Sample vocabulary
 # --------------------------------------------------------------------------
@@ -803,6 +834,7 @@ def main() -> None:
     verify_notes_match()
 
     system_prompt = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8").strip()
+    verify_prompt_matches(system_prompt)
     rng = random.Random(args.seed)
 
     # Each scenario is filled to its own share of the target rather than
