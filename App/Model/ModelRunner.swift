@@ -192,23 +192,45 @@ actor ModelRunner {
         guard let container else { throw RunnerError.noModelLoaded }
 
         let chat = messages.map { $0.asChatMessage }
+        let schemas = tools.map(\.functionSchema)
         let input = UserInput(
             chat: chat,
-            tools: tools.map(\.functionSchema),
+            tools: schemas,
             additionalContext: ["enable_thinking": false]
         )
 
         // Qwen3's published non-thinking sampling settings. Temperature above
-        // ~0.8 measurably increases malformed tool calls at 4-bit.
+        // ~0.8 measurably increases malformed tool calls at 4-bit, and topK
+        // defaults to 0 (disabled) here whereas Qwen recommends 20.
+        //
+        // Deliberately NOT setting maxKVSize, even though a bounded KV cache is
+        // the obvious lever against the memory ceiling an 8B model runs into.
+        // Bounding it engages a rotating cache, and if that evicts the head of
+        // the prompt it takes the system prompt with it — which is precisely
+        // where the "never claim you sent it" rule lives. Losing that silently,
+        // mid-conversation, is a far worse failure than being slow. Context is
+        // bounded in AgentSession.trimmedHistory() instead, where the system
+        // prompt is re-inserted by construction.
         let parameters = GenerateParameters(
             maxTokens: maxTokens,
             temperature: 0.7,
-            topP: 0.8
+            topP: 0.8,
+            topK: 20
         )
 
         do {
             let prepared = try await container.prepare(input: input)
-            let stream = try await container.generate(input: prepared, parameters: parameters)
+            // Tools are passed twice, deliberately, because the two sites do
+            // different jobs: UserInput.tools is what the chat template renders
+            // into the system turn (so the model knows the tools exist), while
+            // generate's own tools: is what the tool-call processor uses to
+            // detect, validate and normalise calls in the output stream (so
+            // they arrive as .toolCall events instead of raw text).
+            let stream = try await container.generate(
+                input: prepared,
+                parameters: parameters,
+                tools: schemas
+            )
 
             for await event in stream {
                 switch event {
@@ -261,46 +283,25 @@ actor ModelRunner {
         }
     }
 
-    /// Bridges MLX's `JSONValue` to ours.
+    /// Bridges MLX's `JSONValue` to ours by round-tripping through JSON.
     ///
-    /// `sendableValue` erases to `any Sendable`, so the concrete type is
-    /// recovered by casting. Numbers arrive as several widths depending on how
-    /// the model wrote them, hence the ladder.
+    /// Both types are `Codable`, so this needs no knowledge of the framework's
+    /// internal representation — no `sendableValue` accessor, no ladder of
+    /// `as?` casts guessing which numeric width the model happened to emit.
+    /// Encoding and decoding is a little more work at runtime than reading the
+    /// value directly, but a tool call is a few hundred bytes a handful of
+    /// times per turn, against generation measured in tokens per second. The
+    /// robustness is free in practice, and it is one fewer thing to break when
+    /// the dependency moves.
     private static func convert(_ arguments: [String: MLXLMCommon.JSONValue]) -> ArgumentValue {
-        var object: [String: ArgumentValue] = [:]
-        for (key, value) in arguments {
-            object[key] = convert(value)
+        guard let data = try? JSONEncoder().encode(arguments),
+              let value = try? JSONDecoder().decode(ArgumentValue.self, from: data)
+        else {
+            // An unparseable argument set is reported as empty rather than
+            // dropped: each tool then names the specific field it needed, and
+            // the model gets an actionable retry instead of silence.
+            return .object([:])
         }
-        return .object(object)
-    }
-
-    private static func convert(_ value: MLXLMCommon.JSONValue) -> ArgumentValue {
-        let raw = value.sendableValue
-        if let v = raw as? String { return .string(v) }
-        if let v = raw as? Bool { return .bool(v) }
-        if let v = raw as? Int { return .number(Double(v)) }
-        if let v = raw as? Double { return .number(v) }
-        if let v = raw as? Float { return .number(Double(v)) }
-        if let v = raw as? [Any] {
-            return .array(v.compactMap { element in
-                (element as? Sendable).map { wrap($0) }
-            })
-        }
-        if let v = raw as? [String: Any] {
-            var object: [String: ArgumentValue] = [:]
-            for (key, element) in v {
-                if let sendable = element as? Sendable { object[key] = wrap(sendable) }
-            }
-            return .object(object)
-        }
-        return .null
-    }
-
-    private static func wrap(_ raw: any Sendable) -> ArgumentValue {
-        if let v = raw as? String { return .string(v) }
-        if let v = raw as? Bool { return .bool(v) }
-        if let v = raw as? Int { return .number(Double(v)) }
-        if let v = raw as? Double { return .number(v) }
-        return .null
+        return value
     }
 }
