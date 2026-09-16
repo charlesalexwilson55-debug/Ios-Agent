@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <!-- Both of these are load-bearing for an 8B model.
+       Qwen3-8B-4bit is ~4.6GB of weights before any KV cache. The default
+       per-app limit on a 12GB iPhone is well under what that needs once the
+       cache and transient workspace are added, and the process gets jetsammed
+       mid-generation rather than failing cleanly.
+
+       increased-memory-limit raises the ceiling; extended-virtual-addressing
+       allows the large address space the allocator wants. AltStore Classic
+       (2.2+) preserves both when re-signing with a free Apple ID; Sideloadly
+       does too. If you sign with a *paid* account these are granted by the
+       provisioning profile directly. -->
+  <key>com.apple.developer.kernel.increased-memory-limit</key><true/>
+  <key>com.apple.developer.kernel.extended-virtual-addressing</key><true/>
+</dict></plist>

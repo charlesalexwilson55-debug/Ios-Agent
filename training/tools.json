@@ -1,0 +1,303 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "get_current_time",
+      "description": "Get the current date, time, weekday and time zone. Call this FIRST whenever the user says anything relative such as tomorrow, tonight, next Friday or in two hours. You have no clock of your own and will otherwise guess the date wrongly.",
+      "parameters": { "type": "object", "properties": {}, "required": [] }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "find_contact",
+      "description": "Look up a person in the user's contacts and return their phone numbers and email addresses. Call this before send_message, place_call or send_email whenever you were given a name rather than a number, so you send to the right person.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "description": "A name, partial name or saved nickname to search for." }
+        },
+        "required": ["name"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "remember_person_alias",
+      "description": "Record that a nickname refers to a specific contact, for example that 'mum' means 'Jane Wilson'. Use this after the user tells you who a nickname refers to, so you never have to ask again.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "alias": { "type": "string", "description": "The nickname the user says, such as mum, dad, or the boss." },
+          "contact_name": { "type": "string", "description": "The full contact name the nickname refers to." }
+        },
+        "required": ["alias", "contact_name"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "send_message",
+      "description": "Open a text message pre-filled with your recipient and body. IMPORTANT: this does NOT send the message. iOS requires the user to tap send in the sheet that appears, and there is no way for an app to bypass that. Report it as drafted, never as sent, unless the result says the user sent it.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "to": { "type": "string", "description": "Phone number, contact name, or saved nickname." },
+          "body": { "type": "string", "description": "The message text, written in the user's voice." }
+        },
+        "required": ["to", "body"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "place_call",
+      "description": "Start a phone call. iOS shows a confirmation and then leaves Conduit for the Phone app. You cannot answer, decline or hang up calls; only start one.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "to": { "type": "string", "description": "Phone number, contact name, or saved nickname." },
+          "facetime": { "type": "boolean", "description": "Use FaceTime instead of a cellular call." }
+        },
+        "required": ["to"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "send_email",
+      "description": "Open an email pre-filled with recipients, subject and body. IMPORTANT: this does NOT send the email; the user must tap send in the sheet. You also cannot read the user's inbox - iOS gives apps no access to received mail.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "to": { "type": "string", "description": "Recipient email, contact name, or nickname. Separate several recipients with commas." },
+          "subject": { "type": "string", "description": "The subject line." },
+          "body": { "type": "string", "description": "The email body, written in the user's voice." },
+          "cc": { "type": "string", "description": "Comma-separated addresses to copy." }
+        },
+        "required": ["to", "subject", "body"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "create_event",
+      "description": "Add an event to the user's calendar. This happens immediately with no confirmation once calendar access is granted.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string", "description": "The event title." },
+          "start": { "type": "string", "description": "Start time in local ISO 8601, for example 2026-09-16T15:30:00. Call get_current_time first if you need to work out a relative time." },
+          "end": { "type": "string", "description": "End time in local ISO 8601. Omit to use duration_minutes instead." },
+          "duration_minutes": { "type": "integer", "description": "Length in minutes when end is not given. Defaults to 60." },
+          "all_day": { "type": "boolean", "description": "True for an all-day event." },
+          "location": { "type": "string", "description": "Where the event takes place." },
+          "notes": { "type": "string", "description": "Longer notes to attach." },
+          "alarm_minutes_before": { "type": "integer", "description": "Add an alert this many minutes before the start." }
+        },
+        "required": ["title", "start"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "find_events",
+      "description": "List calendar events in a time range. Use this to answer questions about the user's schedule and before scheduling anything, so you do not double-book.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "start": { "type": "string", "description": "Range start in local ISO 8601." },
+          "end": { "type": "string", "description": "Range end in local ISO 8601." },
+          "query": { "type": "string", "description": "Only return events whose title or location contains this." }
+        },
+        "required": ["start", "end"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "check_availability",
+      "description": "Check whether the user is free in a time range. Returns any conflicting events. Prefer this over find_events when the question is simply free or busy.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "start": { "type": "string", "description": "Start in local ISO 8601." },
+          "end": { "type": "string", "description": "End in local ISO 8601." }
+        },
+        "required": ["start", "end"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "delete_event",
+      "description": "Delete a calendar event by its id. Get ids from find_events. Confirm with the user in your reply before deleting anything you are unsure about.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "event_id": { "type": "string", "description": "The event_id returned by find_events." }
+        },
+        "required": ["event_id"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "create_reminder",
+      "description": "Add a reminder to the user's Reminders list. Immediate, no confirmation.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string", "description": "What to be reminded about." },
+          "due": { "type": "string", "description": "When it is due, in local ISO 8601." },
+          "notes": { "type": "string", "description": "Extra detail." },
+          "priority": { "type": "string", "description": "Priority level.", "enum": ["none", "low", "medium", "high"] }
+        },
+        "required": ["title"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "find_reminders",
+      "description": "List the user's incomplete reminders, so you can answer what is on their list.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "include_completed": { "type": "boolean", "description": "Also include finished reminders." }
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "complete_reminder",
+      "description": "Mark a reminder as done. Get ids from find_reminders.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "reminder_id": { "type": "string", "description": "The reminder_id returned by find_reminders." }
+        },
+        "required": ["reminder_id"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "schedule_notification",
+      "description": "Schedule a local notification from Conduit at a specific time. Use this for nudges that are not really calendar events, such as reminding the user to call someone back in an hour.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string", "description": "The notification title." },
+          "at": { "type": "string", "description": "When to fire, in local ISO 8601." },
+          "body": { "type": "string", "description": "Secondary line of text." }
+        },
+        "required": ["title", "at"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "run_shortcut",
+      "description": "Run one of the user's shortcuts from the Shortcuts app by name. This is how you reach things iOS does not expose to apps directly: setting an alarm, toggling a Focus mode, controlling smart home devices, changing settings. The shortcut must already exist on the device and the name must match exactly. This leaves Conduit and switches to Shortcuts.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "description": "The exact name of the existing shortcut." },
+          "input": { "type": "string", "description": "Text to pass into the shortcut as its input." }
+        },
+        "required": ["name"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "open_app",
+      "description": "Open another app on the phone, optionally with a search term. This switches away from Conduit.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "app": {
+            "type": "string",
+            "description": "Which app to open.",
+            "enum": ["calendar", "reminders", "notes", "clock", "camera", "photos", "maps", "music", "podcasts", "phone", "messages", "mail", "facetime", "settings", "shortcuts", "find my", "health", "wallet", "app store", "safari", "whatsapp", "spotify", "gmail"]
+          }
+        },
+        "required": ["app"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_directions",
+      "description": "Open Maps with directions to a destination.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "destination": { "type": "string", "description": "Address or place name." },
+          "mode": { "type": "string", "description": "Travel mode.", "enum": ["driving", "walking", "transit", "cycling"] }
+        },
+        "required": ["destination"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "play_music",
+      "description": "Open Music and search for something to play.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string", "description": "Artist, album, song or playlist to look for." }
+        },
+        "required": ["query"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "web_search",
+      "description": "Open a web search in the browser. Use this when the user wants information you do not have; you are offline and cannot browse yourself.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string", "description": "What to search for." }
+        },
+        "required": ["query"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "copy_to_clipboard",
+      "description": "Put text on the clipboard so the user can paste it anywhere. Useful when no tool can complete a task directly: prepare the text and let the user paste it.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": { "type": "string", "description": "The text to copy." }
+        },
+        "required": ["text"]
+      }
+    }
+  }
+]

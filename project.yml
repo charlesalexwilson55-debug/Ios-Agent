@@ -1,0 +1,52 @@
+# XcodeGen manifest. Authored on Windows; `xcodegen generate` runs on the macOS
+# CI runner, so no .xcodeproj is ever committed. See scripts/build-ios.sh.
+name: Conduit
+options:
+  bundleIdPrefix: com.charles
+  createIntermediateGroups: true
+  deploymentTarget:
+    iOS: "26.0"
+
+packages:
+  MLXLM:
+    url: https://github.com/ml-explore/mlx-swift-lm
+    from: 3.31.3
+
+targets:
+  Conduit:
+    type: application
+    platform: iOS
+    sources:
+      - path: App
+    dependencies:
+      - package: MLXLM
+        product: MLXLLM
+      - package: MLXLM
+        product: MLXLMCommon
+      - package: MLXLM
+        product: MLXHuggingFace
+    settings:
+      base:
+        PRODUCT_NAME: Conduit
+        PRODUCT_BUNDLE_IDENTIFIER: com.charles.conduit
+        MARKETING_VERSION: 0.1.0
+        CURRENT_PROJECT_VERSION: 1
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Support/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Support/Conduit.entitlements
+        TARGETED_DEVICE_FAMILY: 1
+        # Swift 5 language mode: MLX's actor-heavy API plus code that cannot be
+        # compiled locally on Windows makes Swift 6 strict concurrency a poor
+        # trade here. Flip to 6.0 once the first build is green.
+        SWIFT_VERSION: 5.0
+        SWIFT_UPCOMING_FEATURE_CONCISE_MAGIC_FILE: NO
+        # MLX ships Metal kernels; keep bitcode/dead-strip defaults conservative.
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        OTHER_LDFLAGS: [-ObjC]
+      configs:
+        debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+          ONLY_ACTIVE_ARCH: YES
+        release:
+          SWIFT_OPTIMIZATION_LEVEL: "-O"
+          ONLY_ACTIVE_ARCH: NO

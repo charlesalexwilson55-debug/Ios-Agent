@@ -1,0 +1,37 @@
+# Xcode / generated project
+*.xcodeproj/
+*.xcworkspace/
+!*.xcodeproj/project.pbxproj
+build/
+DerivedData/
+artifacts/
+*.ipa
+*.xcarchive
+.swiftpm/
+Package.resolved
+
+# macOS
+.DS_Store
+
+# Python / training
+__pycache__/
+*.pyc
+.venv/
+venv/
+training/out/
+training/merged/
+# Regenerable in one command; each row embeds the system prompt, so it is large.
+training/data/
+training/mlx/
+*.safetensors
+*.gguf
+
+# Models (never commit multi-GB weights)
+models/
+*.npz
+
+# Secrets
+*.p12
+*.mobileprovision
+*.cer
+.env

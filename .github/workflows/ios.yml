@@ -1,0 +1,75 @@
+name: Build unsigned iOS IPA
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # macos-26 is required, not merely preferred: Liquid Glass (glassEffect,
+    # GlassEffectContainer) only exists in the iOS 26 SDK, which ships with
+    # Xcode 26. macos-15 images top out at Xcode 16 and the build fails with
+    # "cannot find glassEffect in scope". This label went generally available
+    # in February 2026 and runs natively on Apple silicon, which also makes
+    # the MLX Metal shader compilation considerably faster.
+    runs-on: macos-26
+    # MLX is a large dependency with Metal shaders to compile; the first build
+    # on a cold cache is slow.
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode 26
+        run: |
+          ls /Applications | grep -i "^Xcode" || true
+          sudo xcode-select -switch /Applications/Xcode_26.app/Contents/Developer \
+            || echo "Xcode_26.app not found at that exact path; using image default"
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen xcbeautify
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Pillow for icon generation
+        run: python3 -m pip install --upgrade pillow
+
+      # Package resolution is cached separately from the build so a dependency
+      # fetch failure is obvious in the log and so repeat builds skip the
+      # network entirely.
+      - name: Cache SwiftPM dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/org.swift.swiftpm
+            ~/Library/Developer/Xcode/DerivedData/**/SourcePackages
+          key: spm-${{ runner.os }}-${{ hashFiles('project.yml') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      - name: Build IPA
+        run: bash scripts/build-ios.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Conduit-unsigned-ipa
+          path: artifacts/Conduit-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 30
+
+      # Uploaded separately as well as inside the IPA, because the re-signing
+      # tools want it as a standalone file.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Conduit-entitlements
+          path: Support/Conduit.entitlements
+          if-no-files-found: error

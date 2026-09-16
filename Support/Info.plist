@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleDevelopmentRegion</key><string>en</string>
+  <key>CFBundleDisplayName</key><string>Conduit</string>
+  <key>CFBundleExecutable</key><string>Conduit</string>
+  <key>CFBundleIdentifier</key><string>com.charles.conduit</string>
+  <key>CFBundleName</key><string>Conduit</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>0.1.0</string>
+  <key>CFBundleVersion</key><string>1</string>
+  <key>LSRequiresIPhoneOS</key><true/>
+  <key>MinimumOSVersion</key><string>26.0</string>
+  <key>UIDeviceFamily</key><array><integer>1</integer></array>
+  <key>UIRequiredDeviceCapabilities</key><array><string>arm64</string></array>
+  <key>UILaunchScreen</key><dict/>
+  <key>UISupportedInterfaceOrientations</key>
+  <array><string>UIInterfaceOrientationPortrait</string></array>
+  <key>ITSAppUsesNonExemptEncryption</key><false/>
+
+  <!-- Let the user drop a model folder straight into Conduit via Files.app.
+       Without both of these a ~5GB model can only arrive through the in-app
+       downloader, which is a much worse experience on cellular. -->
+  <key>UIFileSharingEnabled</key><true/>
+  <key>LSSupportsOpeningDocumentsInPlace</key><true/>
+
+  <!-- Permission prompts. Wording matters: these are the only explanation the
+       user gets, and iOS shows them verbatim. -->
+  <key>NSCalendarsFullAccessUsageDescription</key>
+  <string>Conduit reads and creates calendar events when you ask it to schedule or check something.</string>
+  <key>NSCalendarsWriteOnlyAccessUsageDescription</key>
+  <string>Conduit adds events to your calendar when you ask it to schedule something.</string>
+  <key>NSRemindersFullAccessUsageDescription</key>
+  <string>Conduit creates and completes reminders when you ask it to track a task.</string>
+  <key>NSContactsUsageDescription</key>
+  <string>Conduit looks up contacts so "text Mum" can find the right number. Contacts never leave your phone.</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Conduit listens when you dictate a request instead of typing it.</string>
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>Conduit transcribes your dictation on-device so you can speak requests.</string>
+  <key>NSAppleMusicUsageDescription</key>
+  <string>Conduit starts playback when you ask it to play something.</string>
+  <key>NSLocationWhenInUseUsageDescription</key>
+  <string>Conduit uses your location for directions and location-aware reminders.</string>
+  <key>NSPhotoLibraryAddUsageDescription</key>
+  <string>Conduit saves images to your library when you ask it to.</string>
+
+  <!-- canOpenURL is gated by this allowlist; anything not listed reports false
+       even when the app IS installed, which makes capability checks lie. -->
+  <key>LSApplicationQueriesSchemes</key>
+  <array>
+    <string>sms</string>
+    <string>tel</string>
+    <string>telprompt</string>
+    <string>mailto</string>
+    <string>facetime</string>
+    <string>facetime-audio</string>
+    <string>shortcuts</string>
+    <string>maps</string>
+    <string>comgooglemaps</string>
+    <string>music</string>
+    <string>podcasts</string>
+    <string>calshow</string>
+    <string>x-apple-reminderkit</string>
+    <string>mobilenotes</string>
+    <string>photos-redirect</string>
+    <string>itms-apps</string>
+    <string>App-Prefs</string>
+    <string>prefs</string>
+    <string>clock-alarm</string>
+    <string>findmy</string>
+    <string>shoebox</string>
+    <string>whatsapp</string>
+    <string>spotify</string>
+    <string>googlegmail</string>
+  </array>
+
+  <key>CFBundleIcons</key>
+  <dict><key>CFBundlePrimaryIcon</key>
+    <dict><key>CFBundleIconFiles</key><array><string>AppIcon60x60</string></array></dict>
+  </dict>
+</dict></plist>
