@@ -27,18 +27,22 @@ enum AppPage: String, CaseIterable, Identifiable {
     }
 }
 
-/// A pull tab on the left edge that slides out a column of page icons.
+/// A round menu button in the top-left corner that opens a column of page
+/// icons beneath it.
 ///
-/// Hidden by default so the chat keeps the full width of the phone. It opens
-/// from the tab or a swipe in from the left edge, and closes on a tap outside,
-/// a swipe back, or picking a page. The view only draws the tab, a thin swipe
-/// strip and (when open) the column, so everything else stays tappable.
+/// The column is hidden by default so every page keeps the full width of the
+/// phone. It opens from the button or a swipe in from the left edge, and
+/// closes on the button, a tap outside, a swipe back, or picking a page. The
+/// view only draws the button, a thin swipe strip and (when open) the column,
+/// so everything else stays tappable.
 struct SidebarOverlay: View {
     @Binding var page: AppPage
     @Binding var isOpen: Bool
 
+    private static let buttonSize: CGFloat = 44
+
     var body: some View {
-        ZStack(alignment: .leading) {
+        ZStack(alignment: .topLeading) {
             if isOpen {
                 Color.black.opacity(0.28)
                     .ignoresSafeArea()
@@ -47,47 +51,43 @@ struct SidebarOverlay: View {
                     .accessibilityHidden(true)
                     .transition(.opacity)
                 rail
+                    .padding(.top, Self.buttonSize + 12)
                     .transition(.move(edge: .leading).combined(with: .opacity))
             } else {
                 edgeSwipeStrip
-                pullTab
-                    .transition(.opacity)
             }
+            menuButton
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .animation(.spring(response: 0.34, dampingFraction: 0.86), value: isOpen)
     }
 
-    // MARK: - Closed
-
-    private var pullTab: some View {
-        VStack {
-            Spacer()
-            Button {
-                isOpen = true
-            } label: {
-                Image(systemName: "chevron.compact.right")
-                    .font(.system(size: 18, weight: .semibold))
-                    .frame(width: 22, height: 64)
-                    .contentShape(.rect)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 11))
-            .offset(x: -5)
-            .accessibilityLabel("Open menu")
-            Spacer()
-            Spacer()
+    private var menuButton: some View {
+        Button {
+            isOpen.toggle()
+        } label: {
+            Image(systemName: isOpen ? "xmark" : "line.3.horizontal")
+                .font(.system(size: 17, weight: .semibold))
+                .frame(width: Self.buttonSize, height: Self.buttonSize)
+                .contentShape(.circle)
+                .contentTransition(.symbolEffect(.replace))
         }
+        .buttonStyle(.plain)
+        .foregroundStyle(.primary)
+        .glassEffect(.regular.interactive(), in: .circle)
+        .padding(.leading, 16)
+        .padding(.top, 2)
+        .accessibilityLabel(isOpen ? "Close menu" : "Open menu")
     }
 
-    /// A narrow strip along the left edge for the swipe-in gesture. It stops
-    /// above the command bar so it never takes taps meant for the model chip.
+    /// A narrow strip along the left edge for the swipe-in gesture. It stays
+    /// clear of the menu button and the command bar.
     private var edgeSwipeStrip: some View {
         Color.clear
             .frame(width: 12)
             .frame(maxHeight: .infinity)
             .contentShape(.rect)
+            .padding(.top, Self.buttonSize + 16)
             .padding(.bottom, 110)
             .gesture(
                 DragGesture(minimumDistance: 16)
@@ -98,24 +98,17 @@ struct SidebarOverlay: View {
             .accessibilityHidden(true)
     }
 
-    // MARK: - Open
-
     private var rail: some View {
-        VStack {
-            Spacer()
-            GlassEffectContainer(spacing: 8) {
-                VStack(spacing: 6) {
-                    ForEach(AppPage.allCases) { item in
-                        railButton(item)
-                    }
+        GlassEffectContainer(spacing: 8) {
+            VStack(spacing: 6) {
+                ForEach(AppPage.allCases) { item in
+                    railButton(item)
                 }
-                .padding(6)
-                .glassEffect(.regular, in: .rect(cornerRadius: 22))
             }
-            .padding(.leading, 10)
-            Spacer()
-            Spacer()
+            .padding(6)
+            .glassEffect(.regular, in: .rect(cornerRadius: 22))
         }
+        .padding(.leading, 14)
         .gesture(
             DragGesture(minimumDistance: 16)
                 .onEnded { value in

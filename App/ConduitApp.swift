@@ -26,7 +26,6 @@ struct RootView: View {
     @State private var runner = ModelRunner()
     @State private var session: AgentSession?
     @State private var draft = ""
-    @State private var showingModelPicker = false
     @State private var loadingState: ModelLoadingState = .idle
     /// Persisted so the choice survives relaunches. On by default: correct
     /// answers to maths and code matter more than speed on those questions.
@@ -50,10 +49,6 @@ struct RootView: View {
             SidebarOverlay(page: $page, isOpen: $sidebarOpen)
         }
         .animation(.easeInOut(duration: 0.2), value: page)
-        .sheet(isPresented: $showingModelPicker) {
-            ModelPickerSheet(onSelect: select, loadingState: loadingState)
-                .environment(catalog)
-        }
         .task {
             let newSession = AgentSession(runner: runner, registry: ToolRegistry.standard())
             newSession.thinkingEnabled = thinking
@@ -77,7 +72,7 @@ struct RootView: View {
             if let previous = catalog.selectedModel, !diedWhileLoading {
                 await load(previous)
             } else {
-                showingModelPicker = true
+                page = .models
             }
             consumePendingTask()
         }
@@ -136,12 +131,10 @@ struct RootView: View {
                 draft: $draft,
                 thinking: $thinking,
                 online: $online,
-                modelLabel: catalog.selectedModel?.displayName ?? "Model",
                 isWorking: session?.isWorking ?? false,
                 isModelLoaded: isReady,
                 onSend: send,
-                onStop: { session?.cancel() },
-                onPickModel: { showingModelPicker = true }
+                onStop: { session?.cancel() }
             )
         }
     }
@@ -219,7 +212,6 @@ struct RootView: View {
 
     private func select(_ model: DiscoveredModel) {
         catalog.select(modelID: model.id)
-        showingModelPicker = false
         Task { await load(model) }
     }
 
@@ -234,10 +226,10 @@ struct RootView: View {
             loadingState = .idle
         } catch {
             loadingState = .failed(error.localizedDescription)
-            // Surfaced in the picker rather than as an alert: the fix is
+            // Surfaced on the Models page rather than as an alert: the fix is
             // almost always picking a different, smaller model, and that is
             // where the user does it.
-            showingModelPicker = true
+            page = .models
         }
     }
 }

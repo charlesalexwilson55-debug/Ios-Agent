@@ -1,13 +1,10 @@
 import SwiftUI
 
-/// The bottom command bar.
+/// The bottom command bar: one wide glass field with the Think and Online
+/// switches on the left and Send on the right.
 ///
-/// Two separate glass capsules — the model chip and the input field — sit
-/// inside one `GlassEffectContainer`. That is the idiomatic iOS 26 composition
-/// and it is not just decoration: a container lets adjacent glass elements
-/// share one lighting and blur pass, so they merge where they meet and read as
-/// a single control rather than two stickers. It is also cheaper to render
-/// than two independent glass surfaces.
+/// Models are chosen from the sidebar, so the field gets the full width of
+/// the phone.
 ///
 /// The bar is installed via `safeAreaInset(edge: .bottom)` by the caller
 /// rather than an `overlay`, because an inset makes the scroll view above it
@@ -23,95 +20,56 @@ struct GlassCommandBar: View {
     /// Whether the model may use the internet. Also on the bar, because it
     /// is the switch someone reaches for when they want a fresh answer.
     @Binding var online: Bool
-    let modelLabel: String
     let isWorking: Bool
     let isModelLoaded: Bool
 
     let onSend: () -> Void
     let onStop: () -> Void
-    let onPickModel: () -> Void
 
     @FocusState private var isFocused: Bool
-    @Namespace private var glassNamespace
 
     private var canSend: Bool {
         !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && isModelLoaded
     }
 
     var body: some View {
-        GlassEffectContainer(spacing: 14) {
-            HStack(alignment: .bottom, spacing: 10) {
-                modelChip
-                inputCapsule
-            }
-            .padding(.horizontal, 14)
+        inputField
+            .padding(.horizontal, 12)
             .padding(.bottom, 8)
-        }
-    }
-
-    // MARK: - Model chip
-
-    private var modelChip: some View {
-        Button(action: onPickModel) {
-            HStack(spacing: 6) {
-                Image(systemName: isModelLoaded ? "cpu.fill" : "cpu")
-                    .font(.system(size: 15, weight: .medium))
-                // The name is hidden once the user starts typing so the field
-                // gets the width. On a phone the input matters more than a
-                // label the user just read.
-                if !isFocused, !modelLabel.isEmpty {
-                    Text(modelLabel)
-                        .font(.system(size: 13, weight: .medium))
-                        .lineLimit(1)
-                        .transition(.opacity.combined(with: .scale(scale: 0.9)))
-                }
-            }
-            .padding(.horizontal, 13)
-            .frame(height: 44)
-            .contentShape(.capsule)
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(isModelLoaded ? .primary : .secondary)
-        // .interactive() gives the press-scale and shimmer the system controls
-        // have. Worth applying only to genuinely tappable glass, which this is.
-        .glassEffect(.regular.interactive(), in: .capsule)
-        .glassEffectID("model", in: glassNamespace)
-        .animation(.spring(response: 0.34, dampingFraction: 0.82), value: isFocused)
-        .accessibilityLabel("Choose model")
-        .accessibilityValue(isModelLoaded ? modelLabel : "No model loaded")
     }
 
     // MARK: - Input
 
-    private var inputCapsule: some View {
+    private var inputField: some View {
         HStack(alignment: .bottom, spacing: 4) {
             HStack(spacing: 0) {
                 thinkButton
                 onlineButton
             }
-            .padding(.leading, 6)
-            .padding(.bottom, 4)
+            .padding(.leading, 8)
+            .padding(.bottom, 8)
 
             TextField(placeholder, text: $draft, axis: .vertical)
                 .textFieldStyle(.plain)
-                .font(.system(size: 16))
-                .lineLimit(1...5)
+                .font(.system(size: 17))
+                .lineLimit(1...6)
                 .focused($isFocused)
                 .submitLabel(.send)
                 .disabled(!isModelLoaded)
                 .onSubmit {
                     if canSend { onSend() }
                 }
-                .padding(.leading, 2)
-                .padding(.vertical, 11)
+                .padding(.leading, 4)
+                .padding(.vertical, 15)
 
             sendButton
-                .padding(.trailing, 5)
-                .padding(.bottom, 4)
+                .padding(.trailing, 8)
+                .padding(.bottom, 8)
         }
-        .frame(minHeight: 44)
-        .glassEffect(.regular, in: .capsule)
-        .glassEffectID("input", in: glassNamespace)
+        .frame(maxWidth: .infinity, minHeight: 56)
+        .contentShape(.rect)
+        .onTapGesture { if isModelLoaded { isFocused = true } }
+        .glassEffect(.regular, in: .rect(cornerRadius: 28))
     }
 
     private var thinkButton: some View {
@@ -149,7 +107,7 @@ struct GlassCommandBar: View {
     }
 
     private var placeholder: String {
-        isModelLoaded ? "Ask Conduit to do something" : "Choose a model to begin"
+        isModelLoaded ? "Ask anything, or tell Conduit what to do" : "Choose a model from the menu to begin"
     }
 
     private var sendButton: some View {
