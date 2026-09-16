@@ -10,6 +10,10 @@ import UIKit
 /// the distinction this app most needs to communicate.
 struct TranscriptView: View {
     let entries: [TranscriptEntry]
+    /// The colour of the waiting animation: the personality's, or the app's.
+    var accent: Color = .conduitAccent
+    /// Shows another draft of an answer: the draft's index and the entry.
+    var onShowDraft: (Int, UUID) -> Void = { _, _ in }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -54,8 +58,9 @@ struct TranscriptView: View {
         case .user:
             UserBubble(text: entry.text)
         case .assistant:
-            AssistantText(text: entry.text, reasoning: entry.reasoning, isStreaming: entry.isStreaming,
-                          drafts: entry.drafts, draftTarget: entry.draftTarget)
+            AssistantText(entry: entry, accent: accent) { index in
+                onShowDraft(index, entry.id)
+            }
         case .tool:
             ToolChip(text: entry.text, outcome: entry.toolOutcome)
         case .error:
@@ -71,32 +76,28 @@ private struct UserBubble: View {
         HStack {
             Spacer(minLength: 40)
             Text(text)
-                .font(.system(size: 16))
+                .font(.system(size: 16 * Appearance.textScale))
                 .padding(.horizontal, 14)
                 .padding(.vertical, 9)
-                .glassEffect(.regular.tint(.accentColor.opacity(0.28)), in: .rect(cornerRadius: 19))
+                .glassEffect(.regular.tint(Color.conduitAccent.opacity(0.28)), in: .rect(cornerRadius: 19))
                 .textSelection(.enabled)
         }
     }
 }
 
 private struct AssistantText: View {
-    let text: String
-    let reasoning: String
-    let isStreaming: Bool
-    let drafts: [String]
-    let draftTarget: Int
+    let entry: TranscriptEntry
+    let accent: Color
+    let onShowDraft: (Int) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if !reasoning.isEmpty {
-                ReasoningView(reasoning: reasoning, isThinking: isStreaming && text.isEmpty && drafts.isEmpty)
-            }
-            if !drafts.isEmpty {
-                DraftsView(drafts: drafts, status: draftStatus)
+            if !entry.reasoning.isEmpty {
+                ReasoningView(reasoning: entry.reasoning,
+                              isThinking: entry.isStreaming && entry.text.isEmpty && entry.draftTarget == 0)
             }
 
-            ForEach(MessageSegment.parse(text)) { segment in
+            ForEach(MessageSegment.parse(entry.text)) { segment in
                 switch segment.kind {
                 case .prose(let prose):
                     ProseText(markdown: prose)
@@ -105,64 +106,103 @@ private struct AssistantText: View {
                 }
             }
 
-            if isStreaming {
-                // A caret rather than a spinner: generation is token-by-token,
-                // and a caret reads as "still writing" without implying a
-                // known duration the way a progress indicator does.
-                StreamingCaret()
+            if entry.isStreaming {
+                ConduitLoader(color: accent, status: draftStatus)
+                    .padding(.top, 2)
+            } else if entry.drafts.count > 1 {
+                DraftNavigator(
+                    count: entry.drafts.count,
+                    shown: entry.shownDraft,
+                    best: entry.bestDraft,
+                    label: entry.draftLabels.indices.contains(entry.shownDraft)
+                        ? entry.draftLabels[entry.shownDraft] : nil,
+                    level: entry.levelTitle,
+                    accent: accent,
+                    onShow: onShowDraft
+                )
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// What the drafting is doing, or nil once the answer is final.
+    /// What the drafting is doing, or nil when it is not drafting.
     private var draftStatus: String? {
-        guard isStreaming, draftTarget > 0 else { return nil }
-        if drafts.count < draftTarget {
-            return "Writing draft \(drafts.count + 1) of \(draftTarget)\u{2026}"
+        guard entry.draftTarget > 0 else { return nil }
+        if entry.drafts.count < entry.draftTarget {
+            return "Writing draft \(entry.drafts.count + 1) of \(entry.draftTarget)\u{2026}"
         }
-        return "Combining \(drafts.count) drafts\u{2026}"
+        return "Comparing \(entry.drafts.count) drafts\u{2026}"
     }
 }
 
-/// The drafts a hard-working personality wrote, folded away under the answer
-/// they were combined into.
-private struct DraftsView: View {
-    let drafts: [String]
-    let status: String?
-
-    @State private var expanded = false
+/// Arrows under an answer that had several drafts: every draft is kept, so
+/// flipping between them is instant.
+private struct DraftNavigator: View {
+    let count: Int
+    let shown: Int
+    let best: Int?
+    let label: String?
+    let level: String?
+    let accent: Color
+    let onShow: (Int) -> Void
 
     var body: some View {
-        DisclosureGroup(isExpanded: $expanded) {
-            VStack(alignment: .leading, spacing: 12) {
-                ForEach(Array(drafts.enumerated()), id: \.offset) { item in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Draft \(item.offset + 1)")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                        Text(item.element)
-                            .font(.system(size: 13))
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
+        HStack(spacing: 2) {
+            arrow("chevron.left", label: "Previous draft", enabled: shown > 0) {
+                onShow(shown - 1)
             }
-            .padding(.top, 6)
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "square.stack.3d.up")
-                    .symbolEffect(.pulse, isActive: status != nil)
-                Text(status ?? "\(drafts.count) drafts")
+            Text("\(shown + 1) of \(count)")
+                .font(.system(size: 13, weight: .semibold))
+                .monospacedDigit()
+            arrow("chevron.right", label: "Next draft", enabled: shown < count - 1) {
+                onShow(shown + 1)
             }
-            .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(.secondary)
+            if let label {
+                Text(label)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 2)
+            }
+            if shown == best {
+                Text("Best")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background { Capsule().fill(accent) }
+                    .padding(.leading, 6)
+            } else if let best {
+                Button("Show best") { onShow(best) }
+                    .font(.system(size: 12, weight: .medium))
+                    .tint(accent)
+                    .padding(.leading, 6)
+            }
+            if let level {
+                Text(level)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 6)
+            }
         }
-        .tint(.secondary)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .glassEffect(.clear, in: .rect(cornerRadius: 12))
+        .padding(.leading, 2)
+        .padding(.trailing, 10)
+        .padding(.vertical, 2)
+        .glassEffect(.clear, in: .capsule)
+        .sensoryFeedback(.selection, trigger: shown)
+    }
+
+    private func arrow(_ symbol: String, label: String, enabled: Bool,
+                       action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 13, weight: .semibold))
+                .frame(width: 32, height: 30)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.3)
+        .accessibilityLabel(label)
     }
 }
 
@@ -226,7 +266,7 @@ private struct ProseText: View {
 
     var body: some View {
         Text(rendered)
-            .font(.system(size: 16))
+            .font(.system(size: 16 * Appearance.textScale))
             .foregroundStyle(.primary)
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -281,7 +321,7 @@ private struct CodeBlockView: View {
             // indentation, which in Python changes what the code means.
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(code)
-                    .font(.system(size: 13, design: .monospaced))
+                    .font(.system(size: 13 * Appearance.textScale, design: .monospaced))
                     .textSelection(.enabled)
                     .fixedSize(horizontal: true, vertical: true)
                     .padding(12)
@@ -319,24 +359,6 @@ private struct ReasoningView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .glassEffect(.clear, in: .rect(cornerRadius: 12))
-    }
-}
-
-/// Blinking caret shown while tokens are still arriving.
-///
-/// Driven by an explicit repeating animation rather than `.symbolEffect`,
-/// which only animates SF Symbols and would be a silent no-op on a shape.
-private struct StreamingCaret: View {
-    @State private var dimmed = false
-
-    var body: some View {
-        Capsule()
-            .frame(width: 2, height: 15)
-            .foregroundStyle(.secondary)
-            .opacity(dimmed ? 0.15 : 0.8)
-            .animation(.easeInOut(duration: 0.55).repeatForever(autoreverses: true),
-                       value: dimmed)
-            .onAppear { dimmed = true }
     }
 }
 

@@ -58,14 +58,7 @@ final class ResearchEngine {
         static let relaxed = Budget(searches: 12, pages: 16, firstStepSearches: 7, firstStepPages: 10)
         static let normal = Budget(searches: 22, pages: 28, firstStepSearches: 15, firstStepPages: 18)
         static let hard = Budget(searches: 30, pages: 40, firstStepSearches: 15, firstStepPages: 26)
-
-        static func matching(_ effort: Persona.Effort?) -> Budget {
-            switch effort {
-            case .relaxed?: return .relaxed
-            case .hard?: return .hard
-            default: return .normal
-            }
-        }
+        static let ultra = Budget(searches: 40, pages: 55, firstStepSearches: 15, firstStepPages: 34)
     }
 
     /// Runs one short, tool-free generation. Supplied by `AgentSession`,

@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The app's pages, reached from the sidebar.
 enum AppPage: String, CaseIterable, Identifiable {
-    case chat, personalities, directions, online, models, capabilities
+    case chat, personalities, directions, online, models, capabilities, settings
 
     var id: String { rawValue }
 
@@ -14,6 +14,7 @@ enum AppPage: String, CaseIterable, Identifiable {
         case .online: "Online"
         case .models: "Models"
         case .capabilities: "What Conduit can do"
+        case .settings: "Settings"
         }
     }
 
@@ -25,6 +26,8 @@ enum AppPage: String, CaseIterable, Identifiable {
         case .online: "globe"
         case .models: "cpu"
         case .capabilities: "checklist"
+        // Drawn by ConduitStarIcon instead.
+        case .settings: "gearshape"
         }
     }
 }
@@ -119,25 +122,34 @@ struct SidebarOverlay: View {
         )
     }
 
+    @ViewBuilder
+    private func icon(for item: AppPage, selected: Bool) -> some View {
+        if item == .settings {
+            ConduitStarIcon(size: 24, color: selected ? Color.conduitAccent : Color.primary)
+        } else {
+            Image(systemName: item.symbol)
+                .font(.system(size: 19, weight: .medium))
+        }
+    }
+
     private func railButton(_ item: AppPage) -> some View {
         let selected = item == page
         return Button {
             page = item
             isOpen = false
         } label: {
-            Image(systemName: item.symbol)
-                .font(.system(size: 19, weight: .medium))
+            icon(for: item, selected: selected)
                 .frame(width: 48, height: 48)
                 .background {
                     if selected {
                         RoundedRectangle(cornerRadius: 14)
-                            .fill(Color.accentColor.opacity(0.18))
+                            .fill(Color.conduitAccent.opacity(0.18))
                     }
                 }
                 .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .foregroundStyle(selected ? Color.accentColor : Color.primary)
+        .foregroundStyle(selected ? Color.conduitAccent : Color.primary)
         .accessibilityLabel(item.title)
         .accessibilityAddTraits(selected ? .isSelected : [])
     }

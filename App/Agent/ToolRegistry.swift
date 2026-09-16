@@ -9,9 +9,13 @@ import Foundation
 final class ToolRegistry {
     private let providers: [ToolProviding]
     private let index: [String: ToolProviding]
+    /// Providers whose tools change while the app runs, such as MCP servers
+    /// the user adds. Looked up on every call instead of indexed.
+    private let dynamicProviders: [ToolProviding]
 
-    init(providers: [ToolProviding]) {
+    init(providers: [ToolProviding], dynamicProviders: [ToolProviding] = []) {
         self.providers = providers
+        self.dynamicProviders = dynamicProviders
         var index: [String: ToolProviding] = [:]
         for provider in providers {
             for spec in provider.specs {
@@ -32,17 +36,22 @@ final class ToolRegistry {
             DeviceTools(),
             CodeTools(),
             WebTools(),
+        ], dynamicProviders: [
+            MCPTools(),
         ])
     }
 
-    var specs: [ToolDescriptor] { providers.flatMap { $0.specs } }
+    var specs: [ToolDescriptor] { (providers + dynamicProviders).flatMap { $0.specs } }
 
     func spec(named name: String) -> ToolDescriptor? {
         specs.first { $0.name == name }
     }
 
     func run(_ name: String, arguments: ArgumentValue) async -> ToolOutcome {
-        guard let provider = index[name] else {
+        let dynamic = dynamicProviders.first { provider in
+            provider.specs.contains { $0.name == name }
+        }
+        guard let provider = index[name] ?? dynamic else {
             let available = specs.map(\.name).sorted().joined(separator: ", ")
             return .failure(name, "There is no tool called \(name). "
                 + "The available tools are: \(available). Pick one of those.")

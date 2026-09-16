@@ -18,55 +18,10 @@ struct Persona: Identifiable, Codable, Hashable {
     /// on the phone. Empty keeps whatever is loaded.
     var model = ""
     var colorHex = Persona.palette[0].hex
-    var effort: Effort = .normal
-    /// Answers written before the best is kept. Questions only: phone
-    /// actions have side effects and are never drafted twice.
-    var drafts = 1
-
-    enum Effort: String, Codable, CaseIterable, Identifiable {
-        case relaxed, normal, hard
-
-        var id: String { rawValue }
-
-        var title: String {
-            switch self {
-            case .relaxed: "Relaxed"
-            case .normal: "Normal"
-            case .hard: "Hard-working"
-            }
-        }
-
-        var detail: String {
-            switch self {
-            case .relaxed:
-                "Quick replies: never thinks first, takes at most 4 steps on a task, and "
-                    + "researches lightly."
-            case .normal:
-                "Follows the Think switch and takes up to 6 steps on a task."
-            case .hard:
-                "Always thinks first, takes up to 12 steps on a task, and researches more pages. "
-                    + "Slower."
-            }
-        }
-
-        /// Tool calls allowed per request.
-        var toolSteps: Int {
-            switch self {
-            case .relaxed: 4
-            case .normal: 6
-            case .hard: 12
-            }
-        }
-
-        /// Overrides the Think switch, or nil to follow it.
-        var thinking: Bool? {
-            switch self {
-            case .relaxed: return false
-            case .normal: return nil
-            case .hard: return true
-            }
-        }
-    }
+    /// The work level this personality starts at when chosen.
+    var level: WorkLevel = .normal
+    /// Whether it lets Auto pick the level for each message instead.
+    var autoLevel = false
 
     struct Swatch: Identifiable {
         let name: String
@@ -87,7 +42,6 @@ struct Persona: Identifiable, Codable, Hashable {
         Swatch(name: "Graphite", hex: "#636366"),
     ]
 
-    static let maxDrafts = 3
     /// Longest text kept from each box in the system prompt. The whole prompt
     /// is reprocessed every turn, so an essay here slows every reply.
     static let promptFieldLimit = 600
@@ -126,6 +80,28 @@ struct Persona: Identifiable, Codable, Hashable {
         lines.append("Speak in this role's voice, but the user's request always comes first: do "
             + "exactly what they ask, completely.")
         return lines.joined(separator: "\n")
+    }
+}
+
+extension Persona {
+    private enum CodingKeys: String, CodingKey {
+        case id, name, jobTitle, personality, goal, connectors, model, colorHex, level, autoLevel
+    }
+
+    /// Tolerant of older saves: any missing field takes its default.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init()
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? id
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
+        jobTitle = try container.decodeIfPresent(String.self, forKey: .jobTitle) ?? ""
+        personality = try container.decodeIfPresent(String.self, forKey: .personality) ?? ""
+        goal = try container.decodeIfPresent(String.self, forKey: .goal) ?? ""
+        connectors = try container.decodeIfPresent(String.self, forKey: .connectors) ?? ""
+        model = try container.decodeIfPresent(String.self, forKey: .model) ?? ""
+        colorHex = try container.decodeIfPresent(String.self, forKey: .colorHex) ?? colorHex
+        level = (try? container.decodeIfPresent(WorkLevel.self, forKey: .level)) ?? .normal
+        autoLevel = try container.decodeIfPresent(Bool.self, forKey: .autoLevel) ?? false
     }
 }
 
@@ -216,10 +192,15 @@ enum Connector: String, CaseIterable, Identifiable {
         return allCases.filter { !$0.vocabulary.isDisjoint(with: found) }
     }
 
+    /// Whether the text asks for every connector.
+    static func namesEverything(_ text: String) -> Bool {
+        !everything.isDisjoint(with: words(in: text))
+    }
+
     /// Nil means no restriction: the box is empty, says "all", or names
     /// nothing recognisable.
     static func allowedToolNames(for text: String) -> Set<String>? {
-        if !everything.isDisjoint(with: words(in: text)) { return nil }
+        if namesEverything(text) { return nil }
         let connectors = matches(in: text)
         guard !connectors.isEmpty else { return nil }
         return connectors.reduce(into: alwaysAllowed) { $0.formUnion($1.toolNames) }
@@ -262,7 +243,6 @@ final class PersonaStore {
     func save(_ persona: Persona) {
         var cleaned = persona
         cleaned.name = persona.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        cleaned.drafts = min(max(persona.drafts, 1), Persona.maxDrafts)
         if let index = personas.firstIndex(where: { $0.id == persona.id }) {
             personas[index] = cleaned
         } else {

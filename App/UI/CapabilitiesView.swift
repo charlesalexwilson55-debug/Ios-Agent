@@ -30,9 +30,13 @@ struct CapabilitiesView: View {
                  + "keywords, checks each page is about the same subject before using it, and never "
                  + "collects addresses, phone numbers or details about someone's children."),
         Item(text: "Custom personalities",
-             note: "Each has its own voice, goal, connectors, model and colour. Hard-working ones "
-                 + "think first, take more steps, and can write up to three drafts of an answer, "
-                 + "one after another."),
+             note: "Each has its own voice, goal, connectors, model, colour and work level."),
+        Item(text: "Work harder on an answer",
+             note: "The plus menu's level slider writes up to five versions of an answer, from simple "
+                 + "to in depth, shows the best, and keeps the others a tap away. Auto picks the level "
+                 + "for each message. Phone actions are never done twice."),
+        Item(text: "Use MCP servers on the internet",
+             note: "Add them in Settings > Connectors, then name one in a message."),
     ]
 
     private let oneTap: [Item] = [

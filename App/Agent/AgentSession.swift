@@ -20,10 +20,21 @@ struct TranscriptEntry: Identifiable {
     var isStreaming: Bool = false
     /// Qwen3 thinking for assistant entries, shown folded away.
     var reasoning: String = ""
-    /// Earlier drafts of this answer, for personalities that write several.
+    /// Every version of this answer when several were written. `text` is
+    /// the one on show.
     var drafts: [String] = []
     /// How many drafts are being written; zero once the answer is final.
     var draftTarget: Int = 0
+    var shownDraft: Int = 0
+    /// A word for each draft's style, such as "Simple".
+    var draftLabels: [String] = []
+    /// The version Conduit judged best.
+    var bestDraft: Int?
+    /// Where this answer sits in the model's history, so showing another
+    /// draft also changes what the model remembers saying.
+    var historyIndex: Int?
+    /// The work level that wrote the drafts.
+    var levelTitle: String?
 
     enum Outcome {
         case done
@@ -68,10 +79,13 @@ final class AgentSession {
     /// going through the normal tool loop.
     var researchEnabled: Bool = false
 
-    /// The personality in use, or nil for plain Conduit. Shapes the prompt,
-    /// the tools offered, how hard each turn works and how many drafts a
-    /// question gets.
+    /// The personality in use, or nil for plain Conduit. Shapes the prompt
+    /// and the tools offered.
     var persona: Persona?
+
+    /// The plus menu's work level, and whether Auto picks it per message.
+    var workLevel: WorkLevel = .normal
+    var autoLevel: Bool = false
 
     /// Model-visible history, which is not the same as the transcript: it
     /// carries tool results and omits UI-only entries.
@@ -203,31 +217,56 @@ final class AgentSession {
     // MARK: - The loop
 
     private func runTurn() async {
-        if researchEnabled {
-            await runResearch()
+        let persona = self.persona
+        let phoneTask = TaskRouter.looksLikePhoneTask(currentRequest)
+        let auto = autoLevel ? AutoConfig.choose(for: currentRequest, isPhoneTask: phoneTask) : nil
+        let level = auto?.level ?? workLevel
+        if researchEnabled || auto?.research == true {
+            await runResearch(level: level)
             return
         }
-        let persona = self.persona
-        let mode = TaskRouter.mode(for: currentRequest, previousTurnUsedPhoneTools: lastTurnUsedPhoneTools)
+
+        let mcp = MCPStore.shared
+        let requestServers = mcp.servers(namedIn: currentRequest)
+        let personaServers = persona.map { mcp.servers(namedIn: $0.connectors) } ?? []
+        var mode = TaskRouter.mode(for: currentRequest, previousTurnUsedPhoneTools: lastTurnUsedPhoneTools)
+        // Naming a connected server is a request to use it.
+        if !requestServers.isEmpty { mode = .task }
         let online = onlineEnabled && Connectivity.shared.isOnline
-        var tools = TaskRouter.tools(from: registry.specs, mode: mode, online: online)
-        if let allowed = persona?.allowedToolNames {
-            tools = tools.filter { allowed.contains($0.name) }
+
+        let builtIn = registry.specs.filter { !$0.name.hasPrefix(MCPStore.toolPrefix) }
+        var tools = TaskRouter.tools(from: builtIn, mode: mode, online: online)
+        if let persona {
+            var allowed = persona.allowedToolNames
+            // A personality that names only MCP servers gets just those, plus
+            // the clock and calculator.
+            if allowed == nil, !personaServers.isEmpty, !Connector.namesEverything(persona.connectors) {
+                allowed = Connector.alwaysAllowed
+            }
+            if let allowed {
+                tools = tools.filter { allowed.contains($0.name) }
+            }
         }
+        if online {
+            let mcpNames = mcp.toolNames(for: requestServers + personaServers)
+            tools += registry.specs.filter { mcpNames.contains($0.name) }
+        }
+
         var systemPrompt = SystemPrompt.build(tools: tools, mode: mode)
         if let persona {
             systemPrompt += "\n\n" + persona.promptSection
         }
-        let thinking = persona?.effort.thinking ?? thinkingEnabled
-        let toolSteps = persona?.effort.toolSteps ?? maxToolIterations
+        let thinking = auto?.thinking ?? (level.forcesThinking || thinkingEnabled)
+        let toolSteps = level.toolSteps
         // Only questions are drafted more than once: phone tools have side
         // effects, and a second draft must never send a second message.
-        let drafts = mode == .answer ? (persona?.drafts ?? 1) : 1
+        let drafts = mode == .answer ? level.drafts : 1
         offeredTools = Set(tools.map(\.name))
         usedPhoneTools = false
         defer { lastTurnUsedPhoneTools = usedPhoneTools }
         Diagnostics.log("turn mode=\(mode.rawValue) online=\(online) tools=\(tools.count) "
-            + "persona=\(persona == nil ? "none" : "custom") think=\(thinking) drafts=\(drafts)")
+            + "persona=\(persona == nil ? "none" : "custom") level=\(level.title) "
+            + "auto=\(auto != nil) think=\(thinking) drafts=\(drafts)")
 
         for iteration in 0..<toolSteps {
             await waitUntilForeground()
@@ -315,7 +354,8 @@ final class AgentSession {
                             + "or turn off Think."
                 } else if !replyText.isEmpty, drafts > 1 {
                     await writeMoreDrafts(first: replyText, entryIndex: entryIndex,
-                                          systemPrompt: systemPrompt, total: drafts)
+                                          systemPrompt: systemPrompt, total: drafts,
+                                          levelTitle: level.title)
                 }
                 return
             }
@@ -350,7 +390,7 @@ final class AgentSession {
 
     /// Follows the request across the web with `ResearchEngine`, showing one
     /// progress chip, then writes up what was found.
-    private func runResearch() async {
+    private func runResearch(level: WorkLevel) async {
         lastTurnUsedPhoneTools = false
         guard onlineEnabled, Connectivity.shared.isOnline else {
             let text = onlineEnabled
@@ -377,7 +417,7 @@ final class AgentSession {
 
         let engine = ResearchEngine(
             request: currentRequest,
-            budget: .matching(persona?.effort),
+            budget: level.researchBudget,
             ask: { [weak self] system, user in
                 guard let self else { throw CancellationError() }
                 return try await self.ask(system: system, user: user)
@@ -459,13 +499,20 @@ final class AgentSession {
 
     // MARK: - Drafts
 
-    /// Writes more answers to the same question, then one final answer that
-    /// keeps the best of them. The drafts stay visible, folded away.
+    /// Writes more versions of the answer, each in a different style, has the
+    /// model pick the best, and shows that one. The others stay a tap away in
+    /// the message, with no need to generate them again.
     ///
-    /// The phone runs one generation at a time, so the drafts are written one
-    /// after another. Tools are withheld: whatever the first draft looked up
-    /// is already in the history.
-    private func writeMoreDrafts(first: String, entryIndex: Int, systemPrompt: String, total: Int) async {
+    /// The phone runs one generation at a time, so the versions are written
+    /// one after another. Tools are withheld: whatever the first version
+    /// looked up is already in the history.
+    private func writeMoreDrafts(
+        first: String,
+        entryIndex: Int,
+        systemPrompt: String,
+        total: Int,
+        levelTitle: String
+    ) async {
         guard total >= 2, transcript.indices.contains(entryIndex),
               let last = history.last, last.role == .assistant, last.content == first
         else { return }
@@ -474,89 +521,110 @@ final class AgentSession {
             guard let index = transcript.lastIndex(where: { $0.id == entryID }) else { return }
             change(&transcript[index])
         }
-        func finish(_ answer: String, drafts: [String]) {
-            update {
-                $0.text = answer
-                $0.isStreaming = false
-                $0.drafts = drafts.count > 1 ? drafts : []
-                $0.draftTarget = 0
-            }
-            history.append(.assistant(answer))
-        }
 
         // Several full answers take a while; a screen lock would stop them.
         UIApplication.shared.isIdleTimerDisabled = true
         defer { UIApplication.shared.isIdleTimerDisabled = false }
 
-        // The first draft comes back out of the history while the others are
-        // written, so they answer the question rather than follow it.
+        // The first version comes back out of the history while the others
+        // are written, so they answer the question rather than follow it.
         history.removeLast()
+        let code = DraftPlanner.isCode(request: currentRequest, answer: first)
+        let styles = DraftPlanner.styles(extraDrafts: total - 1, code: code)
         var drafts = [first]
+        var labels = [DraftPlanner.firstLabel]
         update {
             $0.drafts = drafts
-            $0.draftTarget = total
+            $0.draftLabels = labels
+            $0.draftTarget = styles.count + 1
+            $0.levelTitle = levelTitle
             $0.text = ""
             $0.isStreaming = true
         }
         var base: [ModelRunner.Message] = [.system(systemPrompt)]
         base.append(contentsOf: trimmedHistory())
 
-        for _ in 2...total {
-            await waitUntilForeground()
-            if Task.isCancelled { break }
-            var text = ""
-            isGenerating = true
-            do {
-                for try await event in runner.stream(messages: base, tools: [], thinking: false) {
-                    if case .text(let chunk) = event { text += chunk }
+        for style in styles {
+            var messages = base
+            messages.append(ModelRunner.Message.user(DraftPlanner.instruction(style: style.instruction)))
+            if let text = await generateQuietly(messages) {
+                drafts.append(text)
+                labels.append(style.label)
+                update {
+                    $0.drafts = drafts
+                    $0.draftLabels = labels
                 }
-            } catch {
-                isGenerating = false
-                break
             }
-            isGenerating = false
             if Task.isCancelled { break }
-            let draft = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !draft.isEmpty {
-                drafts.append(draft)
-                update { $0.drafts = drafts }
+        }
+
+        var best = 0
+        if !Task.isCancelled, drafts.count > 1 {
+            // Drafts that failed are not waited for: the label moves on to
+            // comparing.
+            update { $0.draftTarget = drafts.count }
+            var messages = base
+            messages.append(ModelRunner.Message.user(DraftPlanner.judgePrompt(drafts: drafts, code: code)))
+            if let reply = await generateQuietly(messages, sampling: .extraction(maxTokens: 12)) {
+                best = DraftPlanner.pick(from: reply, count: drafts.count)
             }
         }
 
-        guard !Task.isCancelled, drafts.count > 1 else {
-            finish(first, drafts: drafts)
-            return
+        // The conversation was cleared while drafting: nothing to record.
+        guard transcript.contains(where: { $0.id == entryID }) else { return }
+        let answer = drafts[best]
+        let historyIndex = history.count
+        history.append(.assistant(answer))
+        update {
+            $0.text = answer
+            $0.isStreaming = false
+            $0.drafts = drafts.count > 1 ? drafts : []
+            $0.shownDraft = best
+            $0.bestDraft = drafts.count > 1 ? best : nil
+            $0.draftTarget = 0
+            $0.historyIndex = historyIndex
         }
+    }
 
-        let listing = drafts.enumerated()
-            .map { "Draft \($0.offset + 1):\n\($0.element)" }
-            .joined(separator: "\n\n")
-        let instruction = "Here are \(drafts.count) drafts of your answer to my last message.\n\n"
-            + listing
-            + "\n\nWrite the final answer. Keep what is correct, clear and useful from each draft, "
-            + "fix any mistakes, and drop repetition. Reply with the final answer only, and do not "
-            + "mention the drafts."
-        var messages = base
-        messages.append(.user(instruction))
-
+    /// One generation with no tools and no thinking, collected rather than
+    /// streamed. Nil when it fails, is cancelled or says nothing.
+    private func generateQuietly(
+        _ messages: [ModelRunner.Message],
+        sampling: ModelRunner.Sampling = .chat
+    ) async -> String? {
         await waitUntilForeground()
-        var combined = ""
-        if !Task.isCancelled {
-            isGenerating = true
-            do {
-                for try await event in runner.stream(messages: messages, tools: [], thinking: false) {
-                    if case .text(let chunk) = event {
-                        combined += chunk
-                        update { $0.text = combined }
-                    }
-                }
-            } catch {
-                combined = ""
+        if Task.isCancelled { return nil }
+        var text = ""
+        isGenerating = true
+        defer { isGenerating = false }
+        do {
+            for try await event in runner.stream(
+                messages: messages, tools: [], thinking: false, sampling: sampling
+            ) {
+                if case .text(let chunk) = event { text += chunk }
             }
-            isGenerating = false
+        } catch {
+            return nil
         }
-        let answer = combined.trimmingCharacters(in: .whitespacesAndNewlines)
-        finish(answer.isEmpty ? first : combined, drafts: drafts)
+        if Task.isCancelled { return nil }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// Shows another of an answer's drafts in place, and makes it the one the
+    /// model remembers giving.
+    func showDraft(_ index: Int, of entryID: UUID) {
+        guard let position = transcript.firstIndex(where: { $0.id == entryID }),
+              !transcript[position].isStreaming,
+              transcript[position].drafts.indices.contains(index)
+        else { return }
+        let draft = transcript[position].drafts[index]
+        transcript[position].shownDraft = index
+        transcript[position].text = draft
+        if let historyIndex = transcript[position].historyIndex,
+           history.indices.contains(historyIndex), history[historyIndex].role == .assistant {
+            history[historyIndex] = .assistant(draft)
+        }
     }
 
     /// One short generation with no tools and no thinking, for the research
@@ -584,6 +652,7 @@ final class AgentSession {
 
         // Refused calls go back to the model only. The user asked a question,
         // not for a failed tool chip.
+        let mcpServer = MCPStore.shared.server(forTool: name)
         let refusal: ToolOutcome?
         if !offeredTools.contains(name) {
             refusal = .failure(name, "Not run: \(name) is not available for this request. "
@@ -591,7 +660,8 @@ final class AgentSession {
         } else {
             refusal = ToolPolicy.refusal(
                 for: name, request: currentRequest, previousReply: previousReply,
-                afterWebContent: readWebContent
+                afterWebContent: readWebContent,
+                mcpServerName: mcpServer?.name
             )
         }
         if let refusal {
@@ -600,7 +670,8 @@ final class AgentSession {
             return
         }
         Diagnostics.log("tool.run \(name)")
-        if TaskRouter.webToolNames.contains(name) {
+        // Web pages and outside servers both return text Conduit cannot trust.
+        if TaskRouter.webToolNames.contains(name) || mcpServer != nil {
             readWebContent = true
         } else if !TaskRouter.answerToolNames.contains(name) {
             usedPhoneTools = true

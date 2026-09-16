@@ -13,7 +13,20 @@ struct ConduitApp: App {
                 // system background gives them nothing to refract and they
                 // read as flat grey rectangles.
                 .background(BackdropView())
+                .modifier(AppearanceModifier())
         }
+    }
+}
+
+/// Applies the theme and highlight colour chosen in Settings > Appearance.
+private struct AppearanceModifier: ViewModifier {
+    @AppStorage(Appearance.themeKey) private var theme = Appearance.Theme.system.rawValue
+    @AppStorage(Appearance.accentKey) private var accentHex = ""
+
+    func body(content: Content) -> some View {
+        content
+            .preferredColorScheme((Appearance.Theme(rawValue: theme) ?? .system).scheme)
+            .tint(Color(hex: accentHex) ?? .accentColor)
     }
 }
 
@@ -40,6 +53,13 @@ struct RootView: View {
     @State private var menuOpen = false
     /// Set by the plus menu so the Personalities page opens a new one.
     @State private var startNewPersona = false
+    /// The plus menu's work level, and whether Auto picks it per message.
+    @AppStorage("conduit.level") private var levelRaw = WorkLevel.normal.rawValue
+    @AppStorage("conduit.autoLevel") private var autoLevel = false
+    /// Views that draw with the chosen accent colour and text size are
+    /// rebuilt when either changes.
+    @AppStorage(Appearance.accentKey) private var accentHex = ""
+    @AppStorage(Appearance.textSizeKey) private var textSize = ""
 
     var body: some View {
         ZStack {
@@ -54,6 +74,7 @@ struct RootView: View {
                     .transition(.opacity)
             }
             SidebarOverlay(page: $page, isOpen: $sidebarOpen)
+                .id(appearanceKey)
         }
         .animation(.easeInOut(duration: 0.2), value: page)
         .task {
@@ -62,6 +83,8 @@ struct RootView: View {
             newSession.onlineEnabled = online
             newSession.researchEnabled = research
             newSession.persona = personas.selected
+            newSession.workLevel = WorkLevel(rawValue: levelRaw) ?? .normal
+            newSession.autoLevel = autoLevel
             session = newSession
             Diagnostics.log("app.launch avail=\(Diagnostics.availableMB)MB")
 
@@ -122,7 +145,11 @@ struct RootView: View {
     /// transcript runs to the top edge under the glass.
     private var chatPage: some View {
         NavigationStack {
-            TranscriptView(entries: session?.transcript ?? [])
+            TranscriptView(
+                entries: session?.transcript ?? [],
+                accent: personas.selected?.color ?? Color.conduitAccent,
+                onShowDraft: { index, id in session?.showDraft(index, of: id) }
+            )
             // A tap anywhere above the bar closes the plus menu.
             .overlay {
                 if menuOpen {
@@ -155,6 +182,8 @@ struct RootView: View {
                 online: $online,
                 research: $research,
                 menuOpen: $menuOpen,
+                level: levelBinding,
+                autoLevel: $autoLevel,
                 personas: personas.personas,
                 selectedPersona: personas.selected,
                 onSelectPersona: { personas.select($0) },
@@ -173,8 +202,19 @@ struct RootView: View {
             session?.persona = persona
         }
         .onChange(of: personas.selectedID) { _, _ in
+            if let persona = personas.selected {
+                levelRaw = persona.level.rawValue
+                autoLevel = persona.autoLevel
+            }
             loadModel(for: personas.selected)
         }
+        .onChange(of: levelRaw) { _, raw in
+            session?.workLevel = WorkLevel(rawValue: raw) ?? .normal
+        }
+        .onChange(of: autoLevel) { _, enabled in
+            session?.autoLevel = enabled
+        }
+        .id(appearanceKey)
         .onChange(of: page) { _, _ in
             menuOpen = false
         }
@@ -199,7 +239,20 @@ struct RootView: View {
             NavigationStack {
                 CapabilitiesView()
             }
+        case .settings:
+            SettingsView()
         }
+    }
+
+    private var levelBinding: Binding<WorkLevel> {
+        Binding(
+            get: { WorkLevel(rawValue: levelRaw) ?? .normal },
+            set: { levelRaw = $0.rawValue }
+        )
+    }
+
+    private var appearanceKey: String {
+        accentHex + "|" + textSize
     }
 
     private func selectFromPage(_ model: DiscoveredModel) {
@@ -302,16 +355,11 @@ struct RootView: View {
 /// material something to work with without competing with the text.
 private struct BackdropView: View {
     @Environment(\.colorScheme) private var colorScheme
+    @AppStorage(Appearance.backdropKey) private var backdrop = Appearance.Backdrop.aurora.rawValue
 
     var body: some View {
         LinearGradient(
-            colors: colorScheme == .dark
-                ? [Color(red: 0.05, green: 0.06, blue: 0.11),
-                   Color(red: 0.10, green: 0.08, blue: 0.16),
-                   Color(red: 0.04, green: 0.07, blue: 0.10)]
-                : [Color(red: 0.93, green: 0.95, blue: 1.00),
-                   Color(red: 0.97, green: 0.94, blue: 0.99),
-                   Color(red: 0.91, green: 0.96, blue: 0.97)],
+            colors: (Appearance.Backdrop(rawValue: backdrop) ?? .aurora).colors(dark: colorScheme == .dark),
             startPoint: .topLeading,
             endPoint: .bottomTrailing
         )

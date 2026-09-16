@@ -168,6 +168,9 @@ struct ToolDescriptor {
     var friction: ToolFriction = .silent
     /// Grouping for the permissions/capability UI.
     var category: String = "general"
+    /// A JSON Schema supplied as is, for tools described by someone else
+    /// (MCP servers). Used instead of `params` when set.
+    var rawParameters: [String: any Sendable]?
 
     /// JSON Schema for this tool's arguments.
     ///
@@ -175,6 +178,7 @@ struct ToolDescriptor {
     /// that is MLXLMCommon's `ToolSpec`, so the dictionary can be handed to
     /// `UserInput(tools:)` with no bridging step.
     var parameterSchema: [String: any Sendable] {
+        if let rawParameters { return rawParameters }
         var properties: [String: any Sendable] = [:]
         var required: [String] = []
         for p in params {

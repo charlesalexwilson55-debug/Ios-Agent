@@ -21,6 +21,9 @@ struct GlassCommandBar: View {
     @Binding var research: Bool
     /// Owned by the caller, which also closes it on a tap outside the bar.
     @Binding var menuOpen: Bool
+    /// The work level slider, and whether Auto sets it per message instead.
+    @Binding var level: WorkLevel
+    @Binding var autoLevel: Bool
 
     let personas: [Persona]
     let selectedPersona: Persona?
@@ -43,7 +46,8 @@ struct GlassCommandBar: View {
     private static let smallButton: CGFloat = 30
     private static let plusLeading: CGFloat = 8
     private static let closeSize: CGFloat = 42
-    private static let menuWidth: CGFloat = 250
+    private static let menuWidth: CGFloat = 304
+    private static let levelColumnWidth: CGFloat = 106
     /// Personalities listed in the menu before "All personalities".
     private static let menuPersonaLimit = 5
 
@@ -133,6 +137,7 @@ struct GlassCommandBar: View {
             return typing ? Color.white : tint
         }()
         return Button {
+            if !menuOpen { isFocused = false }
             menuOpen.toggle()
         } label: {
             Image(systemName: "plus")
@@ -146,7 +151,7 @@ struct GlassCommandBar: View {
                             .font(.system(size: 7, weight: .bold))
                             .foregroundStyle(.white)
                             .frame(width: 14, height: 14)
-                            .background { Circle().fill(Color.accentColor) }
+                            .background { Circle().fill(Color.conduitAccent) }
                             .offset(x: 4, y: -4)
                     }
                 }
@@ -169,35 +174,21 @@ struct GlassCommandBar: View {
 
     // MARK: - Plus menu
 
-    /// A white panel that grows up out of the plus button.
+    /// A white panel that grows up out of the plus button: personalities
+    /// and switches on the left, the work level on the right.
     private var plusMenu: some View {
         VStack(alignment: .leading, spacing: 0) {
-            sectionLabel("Personality")
-            personaRow(id: nil, name: "Conduit", color: nil)
-            ForEach(menuPersonas) { persona in
-                personaRow(id: persona.id, name: persona.name, color: persona.color)
+            HStack(alignment: .top, spacing: 0) {
+                optionsColumn
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Rectangle()
+                    .fill(Color.black.opacity(0.08))
+                    .frame(width: 1)
+                    .padding(.vertical, 6)
+                levelColumn
+                    .frame(width: Self.levelColumnWidth)
             }
-            menuRow(symbol: hasMorePersonas ? "ellipsis.circle" : "plus.circle",
-                    title: hasMorePersonas ? "All personalities" : "New personality",
-                    trailing: nil, highlighted: false) {
-                menuOpen = false
-                onManagePersonas(!hasMorePersonas)
-            }
-
-            Divider().padding(.vertical, 4).padding(.horizontal, 12)
-
-            menuRow(symbol: thinking ? "brain.fill" : "brain", title: "Think",
-                    trailing: thinking ? "On" : "Off", highlighted: thinking) {
-                thinking.toggle()
-            }
-            menuRow(symbol: "globe", title: "Online",
-                    trailing: online ? "On" : "Off", highlighted: online) {
-                online.toggle()
-            }
-            menuRow(symbol: research ? "binoculars.fill" : "binoculars", title: "Research",
-                    trailing: research ? "On" : "Off", highlighted: research) {
-                research.toggle()
-            }
+            .fixedSize(horizontal: false, vertical: true)
 
             Button {
                 menuOpen = false
@@ -220,6 +211,70 @@ struct GlassCommandBar: View {
                 .shadow(color: .black.opacity(0.2), radius: 14, y: 4)
         }
         .environment(\.colorScheme, .light)
+    }
+
+    private var optionsColumn: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sectionLabel("Personality")
+            personaRow(id: nil, name: "Conduit", color: nil)
+            ForEach(menuPersonas) { persona in
+                personaRow(id: persona.id, name: persona.name, color: persona.color)
+            }
+            menuRow(symbol: hasMorePersonas ? "ellipsis.circle" : "plus.circle",
+                    title: hasMorePersonas ? "All personalities" : "New personality",
+                    trailing: nil, highlighted: false) {
+                menuOpen = false
+                onManagePersonas(!hasMorePersonas)
+            }
+
+            Divider().padding(.vertical, 4).padding(.horizontal, 12)
+
+            menuRow(symbol: thinking ? "brain.fill" : "brain", title: "Think",
+                    trailing: autoLevel ? "Auto" : (thinking ? "On" : "Off"),
+                    highlighted: thinking && !autoLevel) {
+                thinking.toggle()
+            }
+            menuRow(symbol: "globe", title: "Online",
+                    trailing: online ? "On" : "Off", highlighted: online) {
+                online.toggle()
+            }
+            menuRow(symbol: research ? "binoculars.fill" : "binoculars", title: "Research",
+                    trailing: research ? "On" : (autoLevel ? "Auto" : "Off"), highlighted: research) {
+                research.toggle()
+            }
+        }
+    }
+
+    private var levelColumn: some View {
+        let tint = selectedPersona?.color ?? Color.conduitAccent
+        return VStack(alignment: .leading, spacing: 8) {
+            sectionLabel("Level")
+                .padding(.leading, -4)
+            Button {
+                autoLevel.toggle()
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "wand.and.stars")
+                    Text("Auto")
+                }
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(autoLevel ? Color.white : Color.black.opacity(0.7))
+                .padding(.horizontal, 11)
+                .frame(height: 28)
+                .background { Capsule().fill(autoLevel ? tint : Color.black.opacity(0.07)) }
+                .contentShape(.capsule)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Automatic level")
+            .accessibilityValue(autoLevel ? "On" : "Off")
+            .accessibilityHint("Chooses the level, Think and Research for each message.")
+
+            LevelSlider(level: $level, tint: tint, dimmed: autoLevel) {
+                autoLevel = false
+            }
+        }
+        .padding(.leading, 12)
+        .padding(.trailing, 8)
     }
 
     private var hasMorePersonas: Bool {
@@ -271,7 +326,7 @@ struct GlassCommandBar: View {
                 if selected {
                     Image(systemName: "checkmark")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(color ?? Color.accentColor)
+                        .foregroundStyle(color ?? Color.conduitAccent)
                 }
             }
             .padding(.horizontal, 16)
@@ -294,7 +349,7 @@ struct GlassCommandBar: View {
             HStack(spacing: 10) {
                 Image(systemName: symbol)
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(highlighted ? Color.accentColor : Color.black.opacity(0.75))
+                    .foregroundStyle(highlighted ? Color.conduitAccent : Color.black.opacity(0.75))
                     .frame(width: 24)
                 Text(title)
                     .font(.system(size: 15))
@@ -303,7 +358,7 @@ struct GlassCommandBar: View {
                 if let trailing {
                     Text(trailing)
                         .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(highlighted ? Color.accentColor : Color.black.opacity(0.4))
+                        .foregroundStyle(highlighted ? Color.conduitAccent : Color.black.opacity(0.4))
                 }
             }
             .padding(.horizontal, 16)
@@ -330,7 +385,7 @@ struct GlassCommandBar: View {
                 .foregroundStyle(Color.white)
                 .frame(width: Self.smallButton, height: Self.smallButton)
                 .background {
-                    Circle().fill(enabled ? Color.accentColor : Color.secondary.opacity(0.35))
+                    Circle().fill(enabled ? Color.conduitAccent : Color.secondary.opacity(0.35))
                 }
                 .contentShape(.circle)
                 .contentTransition(.symbolEffect(.replace))
@@ -339,5 +394,103 @@ struct GlassCommandBar: View {
         .disabled(!enabled)
         .animation(.easeOut(duration: 0.18), value: isWorking)
         .accessibilityLabel(isWorking ? "Stop" : "Send")
+    }
+}
+
+/// A vertical slider with five stops: Ultra at the top, Normal at the bottom.
+private struct LevelSlider: View {
+    @Binding var level: WorkLevel
+    let tint: Color
+    /// Shown faded while Auto is choosing.
+    let dimmed: Bool
+    /// Called when the user moves it, which takes over from Auto.
+    let onUserChange: () -> Void
+
+    private static let stop: CGFloat = 34
+    private static let thumb: CGFloat = 22
+    private static let trackWidth: CGFloat = 6
+
+    /// Top to bottom.
+    private let levels: [WorkLevel] = WorkLevel.allCases.reversed()
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            track
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(levels) { item in
+                    Text(item.title)
+                        .font(.system(size: 14, weight: item == level ? .semibold : .regular))
+                        .foregroundStyle(item == level ? Color.black : Color.black.opacity(0.5))
+                        .frame(height: Self.stop)
+                }
+            }
+        }
+        .frame(height: Self.stop * CGFloat(levels.count), alignment: .top)
+        .contentShape(.rect)
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { value in select(at: value.location.y) }
+        )
+        .opacity(dimmed ? 0.45 : 1)
+        .animation(.spring(response: 0.25, dampingFraction: 0.8), value: level)
+        .sensoryFeedback(.selection, trigger: level)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Work level")
+        .accessibilityValue(level.title)
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment: step(by: 1)
+            case .decrement: step(by: -1)
+            @unknown default: break
+            }
+        }
+    }
+
+    private var index: Int {
+        levels.firstIndex(of: level) ?? levels.count - 1
+    }
+
+    private var track: some View {
+        let count = levels.count
+        let position = CGFloat(index)
+        let centre = Self.stop / 2
+        return ZStack(alignment: .top) {
+            Capsule()
+                .fill(Color.black.opacity(0.1))
+                .frame(width: Self.trackWidth, height: CGFloat(count - 1) * Self.stop + Self.trackWidth)
+                .offset(y: centre - Self.trackWidth / 2)
+            Capsule()
+                .fill(tint)
+                .frame(width: Self.trackWidth,
+                       height: CGFloat(count - 1 - index) * Self.stop + Self.trackWidth)
+                .offset(y: position * Self.stop + centre - Self.trackWidth / 2)
+            ForEach(0..<count, id: \.self) { stop in
+                Circle()
+                    .fill(stop >= index ? Color.white.opacity(0.9) : Color.black.opacity(0.25))
+                    .frame(width: 4, height: 4)
+                    .offset(y: CGFloat(stop) * Self.stop + centre - 2)
+            }
+            Circle()
+                .fill(Color.white)
+                .frame(width: Self.thumb, height: Self.thumb)
+                .overlay { Circle().strokeBorder(tint, lineWidth: 3) }
+                .shadow(color: .black.opacity(0.2), radius: 3, y: 1)
+                .offset(y: position * Self.stop + (Self.stop - Self.thumb) / 2)
+        }
+        .frame(width: Self.thumb, height: Self.stop * CGFloat(count), alignment: .top)
+    }
+
+    private func select(at y: CGFloat) {
+        let row = min(max(Int(y / Self.stop), 0), levels.count - 1)
+        let chosen = levels[row]
+        guard chosen != level || dimmed else { return }
+        level = chosen
+        onUserChange()
+    }
+
+    private func step(by amount: Int) {
+        guard let next = WorkLevel(rawValue: level.rawValue + amount) else { return }
+        level = next
+        onUserChange()
     }
 }

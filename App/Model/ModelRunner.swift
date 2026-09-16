@@ -312,6 +312,12 @@ actor ModelRunner {
             }
         }
 
+        // For Settings > Power: which model ran, for how long, and what the
+        // battery did meanwhile.
+        let battery = await UsageStore.shared.reading()
+        let startedAt = Date()
+        let modelName = loadedName
+
         // Assigning any value resets the peak counter.
         MLX.Memory.peakMemory = 0
         Diagnostics.begin("generate", "prompt=\(promptTokens) max=\(maxTokens) "
@@ -319,6 +325,12 @@ actor ModelRunner {
             + "active=\(Diagnostics.megabytes(MLX.Memory.activeMemory))MB "
             + "avail=\(Diagnostics.availableMB)MB")
         defer {
+            let chunks = generated
+            let seconds = Date().timeIntervalSince(startedAt)
+            Task { @MainActor in
+                UsageStore.shared.record(model: modelName, promptTokens: promptTokens,
+                                         generatedTokens: chunks, seconds: seconds, start: battery)
+            }
             Diagnostics.end("generate", "chunks=\(generated) "
                 + "cancelled=\(Task.isCancelled) "
                 + "peak=\(Diagnostics.megabytes(MLX.Memory.peakMemory))MB "

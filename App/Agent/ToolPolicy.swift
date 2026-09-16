@@ -19,7 +19,8 @@ enum ToolPolicy {
         for tool: String,
         request: String,
         previousReply: String,
-        afterWebContent: Bool
+        afterWebContent: Bool,
+        mcpServerName: String? = nil
     ) -> ToolOutcome? {
         if tool == "open_in_browser" {
             if mentionsAny(request, browseWords) || acceptsOffer(request, previousReply) {
@@ -28,6 +29,16 @@ enum ToolPolicy {
             return .failure("open_in_browser",
                 "Not run: the user did not ask to open anything in the browser. Answer inside "
                     + "Conduit with web_search and read_page instead.")
+        }
+
+        // An outside server's tools can change things there, so once untrusted
+        // text is in the conversation they need the server named by the user.
+        if afterWebContent, let server = mcpServerName?.lowercased(), !server.isEmpty,
+           !request.lowercased().contains(server),
+           !(previousReply.lowercased().contains(server) && isAffirmative(request)) {
+            return .failure(tool,
+                "Not run: web or server content is in this conversation, and the user did not "
+                    + "name \(mcpServerName ?? "the server") in this request. Ask the user first.")
         }
 
         if afterWebContent, let verbs = sensitiveTools[tool], !mentionsAny(request, verbs),

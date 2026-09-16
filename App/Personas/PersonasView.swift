@@ -79,8 +79,8 @@ struct PersonasView: View {
 
     private func subtitle(for persona: Persona) -> String {
         let title = persona.jobTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        let effort = persona.effort == .normal ? "" : persona.effort.title
-        return [title, effort].filter { !$0.isEmpty }.joined(separator: " \u{00B7} ")
+        let level = persona.autoLevel ? "Auto" : (persona.level == .normal ? "" : persona.level.title)
+        return [title, level].filter { !$0.isEmpty }.joined(separator: " \u{00B7} ")
     }
 
     private func row(
@@ -115,7 +115,7 @@ struct PersonasView: View {
                 if selected {
                     Image(systemName: "checkmark")
                         .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(Color.conduitAccent)
                 }
             }
             .contentShape(.rect)
@@ -132,6 +132,7 @@ struct PersonaEditor: View {
 
     @State private var draft: Persona
     @State private var customColor: Color
+    @State private var mcp = MCPStore.shared
     private let isNew: Bool
 
     init(persona: Persona, isNew: Bool) {
@@ -185,7 +186,7 @@ struct PersonaEditor: View {
 
                 connectorsSection
                 modelSection
-                effortSection
+                levelSection
 
                 if !isNew {
                     Section {
@@ -253,6 +254,22 @@ struct PersonaEditor: View {
                 .textInputAutocapitalization(.never)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
+                    ForEach(mcp.servers) { server in
+                        let used = mcp.servers(namedIn: draft.connectors).contains { $0.id == server.id }
+                        Button {
+                            addWord(server.name)
+                        } label: {
+                            Label(server.name, systemImage: "server.rack")
+                                .font(.footnote.weight(.medium))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(
+                                    Capsule().fill(used ? draft.color.opacity(0.25) : Color.secondary.opacity(0.12))
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(used)
+                    }
                     ForEach(Connector.allCases) { connector in
                         let used = Connector.matches(in: draft.connectors).contains(connector)
                         Button {
@@ -280,12 +297,16 @@ struct PersonaEditor: View {
     }
 
     private var connectorSummary: String {
-        let matched = Connector.matches(in: draft.connectors)
-        if draft.allowedToolNames == nil {
-            return "Uses every connector. Name some, such as calendar or web, to limit it to those. "
-                + "These are Conduit's built-in connectors: MCP servers cannot run inside an iPhone app."
+        let builtIn = Connector.matches(in: draft.connectors).map(\.title)
+        let servers = mcp.servers(namedIn: draft.connectors).map(\.name)
+        if Connector.namesEverything(draft.connectors) || (builtIn.isEmpty && servers.isEmpty) {
+            return "Uses every built-in connector. Name some, such as calendar or web, to limit it to "
+                + "those. MCP servers added in Settings > Connectors can be named here too."
         }
-        return "Uses: " + matched.map(\.title).joined(separator: ", ")
+        var parts: [String] = []
+        if !builtIn.isEmpty { parts.append(builtIn.joined(separator: ", ")) }
+        if !servers.isEmpty { parts.append("MCP: " + servers.joined(separator: ", ")) }
+        return "Uses: " + parts.joined(separator: "; ")
             + ". The clock and calculator are always available."
     }
 
@@ -325,39 +346,32 @@ struct PersonaEditor: View {
         return "Switching to this personality loads that model, which takes a little while."
     }
 
-    private var effortSection: some View {
+    private var levelSection: some View {
         Section {
-            Picker("Work rate", selection: $draft.effort) {
-                ForEach(Persona.Effort.allCases) { effort in
-                    Text(effort.title).tag(effort)
+            Toggle("Let Auto choose", isOn: $draft.autoLevel)
+            if !draft.autoLevel {
+                Picker("Work level", selection: $draft.level) {
+                    ForEach(WorkLevel.allCases.reversed()) { level in
+                        Text(level.title).tag(level)
+                    }
                 }
-            }
-            .pickerStyle(.segmented)
-            Stepper(value: $draft.drafts, in: 1...Persona.maxDrafts) {
-                Text(draft.drafts == 1 ? "1 draft per answer" : "\(draft.drafts) drafts per answer")
             }
         } header: {
             Text("How hard it works")
         } footer: {
-            Text(effortFooter)
+            Text(draft.autoLevel
+                ? "Auto picks the level, Think and Research for each message."
+                : draft.level.summary + " Choosing this personality moves the plus menu's slider here.")
         }
-    }
-
-    private var effortFooter: String {
-        let drafts: String
-        if draft.drafts == 1 {
-            drafts = "Writes one answer."
-        } else {
-            drafts = "Writes \(draft.drafts) answers to a question, then keeps the best parts. The "
-                + "phone runs one at a time, so this takes about \(draft.drafts + 1) times as long. "
-                + "Phone actions are never done twice."
-        }
-        return draft.effort.detail + " " + drafts
     }
 
     private func addConnector(_ connector: Connector) {
+        addWord(connector.keyword)
+    }
+
+    private func addWord(_ word: String) {
         let current = draft.connectors.trimmingCharacters(in: .whitespacesAndNewlines)
-        draft.connectors = current.isEmpty ? connector.keyword : current + ", " + connector.keyword
+        draft.connectors = current.isEmpty ? word : current + ", " + word
     }
 }
 
