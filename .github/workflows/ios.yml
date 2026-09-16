@@ -86,11 +86,17 @@ jobs:
             echo "ios sdk  $(xcrun --sdk iphoneos --show-sdk-version)"
             echo
             if [ -f build/xcodebuild.log ]; then
+              # Grepping only for "error: " missed run #2 entirely: a failed
+              # build *command* (plugin validation, linking, codesign) emits no
+              # compiler diagnostic at all, so the errors section came back
+              # empty on a build that had very much failed. The alternation
+              # below covers those non-diagnostic failure shapes too.
               echo "=== errors ==="
-              grep -E "error: " build/xcodebuild.log | sort -u | head -120 || echo "(none)"
+              grep -nE "error: |ARCHIVE FAILED|BUILD FAILED|The following build commands failed|Validate plug-in|fatal error|ld: |clang: error|Undefined symbol|No such module|could not resolve|Missing package product" \
+                build/xcodebuild.log | sort -u -t: -k2 | head -120 || echo "(none)"
               echo
               echo "=== warnings (first 40 unique) ==="
-              grep -E "warning: " build/xcodebuild.log | sort -u | head -40 || echo "(none)"
+              grep -E "warning: " build/xcodebuild.log | sed 's/^.*warning: /warning: /' | sort -u | head -40 || echo "(none)"
               echo
               echo "=== last 120 raw lines ==="
               tail -120 build/xcodebuild.log

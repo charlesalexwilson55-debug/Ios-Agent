@@ -58,6 +58,15 @@ mkdir -p "$BUILD_ROOT"
 # humans reading the CI console; the unfiltered log is what actually contains
 # the compiler diagnostics, and discarding it was costing a full build cycle
 # per error.
+#
+# -skipPackagePluginValidation is load-bearing. mlx-swift ships a build-tool
+# plugin ("CudaBuild"), and Xcode refuses to run package plugins until a user
+# has approved them in the UI. A CI runner has no UI, so the build dies at
+# "Validate plug-in CudaBuild in package mlx-swift" with ARCHIVE FAILED and
+# not one compiler diagnostic — which reads like a broken project rather than
+# a consent prompt nobody can answer. The flag grants that consent
+# non-interactively. -skipMacroValidation does the same for swift-syntax
+# macros, which mlx-swift-lm pulls in for its #huggingFaceLoadModelContainer.
 RAW_LOG="$BUILD_ROOT/xcodebuild.log"
 set +e
 xcodebuild archive \
@@ -67,6 +76,7 @@ xcodebuild archive \
   -destination 'generic/platform=iOS' \
   -archivePath "$ARCHIVE" \
   -skipMacroValidation \
+  -skipPackagePluginValidation \
   CODE_SIGNING_ALLOWED=NO \
   CODE_SIGNING_REQUIRED=NO \
   CODE_SIGN_IDENTITY="" \

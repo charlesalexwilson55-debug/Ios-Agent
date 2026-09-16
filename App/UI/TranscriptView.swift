@@ -144,20 +144,20 @@ private struct ToolChip: View {
 
     private var glyph: String {
         switch outcome {
-        case .done: return "checkmark.circle.fill"
-        case .awaitingUser: return "hand.tap.fill"
-        case .failed: return "exclamationmark.triangle.fill"
+        case .done?: return "checkmark.circle.fill"
+        case .awaitingUser?: return "hand.tap.fill"
+        case .failed?: return "exclamationmark.triangle.fill"
         case nil: return "circle.dotted"
         }
     }
 
     private var tint: Color {
         switch outcome {
-        case .done: return .green
+        case .done?: return .green
         // Amber, not green: this state means the user still has to act, and
         // colouring it like success is exactly the confusion to avoid.
-        case .awaitingUser: return .orange
-        case .failed: return .red
+        case .awaitingUser?: return .orange
+        case .failed?: return .red
         case nil: return .secondary
         }
     }
@@ -187,10 +187,18 @@ private struct ErrorRow: View {
 /// draft. Setting that expectation before the first request is cheaper than
 /// correcting it afterwards.
 private struct EmptyStateView: View {
+    /// A named struct rather than a tuple: Swift has no key paths to tuple
+    /// elements, so `ForEach(examples, id: \.1)` does not compile.
+    private struct Example: Identifiable {
+        let id = UUID()
+        let icon: String
+        let text: String
+    }
+
     private let examples = [
-        ("calendar", "Put dinner with Sam in my calendar for Friday at 8"),
-        ("checklist", "Remind me to renew the car insurance on Thursday morning"),
-        ("message", "Draft a text to Mum saying I will be late"),
+        Example(icon: "calendar", text: "Put dinner with Sam in my calendar for Friday at 8"),
+        Example(icon: "checklist", text: "Remind me to renew the car insurance on Thursday morning"),
+        Example(icon: "message", text: "Draft a text to Mum saying I will be late"),
     ]
 
     var body: some View {
@@ -204,13 +212,13 @@ private struct EmptyStateView: View {
             }
 
             VStack(alignment: .leading, spacing: 9) {
-                ForEach(examples, id: \.1) { icon, example in
+                ForEach(examples) { example in
                     HStack(spacing: 9) {
-                        Image(systemName: iconName(icon))
+                        Image(systemName: example.icon)
                             .font(.system(size: 13))
                             .foregroundStyle(.secondary)
                             .frame(width: 18)
-                        Text(example)
+                        Text(example.text)
                             .font(.system(size: 14))
                             .foregroundStyle(.secondary)
                     }
@@ -220,13 +228,5 @@ private struct EmptyStateView: View {
             .glassEffect(.clear, in: .rect(cornerRadius: 17))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func iconName(_ key: String) -> String {
-        switch key {
-        case "calendar": return "calendar"
-        case "checklist": return "checklist"
-        default: return "message"
-        }
     }
 }
