@@ -1,4 +1,5 @@
 import Foundation
+import MapKit
 import UIKit
 
 /// Time, clipboard, app launching, maps, media and Shortcuts.
@@ -88,9 +89,15 @@ final class DeviceTools: ToolProviding {
         ),
         ToolDescriptor(
             name: "get_directions",
-            description: "Open Maps with directions to a destination.",
+            description: "Open Maps with directions between two places. Copy each address exactly "
+                + "as the user gave it, including the street number, town or suburb and postcode. "
+                + "Leave origin out to start from the user's current location.",
             params: [
-                .required("destination", .string, "Address or place name."),
+                .required("destination", .string,
+                          "Where to go: the full address or place name, including the town."),
+                .optional("origin", .string,
+                          "Where to start: the full address including the town. "
+                              + "Omit to start from the current location."),
                 .optional("mode", .string, "Travel mode.",
                           allowedValues: ["driving", "walking", "transit", "cycling"]),
             ],
@@ -221,26 +228,75 @@ final class DeviceTools: ToolProviding {
     }
 
     private func directions(_ args: ArgumentValue) async -> ToolOutcome {
-        guard let destination = args.string("destination"), !destination.isEmpty else {
+        guard let destination = args.string("destination")?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !destination.isEmpty
+        else {
             return .badArgument("get_directions", "destination", "an address or place name")
         }
-        let flag: String
-        switch args.string("mode")?.lowercased() {
-        case "walking": flag = "w"
-        case "transit": flag = "r"
-        case "cycling": flag = "c"
-        default: flag = "d"
+        let requestedMode = args.string("mode")?.lowercased() ?? "driving"
+        let mode: String
+        switch requestedMode {
+        case "walking": mode = MKLaunchOptionsDirectionsModeWalking
+        case "transit": mode = MKLaunchOptionsDirectionsModeTransit
+        case "cycling": mode = MKLaunchOptionsDirectionsModeCycling
+        default: mode = MKLaunchOptionsDirectionsModeDriving
         }
-        var components = URLComponents(string: "maps://")
-        components?.queryItems = [
-            URLQueryItem(name: "daddr", value: destination),
-            URLQueryItem(name: "dirflg", value: flag),
-        ]
-        guard let url = components?.url, await ComposePresenter.open(url) else {
-            return .failure("get_directions", "Could not open Maps for \(destination).")
+
+        var from = MKMapItem.forCurrentLocation()
+        var fromText = "your current location"
+        if let origin = args.string("origin")?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !origin.isEmpty, !Self.meansCurrentLocation(origin) {
+            switch await PlaceResolver.resolve(origin) {
+            case .found(let item, let description):
+                from = item
+                fromText = description
+            case .ambiguous(let options):
+                return Self.unresolved("starting point", origin, options)
+            case .notFound:
+                return Self.unresolved("starting point", origin, [])
+            }
         }
-        return .handedOff("get_directions", "Directions to \(destination)",
-                       detail: ["destination": destination])
+
+        let to: MKMapItem
+        let toText: String
+        switch await PlaceResolver.resolve(destination) {
+        case .found(let item, let description):
+            to = item
+            toText = description
+        case .ambiguous(let options):
+            return Self.unresolved("destination", destination, options)
+        case .notFound:
+            return Self.unresolved("destination", destination, [])
+        }
+
+        // The resolved places go to Maps as they are, so Maps cannot
+        // re-interpret the text and pick a different town.
+        let opened = MKMapItem.openMaps(
+            with: [from, to],
+            launchOptions: [MKLaunchOptionsDirectionsModeKey: mode]
+        )
+        guard opened else {
+            return .failure("get_directions", "Could not open Maps.")
+        }
+        return .handedOff("get_directions", "Directions from \(fromText) to \(toText)",
+                       detail: ["from": fromText, "to": toText, "mode": requestedMode])
+    }
+
+    private static func meansCurrentLocation(_ text: String) -> Bool {
+        let lowered = text.lowercased()
+        return ["current location", "my current location", "my location", "here", "where i am"]
+            .contains(lowered)
+    }
+
+    /// Refuses to open Maps on a guess, and gives the model what it needs to ask.
+    private static func unresolved(_ role: String, _ query: String, _ options: [String]) -> ToolOutcome {
+        let found = options.isEmpty
+            ? "Nothing matched it."
+            : "The closest matches were: \(options.joined(separator: "; "))."
+        return .failure("get_directions",
+                        "Could not find the \(role) \"\(query)\" exactly. \(found) Ask the user "
+                            + "which place they meant, or for the town and postcode. "
+                            + "Do not open Maps with a guess.")
     }
 
     private func playMusic(_ args: ArgumentValue) async -> ToolOutcome {

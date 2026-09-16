@@ -35,7 +35,9 @@ from pathlib import Path
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", default="unsloth/Qwen3-8B",
-                        help="Base model. Use unsloth/Qwen3-4B if an 8B run runs out of memory.")
+                        help="Base model. It must be the same model the phone runs, or the "
+                             "adapter will not fit it: unsloth/Qwen3.5-4B for "
+                             "Qwen3.5-4B-MLX-4bit, unsloth/Qwen3-4B for Qwen3-4B-4bit.")
     parser.add_argument("--data", default="data/conduit_sft.jsonl")
     parser.add_argument("--eval-data", default="data/conduit_sft_eval.jsonl")
     parser.add_argument("--out", default="conduit-lora")

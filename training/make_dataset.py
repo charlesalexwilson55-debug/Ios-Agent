@@ -1098,6 +1098,76 @@ def example_search_requested(rng: random.Random) -> list[dict]:
     ]
 
 
+# Invented addresses in real towns. The lesson is to copy the whole address,
+# town included, into the right argument, and to ask when the app cannot
+# pin the place down rather than let Maps guess.
+DIRECTION_STARTS = [
+    ("14 Birch Road, Stroud", "14 Birch Rd, Stroud, GL5 1AB, England"),
+    ("7 Mill Lane, Ludlow", "7 Mill Ln, Ludlow, SY8 1BB, England"),
+    ("52 Queen Street, Bathurst", "52 Queen St, Bathurst NSW 2795, Australia"),
+    ("3 Harbour View, Whitby", "3 Harbour View, Whitby, YO21 3PU, England"),
+    ("9 Elm Grove, Frankston", "9 Elm Gr, Frankston VIC 3199, Australia"),
+    ("21 Chapel Street, Penzance", "21 Chapel St, Penzance, TR18 4AJ, England"),
+]
+
+DIRECTION_ENDS = [
+    ("Stroud station", "Stroud Station, Station Rd, Stroud, GL5 3AP, England"),
+    ("Ludlow Castle", "Ludlow Castle, Castle Sq, Ludlow, SY8 1AY, England"),
+    ("Bathurst Hospital", "Bathurst Hospital, Howick St, Bathurst NSW 2795, Australia"),
+    ("Whitby Abbey", "Whitby Abbey, Abbey Ln, Whitby, YO22 4JT, England"),
+    ("Frankston station", "Frankston Station, Young St, Frankston VIC 3199, Australia"),
+    ("the Minack Theatre", "Minack Theatre, Porthcurno, Penzance, TR19 6JU, England"),
+]
+
+
+def example_directions(rng: random.Random) -> list[dict]:
+    start_said, start_found = rng.choice(DIRECTION_STARTS)
+    end_said, end_found = rng.choice(DIRECTION_ENDS)
+    mode = rng.choice(["driving", "driving", "walking", "transit", "cycling"])
+    spoken_mode = "" if mode == "driving" else f"{mode} "
+    from_here = rng.random() < 0.35
+
+    if from_here:
+        request = rng.choice([f"{spoken_mode}directions to {end_said}",
+                              f"how do I get to {end_said}",
+                              f"take me to {end_said}"])
+        arguments = {"destination": end_said}
+        start_found = "your current location"
+    else:
+        request = rng.choice([f"{spoken_mode}directions from {start_said} to {end_said}",
+                              f"how do I get from {start_said} to {end_said}",
+                              f"get me from {start_said} to {end_said}"])
+        arguments = {"origin": start_said, "destination": end_said}
+    if mode != "driving":
+        arguments["mode"] = mode
+
+    if not from_here and rng.random() < 0.2:
+        # The town was not enough to single out the place.
+        street = start_said.split(", ")[0]
+        return [
+            {"role": "user", "content": request},
+            call("get_directions", arguments),
+            result({"ok": False, "action": "get_directions",
+                    "error": f"Could not find the starting point \"{start_said}\" exactly. "
+                             f"The closest matches were: {street}, Northfield; {street}, "
+                             f"Southgate. Ask the user which place they meant, or for the "
+                             f"town and postcode. Do not open Maps with a guess."}),
+            {"role": "assistant",
+             "content": f"I couldn't pin down {start_said}. The nearest matches were in "
+                        f"Northfield and Southgate. What's the postcode?"},
+        ]
+
+    return [
+        {"role": "user", "content": request},
+        call("get_directions", arguments),
+        handed_off_result("get_directions", **{"from": start_found, "to": end_found,
+                                               "mode": mode}),
+        {"role": "assistant",
+         "content": f"I've opened Maps with {spoken_mode}directions from "
+                    f"{'your current location' if from_here else start_said} to {end_said}."},
+    ]
+
+
 # Weighted so the behavioural lessons outnumber the format ones. Plain
 # calendar writes are the easiest thing for the model to already do well;
 # honesty about friction and refusals are what need reinforcing.
@@ -1120,6 +1190,7 @@ GENERATORS = [
     (example_knowledge, 5),
     (example_javascript, 0.4),
     (example_search_requested, 3),
+    (example_directions, 5),
 ]
 
 

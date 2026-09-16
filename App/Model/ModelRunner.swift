@@ -102,14 +102,28 @@ actor ModelRunner {
 
     private static func estimateKVBytesPerToken(directory: URL) -> Int? {
         guard let data = try? Data(contentsOf: directory.appendingPathComponent("config.json")),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let layers = json["num_hidden_layers"] as? Int
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
+        // Multimodal checkpoints (Qwen3.5, Gemma 4) nest the language model's
+        // settings under text_config.
+        let json = root["text_config"] as? [String: Any] ?? root
+        guard let layers = json["num_hidden_layers"] as? Int else { return nil }
+        // Only full-attention layers grow with every token. Qwen3.5's linear
+        // layers keep a fixed-size state, and sliding-window layers stop
+        // growing at the window, so they are left out of the per-token cost.
+        let growingLayers: Int
+        if let types = json["layer_types"] as? [String] {
+            growingLayers = types.filter { $0 == "full_attention" }.count
+        } else if let interval = json["full_attention_interval"] as? Int, interval > 0 {
+            growingLayers = layers / interval
+        } else {
+            growingLayers = layers
+        }
         let heads = json["num_attention_heads"] as? Int ?? 32
         let kvHeads = json["num_key_value_heads"] as? Int ?? heads
         let hidden = json["hidden_size"] as? Int ?? 4096
         let headDim = json["head_dim"] as? Int ?? hidden / max(heads, 1)
-        let elements = layers * kvHeads * headDim * 2
+        let elements = max(growingLayers, 1) * kvHeads * headDim * 2
         // Quantised values plus a 16-bit scale and bias per 64-element group.
         let bytesPerElement = Double(kvBits) / 8 + 4.0 / 64
         return Int(Double(elements) * bytesPerElement)
@@ -264,7 +278,16 @@ actor ModelRunner {
             prefillStepSize: Self.prefillStepSize
         )
 
-        var splitter = ThinkSplitter()
+        // Whether the chat template already opened a think block at the end
+        // of the prompt, in which case the output starts as reasoning.
+        let promptTail = prepared.text.tokens.asArray(Int32.self).suffix(8).map { Int($0) }
+        let startsInReasoning = await container.perform { (context: ModelContext) in
+            context.tokenizer.decode(tokenIds: promptTail, skipSpecialTokens: false)
+        }
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .hasSuffix("<think>")
+
+        var splitter = ThinkSplitter(startsInReasoning: startsInReasoning)
         var generated = 0
         func emit(_ pieces: [ThinkSplitter.Piece]) {
             for piece in pieces where !piece.text.isEmpty {
@@ -337,9 +360,13 @@ actor ModelRunner {
 
     // MARK: - Thinking
 
-    /// Separates Qwen3's `<think>…</think>` output from the answer while it
-    /// streams. Tags can be split across chunks, so any trailing text that
-    /// could be the start of a tag is held back until the next chunk decides it.
+    /// Separates `<think>…</think>` output from the answer while it streams.
+    /// Tags can be split across chunks, so any trailing text that could be the
+    /// start of a tag is held back until the next chunk decides it.
+    ///
+    /// Qwen3 writes the opening tag itself. Qwen3.5's chat template writes it
+    /// into the prompt instead, so the output begins mid-reasoning and only
+    /// the closing tag appears; `startsInReasoning` covers that case.
     struct ThinkSplitter {
         struct Piece {
             let isReasoning: Bool
@@ -347,14 +374,22 @@ actor ModelRunner {
         }
 
         private var buffer = ""
-        private var inThink = false
+        private var inThink: Bool
         private static let open = "<think>"
         private static let close = "</think>"
+
+        init(startsInReasoning: Bool = false) {
+            inThink = startsInReasoning
+        }
 
         mutating func feed(_ chunk: String) -> [Piece] {
             buffer += chunk
             var pieces: [Piece] = []
             while true {
+                // A redundant opening tag inside reasoning is dropped.
+                if inThink, let stray = buffer.range(of: Self.open) {
+                    buffer.removeSubrange(stray)
+                }
                 let tag = inThink ? Self.close : Self.open
                 if let range = buffer.range(of: tag) {
                     pieces.append(Piece(isReasoning: inThink, text: String(buffer[..<range.lowerBound])))

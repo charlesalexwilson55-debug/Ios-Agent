@@ -425,13 +425,17 @@
     "type": "function",
     "function": {
       "name": "get_directions",
-      "description": "Open Maps with directions to a destination.",
+      "description": "Open Maps with directions between two places. Copy each address exactly as the user gave it, including the street number, town or suburb and postcode. Leave origin out to start from the user's current location.",
       "parameters": {
         "type": "object",
         "properties": {
           "destination": {
             "type": "string",
-            "description": "Address or place name."
+            "description": "Where to go: the full address or place name, including the town."
+          },
+          "origin": {
+            "type": "string",
+            "description": "Where to start: the full address including the town. Omit to start from the current location."
           },
           "mode": {
             "type": "string",

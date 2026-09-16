@@ -286,12 +286,13 @@ final class ModelCatalog {
 
     // MARK: - Suggested downloads
 
-    /// Models Conduit can fetch itself, by HuggingFace id.
+    /// Models worth copying onto the phone, by HuggingFace id.
     ///
-    /// Sizes are the on-disk weights. Qwen3-8B-4bit is listed because it is
-    /// what was asked for, but the 4B is the default recommendation: it leaves
-    /// far more headroom on a phone and the accuracy gap on work this shallow
-    /// — pick a tool, fill in the arguments — is small.
+    /// Sizes are the on-disk weights. Qwen3.5 4B is the default: it follows
+    /// instructions and calls tools far more reliably than Qwen3 4B at a
+    /// similar size, and only a quarter of its layers keep a per-token cache,
+    /// so long answers cost much less memory. The 9B is stronger still but
+    /// needs the increased-memory entitlement to load on a phone.
     struct Suggestion: Identifiable, Hashable {
         var id: String { repoID }
         let repoID: String
@@ -302,17 +303,23 @@ final class ModelCatalog {
 
     static let suggestions: [Suggestion] = [
         Suggestion(
-            repoID: "mlx-community/Qwen3-4B-4bit",
-            displayName: "Qwen3 4B (4-bit)",
-            approxBytes: 2_400_000_000,
-            note: "Recommended. Comfortable headroom, quick replies, reliable tool calls."
+            repoID: "mlx-community/Qwen3.5-4B-MLX-4bit",
+            displayName: "Qwen3.5 4B (4-bit)",
+            approxBytes: 3_030_000_000,
+            note: "Recommended. Best tool use and reasoning that fits comfortably."
         ),
         Suggestion(
-            repoID: "mlx-community/Qwen3-8B-4bit",
-            displayName: "Qwen3 8B (4-bit)",
-            approxBytes: 4_600_000_000,
-            note: "Stronger reasoning, noticeably slower on a phone, and close to the memory "
-                + "ceiling. Keep other apps closed."
+            repoID: "mlx-community/Qwen3-4B-4bit",
+            displayName: "Qwen3 4B (4-bit)",
+            approxBytes: 2_260_000_000,
+            note: "Smaller and a little faster, but weaker at following instructions."
+        ),
+        Suggestion(
+            repoID: "mlx-community/Qwen3.5-9B-MLX-4bit",
+            displayName: "Qwen3.5 9B (4-bit)",
+            approxBytes: 5_950_000_000,
+            note: "Strongest, but needs the increased-memory entitlement and all other "
+                + "apps closed. Slow on a phone."
         ),
     ]
 }

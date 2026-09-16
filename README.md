@@ -105,21 +105,21 @@ Support directories, so the easiest route is to download on a computer and copy
 the folder across via the Files app.
 
 ```bash
-pip install mlx-lm huggingface_hub
-huggingface-cli download mlx-community/Qwen3-4B-4bit --local-dir Qwen3-4B-4bit
+pip install huggingface_hub
+hf download mlx-community/Qwen3.5-4B-MLX-4bit --local-dir Qwen3.5-4B-MLX-4bit
 ```
 
 Then Files → On My iPhone → Conduit → paste the folder. It appears in the model
 picker.
 
-**On the 8B.** `mlx-community/Qwen3-8B-4bit` is about 4.6GB of weights, and
-with KV cache and working memory it wants ~6.5GB live on a 12GB phone. That
-needs the `increased-memory-limit` entitlement (included, see SETUP) and it
-will still be slow and thermally limited. **Start with `Qwen3-4B-4bit.`** For
-this workload — pick a tool, fill in the arguments, write one sentence — the
-4B is close to the 8B and several times more pleasant to use. The picker warns
-you when a model looks too big for the device rather than letting iOS kill the
-app mid-sentence.
+**Which model.** `Qwen3.5-4B-MLX-4bit` (about 3GB) is the recommendation. It
+follows instructions and calls tools much more reliably than Qwen3 4B, and only
+one layer in four keeps a per-token cache, so long answers cost far less memory.
+`Qwen3-4B-4bit` (2.3GB) still works and is a little faster.
+`Qwen3.5-9B-MLX-4bit` (about 6GB) is the strongest, but it needs the
+`increased-memory-limit` entitlement (see SETUP), every other app closed, and
+patience. The picker warns you when a model looks too big for the device
+rather than letting iOS kill the app mid-sentence.
 
 ## The model's "training"
 
