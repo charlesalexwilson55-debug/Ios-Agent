@@ -2,18 +2,6 @@
   {
     "type": "function",
     "function": {
-      "name": "get_current_time",
-      "description": "Get the current date, time, weekday and time zone. Call this FIRST whenever the user says anything relative such as tomorrow, tonight, next Friday or in two hours. You have no clock of your own and will otherwise guess the date wrongly.",
-      "parameters": {
-        "type": "object",
-        "properties": {},
-        "required": []
-      }
-    }
-  },
-  {
-    "type": "function",
-    "function": {
       "name": "find_contact",
       "description": "Look up a person in the user's contacts and return their phone numbers and email addresses. Call this before send_message, place_call or send_email whenever you were given a name rather than a number, so you send to the right person.",
       "parameters": {
@@ -105,7 +93,7 @@
     "type": "function",
     "function": {
       "name": "send_email",
-      "description": "Open an email pre-filled with recipients, subject and body. IMPORTANT: this does NOT send the email; the user must tap send in the sheet. You also cannot read the user's inbox - iOS gives apps no access to received mail.",
+      "description": "Open an email pre-filled with recipients, subject and body. IMPORTANT: this does NOT send the email; the user must tap send in the sheet. You also cannot read the user's inbox — iOS gives apps no access to received mail.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -152,7 +140,7 @@
           },
           "end": {
             "type": "string",
-            "description": "End time in local ISO 8601. Omit to use duration_minutes instead."
+            "description": "End time in local ISO 8601, for example 2026-09-16T15:30:00. Omit to use duration_minutes instead."
           },
           "duration_minutes": {
             "type": "integer",
@@ -192,11 +180,11 @@
         "properties": {
           "start": {
             "type": "string",
-            "description": "Range start in local ISO 8601."
+            "description": "Range start in local ISO 8601, for example 2026-09-16T15:30:00."
           },
           "end": {
             "type": "string",
-            "description": "Range end in local ISO 8601."
+            "description": "Range end in local ISO 8601, for example 2026-09-16T15:30:00."
           },
           "query": {
             "type": "string",
@@ -220,11 +208,11 @@
         "properties": {
           "start": {
             "type": "string",
-            "description": "Start in local ISO 8601."
+            "description": "Start in local ISO 8601, for example 2026-09-16T15:30:00."
           },
           "end": {
             "type": "string",
-            "description": "End in local ISO 8601."
+            "description": "End in local ISO 8601, for example 2026-09-16T15:30:00."
           }
         },
         "required": [
@@ -267,7 +255,7 @@
           },
           "due": {
             "type": "string",
-            "description": "When it is due, in local ISO 8601."
+            "description": "When it is due, in local ISO 8601, for example 2026-09-16T15:30:00."
           },
           "notes": {
             "type": "string",
@@ -340,7 +328,7 @@
           },
           "at": {
             "type": "string",
-            "description": "When to fire, in local ISO 8601."
+            "description": "When to fire, in local ISO 8601, for example 2026-09-16T15:30:00."
           },
           "body": {
             "type": "string",
@@ -351,6 +339,18 @@
           "title",
           "at"
         ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_current_time",
+      "description": "Get the current date, time, weekday and time zone. Call this FIRST whenever the user says anything relative such as tomorrow, tonight, next Friday or in two hours. You have no clock of your own and will otherwise guess the date wrongly.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
       }
     }
   },
@@ -476,18 +476,18 @@
   {
     "type": "function",
     "function": {
-      "name": "web_search",
-      "description": "Open a web search in the browser. This leaves Conduit. Only call it when the user asks you to search the web or look something up online. Never call it to answer a question; answer from what you know instead.",
+      "name": "open_in_browser",
+      "description": "Open a web page, or a search, in Safari for the user to look at. This leaves Conduit. Only call it when the user asks to open or see something in the browser. To answer a question, use web_search and read_page instead.",
       "parameters": {
         "type": "object",
         "properties": {
-          "query": {
+          "target": {
             "type": "string",
-            "description": "What to search for."
+            "description": "A full https:// link, or the words to search for."
           }
         },
         "required": [
-          "query"
+          "target"
         ]
       }
     }
@@ -527,6 +527,61 @@
         "required": [
           "code"
         ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "web_search",
+      "description": "Search the web. Returns the top results, each with a title, the site, a short summary and the link. Use it for anything current, local or specific, or anything you are not sure of. If the summaries are not enough, read the most useful result with read_page.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "What to search for, as you would type it into a search engine."
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "read_page",
+      "description": "Load a web page and return its main text, so you can answer from it. Use a link from web_search or one the user gave.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "The full https:// address of the page."
+          }
+        },
+        "required": [
+          "url"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_weather",
+      "description": "Current weather and a three-day forecast. Leave place out to use where the user is.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "place": {
+            "type": "string",
+            "description": "A town or suburb, with the state or country if the name is common."
+          }
+        },
+        "required": []
       }
     }
   }

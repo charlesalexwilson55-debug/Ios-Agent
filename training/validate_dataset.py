@@ -76,12 +76,95 @@ ROLE_REFUSALS = (
     "i can only help with",
 )
 
-# Must mirror the word list in App/Agent/ToolPolicy.swift. A web search the
-# user did not ask for throws them out to the browser.
-SEARCH_WORDS = (
-    "search", "google", "look up", "look it up", "lookup", "look online", "online",
-    "the web", "internet", "browse", "browser", "safari", "duckduckgo", "bing", "website",
-)
+# Must mirror the browse-word list App/Agent/ToolPolicy.swift gates
+# open_in_browser on. web_search and read_page answer questions from inside
+# Conduit and carry no such gate; open_in_browser leaves the app, so it is
+# only allowed when the user actually asked to open or see something.
+BROWSE_WORDS = ("open", "browser", "safari", "website", "site", "link", "show me")
+
+# Tools this dataset teaches the model to call only when the user explicitly
+# asked for that kind of action, applied specifically to calls made after web
+# content has appeared in the conversation (see WEB_RESULT_ACTIONS below): a
+# page read in answer mode should never be able to trigger one of these on
+# its own say-so, so a call here without the matching word in the user's own
+# message is a sign a prompt injection worked rather than a deliberate ask.
+ACTION_KEYWORDS = {
+    "send_message": ("text", "message", "msg"),
+    "send_email": ("email", "mail"),
+    "place_call": ("call", "ring", "phone", "facetime"),
+    "delete_event": ("delete", "cancel", "remove"),
+    "complete_reminder": ("complete", "done", "finished", "mark"),
+    "run_shortcut": ("shortcut",),
+}
+
+# The two web tools whose successful result must be answered with a reply
+# that names where the information came from.
+WEB_RESULT_ACTIONS = ("web_search", "read_page")
+
+# Two-part suffixes where the label is the part before them, e.g. "bbc" for
+# "bbc.co.uk". Not exhaustive, but covers the common UK/AU domains this
+# dataset's invented sites use.
+TWO_PART_SUFFIXES = {"co.uk", "org.uk", "gov.uk", "ac.uk", "com.au", "net.au", "org.au", "co.nz"}
+
+
+def main_label(host: str) -> str:
+    """The name a person would actually say for a host: 'bbc' for bbc.co.uk,
+    'wikipedia' for en.wikipedia.org."""
+    host = host.lower()
+    if host.startswith("www."):
+        host = host[4:]
+    parts = host.split(".")
+    if len(parts) < 2:
+        return host
+    if ".".join(parts[-2:]) in TWO_PART_SUFFIXES and len(parts) >= 3:
+        return parts[-3]
+    return parts[-2]
+
+
+def hosts_in_search_results(results_text: str) -> list[str]:
+    """The site shown in parentheses on each numbered line of a web_search
+    result's "results" text, in the exact format WebTools.search produces:
+    '{n}. {title} ({site})[, {date}]'."""
+    return re.findall(r'^\d+\.\s.*?\(([^()]+)\)', results_text, re.M)
+
+
+def reply_names_source(reply: str, payload: dict) -> bool:
+    """True when `reply` credits a site the tool result actually returned,
+    or names the provider (wikipedia/tavily) when that is how it was found."""
+    lowered = reply.lower()
+    source = payload.get("source")
+    if source == "wikipedia" and "wikipedia" in lowered:
+        return True
+    if source == "tavily" and "tavily" in lowered:
+        return True
+
+    if payload.get("action") == "web_search":
+        hosts = hosts_in_search_results(payload.get("results", ""))
+    elif payload.get("action") == "read_page":
+        hosts = [payload["site"]] if payload.get("site") else []
+    else:
+        hosts = []
+
+    for host in hosts:
+        host = host.strip()
+        if not host:
+            continue
+        bare = host[4:] if host.lower().startswith("www.") else host
+        if bare.lower() in lowered or main_label(host).lower() in lowered:
+            return True
+    return False
+
+
+# Mirrors App/Agent/TaskRouter.swift's tool sets, used to check that an
+# answer-mode row (system prompt == system_prompt_answer.md) only ever calls
+# an answer tool, and that its "tools" field is exactly one of the two
+# subsets the app actually offers in that mode.
+ANSWER_TOOL_NAMES = {"get_current_time", "run_javascript", "web_search", "read_page", "get_weather"}
+OFFLINE_ANSWER_TOOL_NAMES = {"get_current_time", "run_javascript"}
+HERE = Path(__file__).resolve().parent
+_answer_prompt_path = HERE / "system_prompt_answer.md"
+ANSWER_PROMPT_TEXT = (_answer_prompt_path.read_text(encoding="utf-8").strip()
+                      if _answer_prompt_path.exists() else None)
 
 # Tools whose date arguments must not fall before "today".
 DATED_ARGUMENTS = {
@@ -195,6 +278,12 @@ def validate(rows: list[dict]) -> tuple[collections.Counter, dict[str, list[str]
         if not messages[-1].get("content"):
             problems["final assistant turn is empty"] += 1
 
+        # Set once a web_search/read_page result has appeared anywhere earlier
+        # in this row, so an action tool called afterwards can be checked
+        # against the rule that page text must never trigger one on its own.
+        web_content_seen = False
+        tool_calls_used: set[str] = set()
+
         for index, message in enumerate(messages):
             role = message.get("role")
 
@@ -236,6 +325,13 @@ def validate(rows: list[dict]) -> tuple[collections.Counter, dict[str, list[str]
                     if any(phrase in lowered for phrase in WRONG_FOR_HANDOFF):
                         problems["hand-off reply tells the user to tap send"] += 1
 
+                if payload.get("action") in WEB_RESULT_ACTIONS and payload.get("ok"):
+                    web_content_seen = True
+                    if not reply:
+                        problems["web result not followed by any assistant reply"] += 1
+                    elif not reply_names_source(reply, payload):
+                        problems["reply after a web result does not name the source"] += 1
+
             if role == "assistant" and asserts(message.get("content") or "", ROLE_REFUSALS):
                 problems["reply refuses in character instead of helping"] += 1
 
@@ -243,9 +339,14 @@ def validate(rows: list[dict]) -> tuple[collections.Counter, dict[str, list[str]
                 request = next((m.get("content", "") for m in reversed(messages[:index])
                                 if m.get("role") == "user"), "").lower()
                 for call in message["tool_calls"]:
-                    if (call.get("function", {}).get("name") == "web_search"
-                            and not any(word in request for word in SEARCH_WORDS)):
-                        problems["web_search without the user asking to search"] += 1
+                    name = call.get("function", {}).get("name")
+                    tool_calls_used.add(name)
+                    if name == "open_in_browser" and not any(word in request for word in BROWSE_WORDS):
+                        problems["open_in_browser without a browse word in the user's message"] += 1
+                    if (web_content_seen and name in ACTION_KEYWORDS
+                            and not any(w in request for w in ACTION_KEYWORDS[name])):
+                        problems["action tool called after web content appeared, "
+                                 "without the user asking for that action"] += 1
 
                 following = messages[index + 1] if index + 1 < len(messages) else None
                 if not following or following.get("role") != "tool":
@@ -258,6 +359,20 @@ def validate(rows: list[dict]) -> tuple[collections.Counter, dict[str, list[str]
                         json.loads(function.get("arguments", ""))
                     except (json.JSONDecodeError, TypeError):
                         problems["tool arguments are not valid JSON"] += 1
+
+        # An answer-mode row (system prompt == system_prompt_answer.md) may
+        # only call an answer tool, and must carry exactly the online or the
+        # offline answer subset in its "tools" field - never the full phone
+        # registry, and never a mismatched list.
+        system_content = messages[0].get("content", "") if messages[0].get("role") == "system" else None
+        if ANSWER_PROMPT_TEXT is not None and system_content is not None \
+                and system_content.strip() == ANSWER_PROMPT_TEXT:
+            if not tool_calls_used <= ANSWER_TOOL_NAMES:
+                problems["answer-mode row calls a tool outside the answer subset"] += 1
+            row_tool_names = {t.get("function", {}).get("name") for t in row.get("tools", [])}
+            if row_tool_names not in (ANSWER_TOOL_NAMES, OFFLINE_ANSWER_TOOL_NAMES):
+                problems["answer-mode row's tools field is neither the answer "
+                         "subset nor the offline subset"] += 1
 
         check_dates(messages, problems)
 
