@@ -31,6 +31,7 @@ final class ToolRegistry {
             CalendarTools(),
             DeviceTools(),
             CodeTools(),
+            WebTools(),
         ])
     }
 

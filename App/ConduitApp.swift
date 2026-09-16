@@ -31,6 +31,7 @@ struct RootView: View {
     /// Persisted so the choice survives relaunches. On by default: correct
     /// answers to maths and code matter more than speed on those questions.
     @AppStorage("conduit.thinking") private var thinking = true
+    @AppStorage("conduit.online") private var online = true
     @State private var page: AppPage = .chat
     @State private var sidebarOpen = false
 
@@ -56,6 +57,7 @@ struct RootView: View {
         .task {
             let newSession = AgentSession(runner: runner, registry: ToolRegistry.standard())
             newSession.thinkingEnabled = thinking
+            newSession.onlineEnabled = online
             session = newSession
             Diagnostics.log("app.launch avail=\(Diagnostics.availableMB)MB")
 
@@ -91,6 +93,9 @@ struct RootView: View {
         // running arrives on foreground rather than at launch.
         .onChange(of: thinking) { _, enabled in
             session?.thinkingEnabled = enabled
+        }
+        .onChange(of: online) { _, enabled in
+            session?.onlineEnabled = enabled
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
@@ -130,6 +135,7 @@ struct RootView: View {
             GlassCommandBar(
                 draft: $draft,
                 thinking: $thinking,
+                online: $online,
                 modelLabel: catalog.selectedModel?.displayName ?? "Model",
                 isWorking: session?.isWorking ?? false,
                 isModelLoaded: isReady,
@@ -147,6 +153,8 @@ struct RootView: View {
             EmptyView()
         case .directions:
             DirectionsView()
+        case .online:
+            OnlineSettingsView()
         case .models:
             ModelPickerSheet(onSelect: selectFromPage, loadingState: loadingState, showsDoneButton: false)
                 .environment(catalog)

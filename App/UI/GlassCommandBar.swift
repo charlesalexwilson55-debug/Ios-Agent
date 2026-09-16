@@ -20,6 +20,9 @@ struct GlassCommandBar: View {
     /// it is a per-question choice: on for maths and code, off for a quick
     /// reminder that should not take twenty seconds.
     @Binding var thinking: Bool
+    /// Whether the model may use the internet. Also on the bar, because it
+    /// is the switch someone reaches for when they want a fresh answer.
+    @Binding var online: Bool
     let modelLabel: String
     let isWorking: Bool
     let isModelLoaded: Bool
@@ -82,9 +85,12 @@ struct GlassCommandBar: View {
 
     private var inputCapsule: some View {
         HStack(alignment: .bottom, spacing: 4) {
-            thinkButton
-                .padding(.leading, 6)
-                .padding(.bottom, 4)
+            HStack(spacing: 0) {
+                thinkButton
+                onlineButton
+            }
+            .padding(.leading, 6)
+            .padding(.bottom, 4)
 
             TextField(placeholder, text: $draft, axis: .vertical)
                 .textFieldStyle(.plain)
@@ -123,6 +129,23 @@ struct GlassCommandBar: View {
         .accessibilityLabel("Think")
         .accessibilityValue(thinking ? "On" : "Off")
         .accessibilityHint("Reason step by step before answering. Better for maths and code, slower.")
+    }
+
+    private var onlineButton: some View {
+        Button {
+            online.toggle()
+        } label: {
+            Image(systemName: "globe")
+                .font(.system(size: 15, weight: .medium))
+                .frame(width: 30, height: 34)
+                .foregroundStyle(online ? Color.accentColor : Color.secondary)
+                .opacity(online ? 1 : 0.6)
+        }
+        .buttonStyle(.plain)
+        .animation(.easeOut(duration: 0.18), value: online)
+        .accessibilityLabel("Online")
+        .accessibilityValue(online ? "On" : "Off")
+        .accessibilityHint("Let the model search the web, read pages and check the weather.")
     }
 
     private var placeholder: String {

@@ -55,6 +55,10 @@ final class AgentSession {
     /// and it uses more memory per turn.
     var thinkingEnabled: Bool = true
 
+    /// The user's globe switch. The web tools are offered only when this is
+    /// on and the phone has a signal.
+    var onlineEnabled: Bool = true
+
     /// Model-visible history, which is not the same as the transcript: it
     /// carries tool results and omits UI-only entries.
     private var history: [ModelRunner.Message] = []
@@ -67,6 +71,15 @@ final class AgentSession {
     /// What the user asked this turn, and what the model said just before.
     /// Tool policy checks these, not the model's own reading of them.
     private var currentRequest = ""
+    /// Per-turn tool state. `offeredTools` is what the model was shown;
+    /// anything else it asks for is refused. `readWebContent` tightens
+    /// `ToolPolicy` once untrusted web text is in the conversation.
+    private var offeredTools: Set<String> = []
+    private var readWebContent = false
+    private var usedPhoneTools = false
+    /// Whether the previous turn was a phone task, so short follow-ups such
+    /// as "yes, the second one" keep the phone tools.
+    private var lastTurnUsedPhoneTools = false
     private var previousReply = ""
 
     /// Cap on tool calls per user request.
@@ -162,13 +175,21 @@ final class AgentSession {
         history.removeAll()
         callCounter = 0
         lastThroughput = nil
+        lastTurnUsedPhoneTools = false
     }
 
     // MARK: - The loop
 
     private func runTurn() async {
-        let tools = registry.specs
-        let systemPrompt = SystemPrompt.build(tools: tools)
+        let mode = TaskRouter.mode(for: currentRequest, previousTurnUsedPhoneTools: lastTurnUsedPhoneTools)
+        let online = onlineEnabled && Connectivity.shared.isOnline
+        let tools = TaskRouter.tools(from: registry.specs, mode: mode, online: online)
+        let systemPrompt = SystemPrompt.build(tools: tools, mode: mode)
+        offeredTools = Set(tools.map(\.name))
+        readWebContent = false
+        usedPhoneTools = false
+        defer { lastTurnUsedPhoneTools = usedPhoneTools }
+        Diagnostics.log("turn mode=\(mode.rawValue) online=\(online) tools=\(tools.count)")
 
         for iteration in 0..<maxToolIterations {
             await waitUntilForeground()
@@ -289,14 +310,27 @@ final class AgentSession {
 
         // Refused calls go back to the model only. The user asked a question,
         // not for a failed tool chip.
-        if let refusal = ToolPolicy.refusal(
-            for: name, request: currentRequest, previousReply: previousReply
-        ) {
+        let refusal: ToolOutcome?
+        if !offeredTools.contains(name) {
+            refusal = .failure(name, "Not run: \(name) is not available for this request. "
+                + "Use only the tools you were given.")
+        } else {
+            refusal = ToolPolicy.refusal(
+                for: name, request: currentRequest, previousReply: previousReply,
+                afterWebContent: readWebContent
+            )
+        }
+        if let refusal {
             Diagnostics.log("tool.blocked \(name)")
             history.append(.tool(refusal.modelResponseJSON, callID: call.id))
             return
         }
         Diagnostics.log("tool.run \(name)")
+        if TaskRouter.webToolNames.contains(name) {
+            readWebContent = true
+        } else if !TaskRouter.answerToolNames.contains(name) {
+            usedPhoneTools = true
+        }
         let index = transcript.count
         let label = registry.spec(named: name)?.name ?? name
         transcript.append(TranscriptEntry(kind: .tool, text: "Running \(label)…"))

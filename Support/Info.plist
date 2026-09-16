@@ -39,8 +39,13 @@
   <string>Conduit transcribes your dictation on-device so you can speak requests.</string>
   <key>NSAppleMusicUsageDescription</key>
   <string>Conduit starts playback when you ask it to play something.</string>
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsArbitraryLoadsInWebContent</key>
+    <true/>
+  </dict>
   <key>NSLocationWhenInUseUsageDescription</key>
-  <string>Conduit uses your location for directions and location-aware reminders.</string>
+  <string>Conduit uses your location for directions and for the weather where you are.</string>
   <key>NSPhotoLibraryAddUsageDescription</key>
   <string>Conduit saves images to your library when you ask it to.</string>
 

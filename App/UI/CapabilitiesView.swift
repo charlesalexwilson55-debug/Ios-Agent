@@ -22,6 +22,9 @@ struct CapabilitiesView: View {
         Item(text: "Look up contacts and remember nicknames", note: "\"mum\" means a real person, once you say who"),
         Item(text: "Put text on the clipboard", note: nil),
         Item(text: "Tell you the time, date and time zone", note: nil),
+        Item(text: "Search the web, read pages and check the weather",
+             note: "With the globe switch on. Full web search needs a free Tavily key on the "
+                 + "Online page; without one it searches Wikipedia."),
     ]
 
     private let oneTap: [Item] = [
@@ -39,7 +42,7 @@ struct CapabilitiesView: View {
         Item(text: "Directions in Apple Maps, from anywhere to anywhere",
              note: "Works with no signal in areas you have downloaded in Apple Maps. "
                  + "Saved places such as Home keep their exact location."),
-        Item(text: "Open any app, Music, a web search", note: nil),
+        Item(text: "Open any app, Music, or a page in Safari", note: nil),
     ]
 
     private let impossible: [Item] = [
@@ -52,8 +55,8 @@ struct CapabilitiesView: View {
         Item(text: "Set an alarm, change a Focus mode, toggle Wi-Fi or Bluetooth",
              note: "Make a Shortcut that does it, and Conduit can run that."),
         Item(text: "Read or control other apps", note: nil),
-        Item(text: "Look anything up online",
-             note: "The model is offline. It can open a search in your browser for you."),
+        Item(text: "Log in to websites or fill in forms",
+             note: "It reads public pages only, in a private browser with no cookies."),
     ]
 
     var body: some View {

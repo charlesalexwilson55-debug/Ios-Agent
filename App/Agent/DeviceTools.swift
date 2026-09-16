@@ -116,12 +116,13 @@ final class DeviceTools: ToolProviding {
             category: "device"
         ),
         ToolDescriptor(
-            name: "web_search",
-            description: "Open a web search in the browser. This leaves Conduit. Only call it "
-                + "when the user asks you to search the web or look something up online. "
-                + "Never call it to answer a question; answer from what you know instead.",
+            name: "open_in_browser",
+            description: "Open a web page, or a search, in Safari for the user to look at. This "
+                + "leaves Conduit. Only call it when the user asks to open or see something in "
+                + "the browser. To answer a question, use web_search and read_page instead.",
             params: [
-                .required("query", .string, "What to search for."),
+                .required("target", .string,
+                          "A full https:// link, or the words to search for."),
             ],
             friction: .leavesApp,
             category: "device"
@@ -146,7 +147,7 @@ final class DeviceTools: ToolProviding {
         case "open_app": return await openApp(arguments)
         case "get_directions": return await directions(arguments)
         case "play_music": return await playMusic(arguments)
-        case "web_search": return await webSearch(arguments)
+        case "open_in_browser": return await openInBrowser(arguments)
         case "copy_to_clipboard": return copyToClipboard(arguments)
         default: return .failure(name, "DeviceTools cannot handle \(name).")
         }
@@ -283,21 +284,26 @@ final class DeviceTools: ToolProviding {
                        ])
     }
 
-    private func webSearch(_ args: ArgumentValue) async -> ToolOutcome {
-        guard let query = args.string("query"), !query.isEmpty else {
-            return .badArgument("web_search", "query", "what to search for")
+    private func openInBrowser(_ args: ArgumentValue) async -> ToolOutcome {
+        guard let target = args.string("target")?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !target.isEmpty
+        else {
+            return .badArgument("open_in_browser", "target", "a link or words to search for")
         }
-        var components = URLComponents(string: "https://duckduckgo.com/")
-        components?.queryItems = [URLQueryItem(name: "q", value: query)]
-        guard let url = components?.url, await ComposePresenter.open(url) else {
-            return .failure("web_search", "Could not open a browser.")
+        let url: URL?
+        if let link = URL(string: target), let scheme = link.scheme?.lowercased(),
+           scheme == "https" || scheme == "http", link.host != nil {
+            url = link
+        } else {
+            var components = URLComponents(string: "https://duckduckgo.com/")
+            components?.queryItems = [URLQueryItem(name: "q", value: target)]
+            url = components?.url
         }
-        return .handedOff("web_search", "Searching the web for \(query)",
-                       detail: [
-                           "query": query,
-                           "outcome": "The browser opened with these results. You cannot read them; "
-                               + "the user will.",
-                       ])
+        guard let url, await ComposePresenter.open(url) else {
+            return .failure("open_in_browser", "Could not open the browser.")
+        }
+        return .handedOff("open_in_browser", "Opened \(url.host ?? target) in the browser",
+                          detail: ["opened": url.absoluteString])
     }
 
     private func copyToClipboard(_ args: ArgumentValue) -> ToolOutcome {
