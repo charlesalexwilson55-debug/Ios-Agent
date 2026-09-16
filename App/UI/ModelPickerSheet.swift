@@ -13,6 +13,9 @@ struct ModelPickerSheet: View {
 
     let onSelect: (DiscoveredModel) -> Void
     let loadingState: ModelLoadingState
+    /// Off when shown as a full page from the sidebar, where there is no
+    /// sheet to dismiss.
+    var showsDoneButton = true
 
     @State private var isImporting = false
     @State private var importError: String?
@@ -31,8 +34,10 @@ struct ModelPickerSheet: View {
             .navigationTitle("Model")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
+                if showsDoneButton {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { dismiss() }
+                    }
                 }
             }
             .refreshable { await catalog.refresh() }

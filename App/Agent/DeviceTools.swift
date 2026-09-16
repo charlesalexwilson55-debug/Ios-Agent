@@ -91,7 +91,9 @@ final class DeviceTools: ToolProviding {
             name: "get_directions",
             description: "Open Maps with directions between two places. Copy each address exactly "
                 + "as the user gave it, including the street number, town or suburb and postcode. "
-                + "Leave origin out to start from the user's current location.",
+                + "Saved places such as home or work can be given by name. Leave origin out to "
+                + "start from the user's current location. Works offline in areas the user has "
+                + "downloaded in Apple Maps.",
             params: [
                 .required("destination", .string,
                           "Where to go: the full address or place name, including the town."),
@@ -233,59 +235,22 @@ final class DeviceTools: ToolProviding {
         else {
             return .badArgument("get_directions", "destination", "an address or place name")
         }
-        let requestedMode = args.string("mode")?.lowercased() ?? "driving"
-        let mode: String
-        switch requestedMode {
-        case "walking": mode = MKLaunchOptionsDirectionsModeWalking
-        case "transit": mode = MKLaunchOptionsDirectionsModeTransit
-        case "cycling": mode = MKLaunchOptionsDirectionsModeCycling
-        default: mode = MKLaunchOptionsDirectionsModeDriving
-        }
+        let mode = TravelMode(rawValue: args.string("mode")?.lowercased() ?? "") ?? .driving
 
-        var from = MKMapItem.forCurrentLocation()
-        var fromText = "your current location"
-        if let origin = args.string("origin")?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !origin.isEmpty, !Self.meansCurrentLocation(origin) {
-            switch await PlaceResolver.resolve(origin) {
-            case .found(let item, let description):
-                from = item
-                fromText = description
-            case .ambiguous(let options):
-                return Self.unresolved("starting point", origin, options)
-            case .notFound:
-                return Self.unresolved("starting point", origin, [])
+        switch await DirectionsService.open(from: args.string("origin"), to: destination, mode: mode) {
+        case .opened(let from, let to, let exact):
+            var detail = ["from": from, "to": to, "mode": mode.rawValue]
+            if !exact {
+                detail["offline"] = "There was no signal, so Maps was given the place names to "
+                    + "find in its downloaded offline maps. Tell the user to check that Maps "
+                    + "picked the right places."
             }
+            return .handedOff("get_directions", "Directions from \(from) to \(to)", detail: detail)
+        case .unresolved(let role, let query, let options):
+            return Self.unresolved(role, query, options)
+        case .failed(let reason):
+            return .failure("get_directions", reason)
         }
-
-        let to: MKMapItem
-        let toText: String
-        switch await PlaceResolver.resolve(destination) {
-        case .found(let item, let description):
-            to = item
-            toText = description
-        case .ambiguous(let options):
-            return Self.unresolved("destination", destination, options)
-        case .notFound:
-            return Self.unresolved("destination", destination, [])
-        }
-
-        // The resolved places go to Maps as they are, so Maps cannot
-        // re-interpret the text and pick a different town.
-        let opened = MKMapItem.openMaps(
-            with: [from, to],
-            launchOptions: [MKLaunchOptionsDirectionsModeKey: mode]
-        )
-        guard opened else {
-            return .failure("get_directions", "Could not open Maps.")
-        }
-        return .handedOff("get_directions", "Directions from \(fromText) to \(toText)",
-                       detail: ["from": fromText, "to": toText, "mode": requestedMode])
-    }
-
-    private static func meansCurrentLocation(_ text: String) -> Bool {
-        let lowered = text.lowercased()
-        return ["current location", "my current location", "my location", "here", "where i am"]
-            .contains(lowered)
     }
 
     /// Refuses to open Maps on a guess, and gives the model what it needs to ask.

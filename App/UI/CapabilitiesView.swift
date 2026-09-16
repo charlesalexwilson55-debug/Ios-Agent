@@ -36,7 +36,10 @@ struct CapabilitiesView: View {
     private let handoff: [Item] = [
         Item(text: "Run one of your Shortcuts by name",
              note: "This is the real escape hatch. Anything Shortcuts can do, Conduit can trigger."),
-        Item(text: "Open any app, Maps directions, Music, a web search", note: nil),
+        Item(text: "Directions in Apple Maps, from anywhere to anywhere",
+             note: "Works with no signal in areas you have downloaded in Apple Maps. "
+                 + "Saved places such as Home keep their exact location."),
+        Item(text: "Open any app, Music, a web search", note: nil),
     ]
 
     private let impossible: [Item] = [

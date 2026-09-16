@@ -1141,6 +1141,29 @@ def example_directions(rng: random.Random) -> list[dict]:
     if mode != "driving":
         arguments["mode"] = mode
 
+    if rng.random() < 0.2:
+        # Saved places go through by name; the app knows where they are.
+        saved = rng.choice(["home", "work"])
+        request = rng.choice([f"{spoken_mode}directions home" if saved == "home" else f"{spoken_mode}directions to work",
+                              f"take me {'home' if saved == 'home' else 'to work'}",
+                              f"how do I get {'home' if saved == 'home' else 'to work'} from {end_said}"])
+        arguments = {"destination": saved}
+        from_place = "your current location"
+        if request.endswith(end_said):
+            arguments = {"origin": end_said, "destination": saved}
+            from_place = end_said
+        if mode != "driving":
+            arguments["mode"] = mode
+        return [
+            {"role": "user", "content": request},
+            call("get_directions", arguments),
+            handed_off_result("get_directions", **{"from": from_place if from_place != end_said else end_found,
+                                                   "to": saved.capitalize(), "mode": mode}),
+            {"role": "assistant",
+             "content": f"I've opened Maps with {spoken_mode}directions from {from_place} "
+                        f"to {saved}."},
+        ]
+
     if not from_here and rng.random() < 0.2:
         # The town was not enough to single out the place.
         street = start_said.split(", ")[0]

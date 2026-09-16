@@ -425,7 +425,7 @@
     "type": "function",
     "function": {
       "name": "get_directions",
-      "description": "Open Maps with directions between two places. Copy each address exactly as the user gave it, including the street number, town or suburb and postcode. Leave origin out to start from the user's current location.",
+      "description": "Open Maps with directions between two places. Copy each address exactly as the user gave it, including the street number, town or suburb and postcode. Saved places such as home or work can be given by name. Leave origin out to start from the user's current location. Works offline in areas the user has downloaded in Apple Maps.",
       "parameters": {
         "type": "object",
         "properties": {

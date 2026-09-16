@@ -18,6 +18,8 @@ enum PlaceResolver {
         /// Results came back, but none contained what the user asked for.
         case ambiguous([String])
         case notFound
+        /// The search itself failed, which almost always means no signal.
+        case searchFailed
     }
 
     static func resolve(_ query: String) async -> Resolution {
@@ -29,8 +31,10 @@ enum PlaceResolver {
         let items: [MKMapItem]
         do {
             items = try await MKLocalSearch(request: request).start().mapItems
-        } catch {
+        } catch let error as MKError where error.code == .placemarkNotFound {
             return .notFound
+        } catch {
+            return .searchFailed
         }
         guard !items.isEmpty else { return .notFound }
 

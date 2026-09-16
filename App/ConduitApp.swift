@@ -31,41 +31,24 @@ struct RootView: View {
     /// Persisted so the choice survives relaunches. On by default: correct
     /// answers to maths and code matter more than speed on those questions.
     @AppStorage("conduit.thinking") private var thinking = true
+    @State private var page: AppPage = .chat
+    @State private var sidebarOpen = false
 
     var body: some View {
-        // A NavigationStack purely to host the toolbar. Without one the
-        // toolbar modifier is silently ignored and the New button never
-        // appears; the bar itself is kept hidden so the transcript runs to the
-        // top edge under the glass.
-        NavigationStack {
-            TranscriptView(entries: session?.transcript ?? [])
-            .navigationTitle("")
-            .toolbarTitleDisplayMode(.inline)
-            .toolbarBackgroundVisibility(.hidden, for: .navigationBar)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        session?.clear()
-                    } label: {
-                        Image(systemName: "square.and.pencil")
-                    }
-                    .disabled(session?.transcript.isEmpty ?? true)
-                    .accessibilityLabel("New conversation")
-                }
+        ZStack {
+            // The chat stays in the hierarchy on every page, so leaving it and
+            // coming back keeps the scroll position and any unsent draft.
+            chatPage
+                .opacity(page == .chat ? 1 : 0)
+                .allowsHitTesting(page == .chat)
+                .accessibilityHidden(page != .chat)
+            if page != .chat {
+                otherPage
+                    .transition(.opacity)
             }
+            SidebarOverlay(page: $page, isOpen: $sidebarOpen)
         }
-        .safeAreaInset(edge: .bottom) {
-            GlassCommandBar(
-                draft: $draft,
-                thinking: $thinking,
-                modelLabel: catalog.selectedModel?.displayName ?? "Model",
-                isWorking: session?.isWorking ?? false,
-                isModelLoaded: isReady,
-                onSend: send,
-                onStop: { session?.cancel() },
-                onPickModel: { showingModelPicker = true }
-            )
-        }
+        .animation(.easeInOut(duration: 0.2), value: page)
         .sheet(isPresented: $showingModelPicker) {
             ModelPickerSheet(onSelect: select, loadingState: loadingState)
                 .environment(catalog)
@@ -119,6 +102,64 @@ struct RootView: View {
         .overlay(alignment: .top) {
             if case .loading = loadingState { loadingBanner }
         }
+    }
+
+    /// Chat, with the command bar. A NavigationStack purely to host the
+    /// toolbar: without one the toolbar modifier is silently ignored and the
+    /// New button never appears. The bar itself is kept hidden so the
+    /// transcript runs to the top edge under the glass.
+    private var chatPage: some View {
+        NavigationStack {
+            TranscriptView(entries: session?.transcript ?? [])
+            .navigationTitle("")
+            .toolbarTitleDisplayMode(.inline)
+            .toolbarBackgroundVisibility(.hidden, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        session?.clear()
+                    } label: {
+                        Image(systemName: "square.and.pencil")
+                    }
+                    .disabled(session?.transcript.isEmpty ?? true)
+                    .accessibilityLabel("New conversation")
+                }
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            GlassCommandBar(
+                draft: $draft,
+                thinking: $thinking,
+                modelLabel: catalog.selectedModel?.displayName ?? "Model",
+                isWorking: session?.isWorking ?? false,
+                isModelLoaded: isReady,
+                onSend: send,
+                onStop: { session?.cancel() },
+                onPickModel: { showingModelPicker = true }
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var otherPage: some View {
+        switch page {
+        case .chat:
+            EmptyView()
+        case .directions:
+            DirectionsView()
+        case .models:
+            ModelPickerSheet(onSelect: selectFromPage, loadingState: loadingState, showsDoneButton: false)
+                .environment(catalog)
+        case .capabilities:
+            NavigationStack {
+                CapabilitiesView()
+            }
+        }
+    }
+
+    private func selectFromPage(_ model: DiscoveredModel) {
+        select(model)
+        page = .chat
     }
 
     private var isReady: Bool {
