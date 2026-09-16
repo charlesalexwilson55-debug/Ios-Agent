@@ -15,10 +15,6 @@ struct TranscriptView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14) {
-                    if entries.isEmpty {
-                        EmptyStateView()
-                            .padding(.top, 60)
-                    }
                     ForEach(entries) { entry in
                         row(for: entry)
                             .id(entry.id)
@@ -347,56 +343,5 @@ private struct ErrorRow: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .glassEffect(.regular.tint(.red.opacity(0.18)), in: .rect(cornerRadius: 14))
-    }
-}
-
-/// First-run guidance.
-///
-/// The examples are chosen to teach the capability boundary implicitly: the
-/// first two complete with no taps, the third is explicitly described as a
-/// draft. Setting that expectation before the first request is cheaper than
-/// correcting it afterwards.
-private struct EmptyStateView: View {
-    /// A named struct rather than a tuple: Swift has no key paths to tuple
-    /// elements, so `ForEach(examples, id: \.1)` does not compile.
-    private struct Example: Identifiable {
-        let id = UUID()
-        let icon: String
-        let text: String
-    }
-
-    private let examples = [
-        Example(icon: "calendar", text: "Put dinner with Sam in my calendar for Friday at 8"),
-        Example(icon: "checklist", text: "Remind me to renew the car insurance on Thursday morning"),
-        Example(icon: "message", text: "Draft a text to Mum saying I will be late"),
-    ]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Conduit")
-                    .font(.system(size: 26, weight: .semibold))
-                Text("A local model that does things on this phone. Nothing leaves the device.")
-                    .font(.system(size: 15))
-                    .foregroundStyle(.secondary)
-            }
-
-            VStack(alignment: .leading, spacing: 9) {
-                ForEach(examples) { example in
-                    HStack(spacing: 9) {
-                        Image(systemName: example.icon)
-                            .font(.system(size: 13))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 18)
-                        Text(example.text)
-                            .font(.system(size: 14))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-            .padding(14)
-            .glassEffect(.clear, in: .rect(cornerRadius: 17))
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

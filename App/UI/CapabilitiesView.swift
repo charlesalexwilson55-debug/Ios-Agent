@@ -25,6 +25,10 @@ struct CapabilitiesView: View {
         Item(text: "Search the web, read pages and check the weather",
              note: "With the globe switch on. Full web search needs a free Tavily key on the "
                  + "Online page; without one it searches Wikipedia."),
+        Item(text: "Research a person or topic across several pages",
+             note: "Turn on Research from the plus button. It checks each page is about the same "
+                 + "subject before using it, and never collects addresses, phone numbers or "
+                 + "details about someone's children."),
     ]
 
     private let oneTap: [Item] = [

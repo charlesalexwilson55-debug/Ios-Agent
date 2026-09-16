@@ -31,6 +31,9 @@ struct RootView: View {
     /// answers to maths and code matter more than speed on those questions.
     @AppStorage("conduit.thinking") private var thinking = true
     @AppStorage("conduit.online") private var online = true
+    /// Research mode. Not persisted: it changes what every message does, so
+    /// it starts off each launch.
+    @State private var research = false
     @State private var page: AppPage = .chat
     @State private var sidebarOpen = false
 
@@ -53,6 +56,7 @@ struct RootView: View {
             let newSession = AgentSession(runner: runner, registry: ToolRegistry.standard())
             newSession.thinkingEnabled = thinking
             newSession.onlineEnabled = online
+            newSession.researchEnabled = research
             session = newSession
             Diagnostics.log("app.launch avail=\(Diagnostics.availableMB)MB")
 
@@ -91,6 +95,9 @@ struct RootView: View {
         }
         .onChange(of: online) { _, enabled in
             session?.onlineEnabled = enabled
+        }
+        .onChange(of: research) { _, enabled in
+            session?.researchEnabled = enabled
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
@@ -131,6 +138,7 @@ struct RootView: View {
                 draft: $draft,
                 thinking: $thinking,
                 online: $online,
+                research: $research,
                 isWorking: session?.isWorking ?? false,
                 isModelLoaded: isReady,
                 onSend: send,

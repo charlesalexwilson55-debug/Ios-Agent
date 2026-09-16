@@ -228,12 +228,15 @@ actor ModelRunner {
     nonisolated func stream(
         messages: [Message],
         tools: [ToolDescriptor],
-        thinking: Bool
+        thinking: Bool,
+        sampling: Sampling = .chat
     ) -> AsyncThrowingStream<RunnerEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    try await self.generate(messages: messages, tools: tools, thinking: thinking) {
+                    try await self.generate(
+                        messages: messages, tools: tools, thinking: thinking, sampling: sampling
+                    ) {
                         continuation.yield($0)
                     }
                     continuation.finish()
@@ -245,10 +248,19 @@ actor ModelRunner {
         }
     }
 
+    /// How a generation samples. `.chat` is Qwen3's published setting for
+    /// conversation; `.extraction` is for short, structured work such as
+    /// the research checks, where wandering wording breaks the parser.
+    enum Sampling: Sendable {
+        case chat
+        case extraction(maxTokens: Int)
+    }
+
     private func generate(
         messages: [Message],
         tools: [ToolDescriptor],
         thinking: Bool,
+        sampling: Sampling,
         onEvent: @Sendable @escaping (RunnerEvent) -> Void
     ) async throws {
         guard let container else { throw RunnerError.noModelLoaded }
@@ -261,7 +273,12 @@ actor ModelRunner {
 
         // Thinking needs room: reasoning often runs to a few thousand tokens
         // before the answer begins. Code answers are long too.
-        let requestedTokens = thinking ? 4096 : 1536
+        var requestedTokens = thinking ? 4096 : 1536
+        var temperature: Float = thinking ? 0.6 : 0.7
+        if case .extraction(let limit) = sampling {
+            requestedTokens = limit
+            temperature = 0.2
+        }
 
         MLX.Memory.clearCache()
         let prepared = try await container.prepare(input: input)
@@ -272,7 +289,7 @@ actor ModelRunner {
         let parameters = GenerateParameters(
             maxTokens: maxTokens,
             kvBits: Self.kvBits,
-            temperature: thinking ? 0.6 : 0.7,
+            temperature: temperature,
             topP: thinking ? 0.95 : 0.8,
             topK: 20,
             prefillStepSize: Self.prefillStepSize

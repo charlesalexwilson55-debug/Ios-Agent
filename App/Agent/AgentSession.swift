@@ -59,6 +59,11 @@ final class AgentSession {
     /// on and the phone has a signal.
     var onlineEnabled: Bool = true
 
+    /// Research mode, from the plus menu. While it is on, each request is
+    /// followed across several web pages by `ResearchEngine` instead of
+    /// going through the normal tool loop.
+    var researchEnabled: Bool = false
+
     /// Model-visible history, which is not the same as the transcript: it
     /// carries tool results and omits UI-only entries.
     private var history: [ModelRunner.Message] = []
@@ -73,7 +78,9 @@ final class AgentSession {
     private var currentRequest = ""
     /// Per-turn tool state. `offeredTools` is what the model was shown;
     /// anything else it asks for is refused. `readWebContent` tightens
-    /// `ToolPolicy` once untrusted web text is in the conversation.
+    /// `ToolPolicy` once untrusted web text is in the conversation, and
+    /// stays set until the conversation is cleared, because that text stays
+    /// in the history the model reads on later turns.
     private var offeredTools: Set<String> = []
     private var readWebContent = false
     private var usedPhoneTools = false
@@ -176,17 +183,21 @@ final class AgentSession {
         callCounter = 0
         lastThroughput = nil
         lastTurnUsedPhoneTools = false
+        readWebContent = false
     }
 
     // MARK: - The loop
 
     private func runTurn() async {
+        if researchEnabled {
+            await runResearch()
+            return
+        }
         let mode = TaskRouter.mode(for: currentRequest, previousTurnUsedPhoneTools: lastTurnUsedPhoneTools)
         let online = onlineEnabled && Connectivity.shared.isOnline
         let tools = TaskRouter.tools(from: registry.specs, mode: mode, online: online)
         let systemPrompt = SystemPrompt.build(tools: tools, mode: mode)
         offeredTools = Set(tools.map(\.name))
-        readWebContent = false
         usedPhoneTools = false
         defer { lastTurnUsedPhoneTools = usedPhoneTools }
         Diagnostics.log("turn mode=\(mode.rawValue) online=\(online) tools=\(tools.count)")
@@ -303,6 +314,132 @@ final class AgentSession {
                 return
             }
         }
+    }
+
+    // MARK: - Research
+
+    /// Follows the request across the web with `ResearchEngine`, showing one
+    /// progress chip, then writes up what was found.
+    private func runResearch() async {
+        lastTurnUsedPhoneTools = false
+        guard onlineEnabled, Connectivity.shared.isOnline else {
+            let text = onlineEnabled
+                ? "Research needs the internet, and there is no signal right now."
+                : "Research needs the internet. Turn on the globe button, then ask again."
+            transcript.append(TranscriptEntry(kind: .error, text: text))
+            return
+        }
+        Diagnostics.log("turn mode=research")
+
+        let chip = TranscriptEntry(kind: .tool, text: "Researching\u{2026}")
+        transcript.append(chip)
+        // Found by id, not position: a late progress update must not land on
+        // another entry after the conversation is cleared.
+        func updateChip(_ text: String, _ outcome: TranscriptEntry.Outcome?) {
+            guard let index = transcript.lastIndex(where: { $0.id == chip.id }) else { return }
+            transcript[index].text = text
+            transcript[index].toolOutcome = outcome
+        }
+
+        let engine = ResearchEngine(
+            request: currentRequest,
+            ask: { [weak self] system, user in
+                guard let self else { throw CancellationError() }
+                return try await self.ask(system: system, user: user)
+            },
+            progress: { progress in
+                let facts = progress.facts == 1 ? "1 detail" : "\(progress.facts) details"
+                updateChip("\(progress.activity) \u{00B7} \(facts) so far", nil)
+            }
+        )
+
+        let findings: ResearchEngine.Findings
+        do {
+            findings = try await engine.run()
+        } catch {
+            if Task.isCancelled || error is CancellationError {
+                updateChip("Research stopped", .failed)
+                return
+            }
+            updateChip("Research failed", .failed)
+            transcript.append(TranscriptEntry(kind: .error, text: error.localizedDescription))
+            return
+        }
+        readWebContent = true
+        Diagnostics.log("research searches=\(findings.searches) pages=\(findings.pagesChecked) "
+            + "matched=\(findings.pagesMatched) facts=\(findings.facts.count)")
+
+        let pages = findings.pagesChecked == 1 ? "1 page" : "\(findings.pagesChecked) pages"
+        guard !findings.facts.isEmpty else {
+            updateChip("Checked \(pages), none clearly matched", .failed)
+            let reply = "I couldn't find pages that were clearly about this. Try adding something "
+                + "that narrows it down, such as a job, a company, a school or a town."
+            transcript.append(TranscriptEntry(kind: .assistant, text: reply))
+            history.append(.assistant(reply))
+            return
+        }
+        updateChip("Researched \(pages) \u{00B7} \(findings.pagesMatched) matched "
+            + "\u{00B7} \(findings.facts.count) details", .done)
+
+        await waitUntilForeground()
+        if Task.isCancelled { return }
+        let messages: [ModelRunner.Message] = [
+            .system(ResearchEngine.reportPrompt),
+            .user(ResearchEngine.reportInput(request: currentRequest, findings: findings)),
+        ]
+        let entryIndex = transcript.count
+        transcript.append(TranscriptEntry(kind: .assistant, text: "", isStreaming: true))
+        var replyText = ""
+        isGenerating = true
+        do {
+            for try await event in runner.stream(messages: messages, tools: [], thinking: false) {
+                if case .text(let chunk) = event {
+                    replyText += chunk
+                    if transcript.indices.contains(entryIndex) {
+                        transcript[entryIndex].text = replyText
+                    }
+                }
+            }
+        } catch {
+            isGenerating = false
+            finishStreaming(at: entryIndex, text: replyText)
+            transcript.append(TranscriptEntry(kind: .error, text: error.localizedDescription))
+            return
+        }
+        isGenerating = false
+        if Task.isCancelled {
+            if !replyText.isEmpty {
+                finishStreaming(at: entryIndex, text: replyText)
+                history.append(.assistant(replyText))
+            }
+            return
+        }
+        if replyText.isEmpty {
+            // Fall back to the notes themselves rather than an empty bubble.
+            replyText = findings.facts.map { "- \($0.text) (\($0.site))" }.joined(separator: "\n")
+        }
+        finishStreaming(at: entryIndex, text: replyText)
+        history.append(.assistant(replyText))
+    }
+
+    /// One short generation with no tools and no thinking, for the research
+    /// checks. Waits for the foreground, as every generation must.
+    private func ask(system: String, user: String) async throws -> String {
+        await waitUntilForeground()
+        try Task.checkCancellation()
+        isGenerating = true
+        defer { isGenerating = false }
+        var text = ""
+        for try await event in runner.stream(
+            messages: [.system(system), .user(user)],
+            tools: [],
+            thinking: false,
+            sampling: .extraction(maxTokens: 320)
+        ) {
+            if case .text(let chunk) = event { text += chunk }
+        }
+        try Task.checkCancellation()
+        return text
     }
 
     private func execute(_ call: ModelRunner.Message.Call) async {
