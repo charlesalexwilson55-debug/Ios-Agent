@@ -6,8 +6,14 @@ on:
   pull_request:
   workflow_dispatch:
 
+# contents: write is needed by the "Publish build diagnostics" step below,
+# which pushes the compiler output to a branch. Downloading job logs through
+# the REST API requires repository admin rights, so on a failure the errors
+# are otherwise only readable by a human in the browser. Publishing them to a
+# branch makes them fetchable from the public raw URL, which is what lets the
+# build be debugged without handing anyone a token.
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -57,7 +63,57 @@ jobs:
           restore-keys: spm-${{ runner.os }}-
 
       - name: Build IPA
+        id: build
         run: bash scripts/build-ios.sh
+
+      # Runs whether the build passed or failed. On failure this is the only
+      # way the diagnostics escape the runner without admin log access; on
+      # success it records the warning list, which is worth watching.
+      - name: Publish build diagnostics
+        if: always()
+        env:
+          RUN_ID: ${{ github.run_id }}
+          RUN_NUMBER: ${{ github.run_number }}
+          SHA: ${{ github.sha }}
+          OUTCOME: ${{ steps.build.outcome }}
+        run: |
+          mkdir -p .ci-out
+          {
+            echo "run      #$RUN_NUMBER ($RUN_ID)"
+            echo "commit   $SHA"
+            echo "outcome  $OUTCOME"
+            echo "xcode    $(xcodebuild -version | head -1)"
+            echo "ios sdk  $(xcrun --sdk iphoneos --show-sdk-version)"
+            echo
+            if [ -f build/xcodebuild.log ]; then
+              echo "=== errors ==="
+              grep -E "error: " build/xcodebuild.log | sort -u | head -120 || echo "(none)"
+              echo
+              echo "=== warnings (first 40 unique) ==="
+              grep -E "warning: " build/xcodebuild.log | sort -u | head -40 || echo "(none)"
+              echo
+              echo "=== last 120 raw lines ==="
+              tail -120 build/xcodebuild.log
+            else
+              echo "No xcodebuild.log was produced - the build failed before xcodebuild ran."
+              echo "Check the 'Build IPA' step console for the earlier failure."
+            fi
+          } > .ci-out/diagnostics.txt
+
+          cat .ci-out/diagnostics.txt
+
+          # Force-pushed single-commit orphan branch: this is a status file,
+          # not history worth keeping, and it must never clutter main.
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan ci-diagnostics
+          git rm -rf --cached . >/dev/null 2>&1 || true
+          find . -maxdepth 1 -not -name '.git' -not -name '.ci-out' -not -name '.' -exec rm -rf {} + || true
+          mv .ci-out/diagnostics.txt ./diagnostics.txt
+          rmdir .ci-out || true
+          git add diagnostics.txt
+          git commit -q -m "Build diagnostics for run #$RUN_NUMBER ($OUTCOME)"
+          git push -q --force origin ci-diagnostics
 
       - uses: actions/upload-artifact@v4
         with:

@@ -112,7 +112,7 @@ struct ModelPickerSheet: View {
             // an adapter silently changing the model's behaviour is exactly
             // the kind of state a user needs to be able to see and turn off.
             Button {
-                catalog.selectedAdapterID = nil
+                catalog.select(adapterID: nil)
             } label: {
                 HStack {
                     Text("None")
@@ -126,7 +126,7 @@ struct ModelPickerSheet: View {
 
             ForEach(catalog.adapters) { adapter in
                 Button {
-                    catalog.selectedAdapterID = adapter.id
+                    catalog.select(adapterID: adapter.id)
                 } label: {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {

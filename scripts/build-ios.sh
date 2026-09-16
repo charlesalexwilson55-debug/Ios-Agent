@@ -54,6 +54,12 @@ mkdir -p "$BUILD_ROOT"
 # CODE_SIGNING_ALLOWED=NO produces an unsigned .app. The signature is applied
 # later by whatever installs it (Sideloadly, AltStore), which re-signs with the
 # user's own Apple ID anyway, so signing here would only be thrown away.
+# The raw log is teed to a file before xcbeautify sees it. xcbeautify is for
+# humans reading the CI console; the unfiltered log is what actually contains
+# the compiler diagnostics, and discarding it was costing a full build cycle
+# per error.
+RAW_LOG="$BUILD_ROOT/xcodebuild.log"
+set +e
 xcodebuild archive \
   -project "$APP_NAME.xcodeproj" \
   -scheme "$APP_NAME" \
@@ -65,14 +71,25 @@ xcodebuild archive \
   CODE_SIGNING_REQUIRED=NO \
   CODE_SIGN_IDENTITY="" \
   CODE_SIGN_ENTITLEMENTS="" \
-  | xcbeautify 2>/dev/null || true
+  > "$RAW_LOG" 2>&1
+BUILD_STATUS=$?
+set -e
 
-# xcbeautify swallows the exit status through the pipe, so success is
-# determined by whether the archive actually contains an app.
+if command -v xcbeautify >/dev/null 2>&1; then
+  xcbeautify < "$RAW_LOG" || true
+else
+  tail -60 "$RAW_LOG"
+fi
+
 APP_PATH="$ARCHIVE/Products/Applications/$APP_NAME.app"
-if [[ ! -d "$APP_PATH" ]]; then
-  echo "ERROR: archive did not produce $APP_NAME.app. Re-run without xcbeautify to see errors:" >&2
-  echo "  xcodebuild archive -project $APP_NAME.xcodeproj -scheme $APP_NAME -configuration Release -destination 'generic/platform=iOS' -archivePath $ARCHIVE CODE_SIGNING_ALLOWED=NO" >&2
+if [[ $BUILD_STATUS -ne 0 || ! -d "$APP_PATH" ]]; then
+  echo ""
+  echo "======================= COMPILER DIAGNOSTICS =======================" >&2
+  # Unique, in file order, so the same error repeated across targets does not
+  # crowd out the others.
+  grep -E "(error|warning): " "$RAW_LOG" | sort -u | head -80 >&2 || true
+  echo "====================================================================" >&2
+  echo "xcodebuild exited $BUILD_STATUS; full log at $RAW_LOG" >&2
   exit 1
 fi
 

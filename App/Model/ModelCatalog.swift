@@ -58,9 +58,9 @@ struct DiscoveredModel: Identifiable, Hashable {
 ///   the user can drag a model folder straight in from a Mac, a USB drive or
 ///   iCloud Drive. For a 5GB model this is by far the least painful route, and
 ///   it is the reason that plist key is set.
-/// - **Application Support** is where the in-app downloader writes, kept out
-///   of Documents so a half-downloaded model is not sitting in the user's
-///   file browser looking like something they should open.
+/// - **Application Support** is where imported copies land, kept out of
+///   Documents so a partially-copied model is not sitting in the user's file
+///   browser looking like something they should open.
 @MainActor
 @Observable
 final class ModelCatalog {
@@ -69,17 +69,30 @@ final class ModelCatalog {
     private(set) var isScanning = false
 
     /// Directory path of the selected model, persisted across launches.
-    var selectedModelID: String? {
-        didSet { UserDefaults.standard.set(selectedModelID, forKey: Self.selectionKey) }
-    }
+    ///
+    /// Written through `select(modelID:)` rather than a `didSet` observer:
+    /// the `@Observable` macro rewrites stored properties into computed
+    /// accessors so it can track reads and writes, which leaves nowhere for a
+    /// property observer to live. An explicit setter also makes the
+    /// persistence side effect visible at the call site instead of hiding it
+    /// behind an assignment.
+    private(set) var selectedModelID: String?
 
     /// Optional LoRA adapter layered on the selected model.
-    var selectedAdapterID: String? {
-        didSet { UserDefaults.standard.set(selectedAdapterID, forKey: Self.adapterKey) }
-    }
+    private(set) var selectedAdapterID: String?
 
     private static let selectionKey = "conduit.selectedModel"
     private static let adapterKey = "conduit.selectedAdapter"
+
+    func select(modelID: String?) {
+        selectedModelID = modelID
+        UserDefaults.standard.set(modelID, forKey: Self.selectionKey)
+    }
+
+    func select(adapterID: String?) {
+        selectedAdapterID = adapterID
+        UserDefaults.standard.set(adapterID, forKey: Self.adapterKey)
+    }
 
     init() {
         selectedModelID = UserDefaults.standard.string(forKey: Self.selectionKey)
@@ -100,7 +113,7 @@ final class ModelCatalog {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     }
 
-    /// Where the in-app downloader stores models.
+    /// Where imported models are copied to.
     static var managedRoot: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         let dir = base.appendingPathComponent("Models", isDirectory: true)
@@ -134,13 +147,13 @@ final class ModelCatalog {
         // A selection pointing at a deleted folder would silently fail to
         // load, so drop it and fall back to the only model when there is one.
         if let selected = selectedModelID, !models.contains(where: { $0.id == selected }) {
-            selectedModelID = nil
+            select(modelID: nil)
         }
         if selectedModelID == nil, models.count == 1 {
-            selectedModelID = models[0].id
+            select(modelID: models[0].id)
         }
         if let selected = selectedAdapterID, !adapters.contains(where: { $0.id == selected }) {
-            selectedAdapterID = nil
+            select(adapterID: nil)
         }
     }
 
@@ -266,8 +279,8 @@ final class ModelCatalog {
 
     func delete(_ model: DiscoveredModel) async {
         try? FileManager.default.removeItem(at: model.directory)
-        if selectedModelID == model.id { selectedModelID = nil }
-        if selectedAdapterID == model.id { selectedAdapterID = nil }
+        if selectedModelID == model.id { select(modelID: nil) }
+        if selectedAdapterID == model.id { select(adapterID: nil) }
         await refresh()
     }
 

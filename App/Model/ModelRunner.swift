@@ -146,7 +146,12 @@ actor ModelRunner {
     /// tokens per second on a phone, one `Task` allocation per token is waste
     /// for no benefit. Consuming a stream on the main actor lets the caller use
     /// ordinary local variables and keeps cancellation tied to the sequence.
-    func stream(
+    /// `nonisolated` so callers can write `for try await event in
+    /// runner.stream(...)` directly. An actor-isolated non-async method would
+    /// need `await` on the call expression itself, which reads badly inside a
+    /// for-await and is easy to forget. Building the stream touches no actor
+    /// state; the isolated work happens inside the Task below.
+    nonisolated func stream(
         messages: [Message],
         tools: [ToolDescriptor],
         maxTokens: Int = 640

@@ -135,7 +135,7 @@ struct RootView: View {
     }
 
     private func select(_ model: DiscoveredModel) {
-        catalog.selectedModelID = model.id
+        catalog.select(modelID: model.id)
         showingModelPicker = false
         Task { await load(model) }
     }
