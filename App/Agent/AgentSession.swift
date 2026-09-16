@@ -20,6 +20,10 @@ struct TranscriptEntry: Identifiable {
     var isStreaming: Bool = false
     /// Qwen3 thinking for assistant entries, shown folded away.
     var reasoning: String = ""
+    /// Earlier drafts of this answer, for personalities that write several.
+    var drafts: [String] = []
+    /// How many drafts are being written; zero once the answer is final.
+    var draftTarget: Int = 0
 
     enum Outcome {
         case done
@@ -63,6 +67,11 @@ final class AgentSession {
     /// followed across several web pages by `ResearchEngine` instead of
     /// going through the normal tool loop.
     var researchEnabled: Bool = false
+
+    /// The personality in use, or nil for plain Conduit. Shapes the prompt,
+    /// the tools offered, how hard each turn works and how many drafts a
+    /// question gets.
+    var persona: Persona?
 
     /// Model-visible history, which is not the same as the transcript: it
     /// carries tool results and omits UI-only entries.
@@ -176,6 +185,11 @@ final class AgentSession {
         ))
     }
 
+    /// A line from the app itself, such as a model that could not be found.
+    func note(_ text: String) {
+        transcript.append(TranscriptEntry(kind: .error, text: text))
+    }
+
     func clear() {
         cancel()
         transcript.removeAll()
@@ -193,16 +207,29 @@ final class AgentSession {
             await runResearch()
             return
         }
+        let persona = self.persona
         let mode = TaskRouter.mode(for: currentRequest, previousTurnUsedPhoneTools: lastTurnUsedPhoneTools)
         let online = onlineEnabled && Connectivity.shared.isOnline
-        let tools = TaskRouter.tools(from: registry.specs, mode: mode, online: online)
-        let systemPrompt = SystemPrompt.build(tools: tools, mode: mode)
+        var tools = TaskRouter.tools(from: registry.specs, mode: mode, online: online)
+        if let allowed = persona?.allowedToolNames {
+            tools = tools.filter { allowed.contains($0.name) }
+        }
+        var systemPrompt = SystemPrompt.build(tools: tools, mode: mode)
+        if let persona {
+            systemPrompt += "\n\n" + persona.promptSection
+        }
+        let thinking = persona?.effort.thinking ?? thinkingEnabled
+        let toolSteps = persona?.effort.toolSteps ?? maxToolIterations
+        // Only questions are drafted more than once: phone tools have side
+        // effects, and a second draft must never send a second message.
+        let drafts = mode == .answer ? (persona?.drafts ?? 1) : 1
         offeredTools = Set(tools.map(\.name))
         usedPhoneTools = false
         defer { lastTurnUsedPhoneTools = usedPhoneTools }
-        Diagnostics.log("turn mode=\(mode.rawValue) online=\(online) tools=\(tools.count)")
+        Diagnostics.log("turn mode=\(mode.rawValue) online=\(online) tools=\(tools.count) "
+            + "persona=\(persona == nil ? "none" : "custom") think=\(thinking) drafts=\(drafts)")
 
-        for iteration in 0..<maxToolIterations {
+        for iteration in 0..<toolSteps {
             await waitUntilForeground()
             if Task.isCancelled { return }
 
@@ -222,7 +249,7 @@ final class AgentSession {
                 // be mutated directly and the accumulators above can be plain
                 // locals.
                 for try await event in runner.stream(
-                    messages: messages, tools: tools, thinking: thinkingEnabled
+                    messages: messages, tools: tools, thinking: thinking
                 ) {
                     switch event {
                     case .text(let chunk):
@@ -286,6 +313,9 @@ final class AgentSession {
                         ? "I did not produce a reply. Try rephrasing the request."
                         : "I ran out of room while thinking. Try a narrower question, "
                             + "or turn off Think."
+                } else if !replyText.isEmpty, drafts > 1 {
+                    await writeMoreDrafts(first: replyText, entryIndex: entryIndex,
+                                          systemPrompt: systemPrompt, total: drafts)
                 }
                 return
             }
@@ -305,7 +335,7 @@ final class AgentSession {
             // On the last permitted iteration, tell the model to stop calling
             // tools and summarise. Without this the turn ends silently after
             // the cap and the user sees tool chips but no reply.
-            if iteration == maxToolIterations - 1 {
+            if iteration == toolSteps - 1 {
                 history.append(.user(
                     "You have reached the tool limit for this request. Do not call any more "
                         + "tools. Reply now in one or two sentences describing what you did."
@@ -330,6 +360,10 @@ final class AgentSession {
             return
         }
         Diagnostics.log("turn mode=research")
+        // Research runs for minutes. If the screen locks, iOS takes the GPU
+        // away and the run is lost, so the screen stays on until it ends.
+        UIApplication.shared.isIdleTimerDisabled = true
+        defer { UIApplication.shared.isIdleTimerDisabled = false }
 
         let chip = TranscriptEntry(kind: .tool, text: "Researching\u{2026}")
         transcript.append(chip)
@@ -343,6 +377,7 @@ final class AgentSession {
 
         let engine = ResearchEngine(
             request: currentRequest,
+            budget: .matching(persona?.effort),
             ask: { [weak self] system, user in
                 guard let self else { throw CancellationError() }
                 return try await self.ask(system: system, user: user)
@@ -420,6 +455,108 @@ final class AgentSession {
         }
         finishStreaming(at: entryIndex, text: replyText)
         history.append(.assistant(replyText))
+    }
+
+    // MARK: - Drafts
+
+    /// Writes more answers to the same question, then one final answer that
+    /// keeps the best of them. The drafts stay visible, folded away.
+    ///
+    /// The phone runs one generation at a time, so the drafts are written one
+    /// after another. Tools are withheld: whatever the first draft looked up
+    /// is already in the history.
+    private func writeMoreDrafts(first: String, entryIndex: Int, systemPrompt: String, total: Int) async {
+        guard total >= 2, transcript.indices.contains(entryIndex),
+              let last = history.last, last.role == .assistant, last.content == first
+        else { return }
+        let entryID = transcript[entryIndex].id
+        func update(_ change: (inout TranscriptEntry) -> Void) {
+            guard let index = transcript.lastIndex(where: { $0.id == entryID }) else { return }
+            change(&transcript[index])
+        }
+        func finish(_ answer: String, drafts: [String]) {
+            update {
+                $0.text = answer
+                $0.isStreaming = false
+                $0.drafts = drafts.count > 1 ? drafts : []
+                $0.draftTarget = 0
+            }
+            history.append(.assistant(answer))
+        }
+
+        // Several full answers take a while; a screen lock would stop them.
+        UIApplication.shared.isIdleTimerDisabled = true
+        defer { UIApplication.shared.isIdleTimerDisabled = false }
+
+        // The first draft comes back out of the history while the others are
+        // written, so they answer the question rather than follow it.
+        history.removeLast()
+        var drafts = [first]
+        update {
+            $0.drafts = drafts
+            $0.draftTarget = total
+            $0.text = ""
+            $0.isStreaming = true
+        }
+        var base: [ModelRunner.Message] = [.system(systemPrompt)]
+        base.append(contentsOf: trimmedHistory())
+
+        for _ in 2...total {
+            await waitUntilForeground()
+            if Task.isCancelled { break }
+            var text = ""
+            isGenerating = true
+            do {
+                for try await event in runner.stream(messages: base, tools: [], thinking: false) {
+                    if case .text(let chunk) = event { text += chunk }
+                }
+            } catch {
+                isGenerating = false
+                break
+            }
+            isGenerating = false
+            if Task.isCancelled { break }
+            let draft = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !draft.isEmpty {
+                drafts.append(draft)
+                update { $0.drafts = drafts }
+            }
+        }
+
+        guard !Task.isCancelled, drafts.count > 1 else {
+            finish(first, drafts: drafts)
+            return
+        }
+
+        let listing = drafts.enumerated()
+            .map { "Draft \($0.offset + 1):\n\($0.element)" }
+            .joined(separator: "\n\n")
+        let instruction = "Here are \(drafts.count) drafts of your answer to my last message.\n\n"
+            + listing
+            + "\n\nWrite the final answer. Keep what is correct, clear and useful from each draft, "
+            + "fix any mistakes, and drop repetition. Reply with the final answer only, and do not "
+            + "mention the drafts."
+        var messages = base
+        messages.append(.user(instruction))
+
+        await waitUntilForeground()
+        var combined = ""
+        if !Task.isCancelled {
+            isGenerating = true
+            do {
+                for try await event in runner.stream(messages: messages, tools: [], thinking: false) {
+                    if case .text(let chunk) = event {
+                        combined += chunk
+                        update { $0.text = combined }
+                    }
+                }
+            } catch {
+                combined = ""
+            }
+            isGenerating = false
+        }
+        let answer = combined.trimmingCharacters(in: .whitespacesAndNewlines)
+        finish(answer.isEmpty ? first : combined, drafts: drafts)
     }
 
     /// One short generation with no tools and no thinking, for the research

@@ -2,13 +2,14 @@ import SwiftUI
 
 /// The app's pages, reached from the sidebar.
 enum AppPage: String, CaseIterable, Identifiable {
-    case chat, directions, online, models, capabilities
+    case chat, personalities, directions, online, models, capabilities
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .chat: "Chat"
+        case .personalities: "Personalities"
         case .directions: "Directions"
         case .online: "Online"
         case .models: "Models"
@@ -19,6 +20,7 @@ enum AppPage: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .chat: "bubble.left.and.bubble.right"
+        case .personalities: "theatermasks"
         case .directions: "arrow.triangle.turn.up.right.diamond"
         case .online: "globe"
         case .models: "cpu"

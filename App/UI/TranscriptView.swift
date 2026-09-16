@@ -54,7 +54,8 @@ struct TranscriptView: View {
         case .user:
             UserBubble(text: entry.text)
         case .assistant:
-            AssistantText(text: entry.text, reasoning: entry.reasoning, isStreaming: entry.isStreaming)
+            AssistantText(text: entry.text, reasoning: entry.reasoning, isStreaming: entry.isStreaming,
+                          drafts: entry.drafts, draftTarget: entry.draftTarget)
         case .tool:
             ToolChip(text: entry.text, outcome: entry.toolOutcome)
         case .error:
@@ -83,11 +84,16 @@ private struct AssistantText: View {
     let text: String
     let reasoning: String
     let isStreaming: Bool
+    let drafts: [String]
+    let draftTarget: Int
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if !reasoning.isEmpty {
-                ReasoningView(reasoning: reasoning, isThinking: isStreaming && text.isEmpty)
+                ReasoningView(reasoning: reasoning, isThinking: isStreaming && text.isEmpty && drafts.isEmpty)
+            }
+            if !drafts.isEmpty {
+                DraftsView(drafts: drafts, status: draftStatus)
             }
 
             ForEach(MessageSegment.parse(text)) { segment in
@@ -107,6 +113,56 @@ private struct AssistantText: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// What the drafting is doing, or nil once the answer is final.
+    private var draftStatus: String? {
+        guard isStreaming, draftTarget > 0 else { return nil }
+        if drafts.count < draftTarget {
+            return "Writing draft \(drafts.count + 1) of \(draftTarget)\u{2026}"
+        }
+        return "Combining \(drafts.count) drafts\u{2026}"
+    }
+}
+
+/// The drafts a hard-working personality wrote, folded away under the answer
+/// they were combined into.
+private struct DraftsView: View {
+    let drafts: [String]
+    let status: String?
+
+    @State private var expanded = false
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(Array(drafts.enumerated()), id: \.offset) { item in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Draft \(item.offset + 1)")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Text(item.element)
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+            .padding(.top, 6)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "square.stack.3d.up")
+                    .symbolEffect(.pulse, isActive: status != nil)
+                Text(status ?? "\(drafts.count) drafts")
+            }
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(.secondary)
+        }
+        .tint(.secondary)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .glassEffect(.clear, in: .rect(cornerRadius: 12))
     }
 }
 

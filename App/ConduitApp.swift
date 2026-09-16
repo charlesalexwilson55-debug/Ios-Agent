@@ -36,6 +36,10 @@ struct RootView: View {
     @State private var research = false
     @State private var page: AppPage = .chat
     @State private var sidebarOpen = false
+    @State private var personas = PersonaStore.shared
+    @State private var menuOpen = false
+    /// Set by the plus menu so the Personalities page opens a new one.
+    @State private var startNewPersona = false
 
     var body: some View {
         ZStack {
@@ -57,6 +61,7 @@ struct RootView: View {
             newSession.thinkingEnabled = thinking
             newSession.onlineEnabled = online
             newSession.researchEnabled = research
+            newSession.persona = personas.selected
             session = newSession
             Diagnostics.log("app.launch avail=\(Diagnostics.availableMB)MB")
 
@@ -118,6 +123,16 @@ struct RootView: View {
     private var chatPage: some View {
         NavigationStack {
             TranscriptView(entries: session?.transcript ?? [])
+            // A tap anywhere above the bar closes the plus menu.
+            .overlay {
+                if menuOpen {
+                    Color.black.opacity(0.06)
+                        .ignoresSafeArea()
+                        .contentShape(.rect)
+                        .onTapGesture { menuOpen = false }
+                        .accessibilityHidden(true)
+                }
+            }
             .navigationTitle("")
             .toolbarTitleDisplayMode(.inline)
             .toolbarBackgroundVisibility(.hidden, for: .navigationBar)
@@ -139,11 +154,29 @@ struct RootView: View {
                 thinking: $thinking,
                 online: $online,
                 research: $research,
+                menuOpen: $menuOpen,
+                personas: personas.personas,
+                selectedPersona: personas.selected,
+                onSelectPersona: { personas.select($0) },
+                onManagePersonas: { createNew in
+                    startNewPersona = createNew
+                    page = .personalities
+                },
                 isWorking: session?.isWorking ?? false,
                 isModelLoaded: isReady,
                 onSend: send,
                 onStop: { session?.cancel() }
             )
+        }
+        // Edits to the personality in use apply from the next message.
+        .onChange(of: personas.selected) { _, persona in
+            session?.persona = persona
+        }
+        .onChange(of: personas.selectedID) { _, _ in
+            loadModel(for: personas.selected)
+        }
+        .onChange(of: page) { _, _ in
+            menuOpen = false
         }
     }
 
@@ -152,6 +185,9 @@ struct RootView: View {
         switch page {
         case .chat:
             EmptyView()
+        case .personalities:
+            PersonasView(startNew: $startNewPersona)
+                .environment(catalog)
         case .directions:
             DirectionsView()
         case .online:
@@ -216,6 +252,23 @@ struct RootView: View {
             return
         }
         session?.submit(task)
+    }
+
+    /// Loads the model a personality asks for, when it is on the phone and
+    /// not already loaded.
+    private func loadModel(for persona: Persona?) {
+        guard let persona else { return }
+        let wanted = persona.model.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !wanted.isEmpty else { return }
+        guard let model = ModelMatcher.match(wanted, in: catalog.models) else {
+            session?.note("\(persona.name) asks for the model \u{201C}\(wanted)\u{201D}, which is not "
+                + "on this phone, so the current model stays loaded.")
+            return
+        }
+        guard model.id != catalog.selectedModelID else { return }
+        // A model cannot be swapped out from under an answer being written.
+        if session?.isWorking ?? false { session?.cancel() }
+        select(model)
     }
 
     private func select(_ model: DiscoveredModel) {
