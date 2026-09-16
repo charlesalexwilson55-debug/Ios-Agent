@@ -30,6 +30,7 @@ final class ToolRegistry {
             PeopleTools(),
             CalendarTools(),
             DeviceTools(),
+            CodeTools(),
         ])
     }
 

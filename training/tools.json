@@ -4,7 +4,11 @@
     "function": {
       "name": "get_current_time",
       "description": "Get the current date, time, weekday and time zone. Call this FIRST whenever the user says anything relative such as tomorrow, tonight, next Friday or in two hours. You have no clock of your own and will otherwise guess the date wrongly.",
-      "parameters": { "type": "object", "properties": {}, "required": [] }
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
     }
   },
   {
@@ -15,9 +19,14 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "name": { "type": "string", "description": "A name, partial name or saved nickname to search for." }
+          "name": {
+            "type": "string",
+            "description": "A name, partial name or saved nickname to search for."
+          }
         },
-        "required": ["name"]
+        "required": [
+          "name"
+        ]
       }
     }
   },
@@ -29,10 +38,19 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "alias": { "type": "string", "description": "The nickname the user says, such as mum, dad, or the boss." },
-          "contact_name": { "type": "string", "description": "The full contact name the nickname refers to." }
+          "alias": {
+            "type": "string",
+            "description": "The nickname the user says, such as mum, dad, or the boss."
+          },
+          "contact_name": {
+            "type": "string",
+            "description": "The full contact name the nickname refers to."
+          }
         },
-        "required": ["alias", "contact_name"]
+        "required": [
+          "alias",
+          "contact_name"
+        ]
       }
     }
   },
@@ -44,10 +62,19 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "to": { "type": "string", "description": "Phone number, contact name, or saved nickname." },
-          "body": { "type": "string", "description": "The message text, written in the user's voice." }
+          "to": {
+            "type": "string",
+            "description": "Phone number, contact name, or saved nickname."
+          },
+          "body": {
+            "type": "string",
+            "description": "The message text, written in the user's voice."
+          }
         },
-        "required": ["to", "body"]
+        "required": [
+          "to",
+          "body"
+        ]
       }
     }
   },
@@ -59,10 +86,18 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "to": { "type": "string", "description": "Phone number, contact name, or saved nickname." },
-          "facetime": { "type": "boolean", "description": "Use FaceTime instead of a cellular call." }
+          "to": {
+            "type": "string",
+            "description": "Phone number, contact name, or saved nickname."
+          },
+          "facetime": {
+            "type": "boolean",
+            "description": "Use FaceTime instead of a cellular call."
+          }
         },
-        "required": ["to"]
+        "required": [
+          "to"
+        ]
       }
     }
   },
@@ -74,12 +109,28 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "to": { "type": "string", "description": "Recipient email, contact name, or nickname. Separate several recipients with commas." },
-          "subject": { "type": "string", "description": "The subject line." },
-          "body": { "type": "string", "description": "The email body, written in the user's voice." },
-          "cc": { "type": "string", "description": "Comma-separated addresses to copy." }
+          "to": {
+            "type": "string",
+            "description": "Recipient email, contact name, or nickname. Separate several recipients with commas."
+          },
+          "subject": {
+            "type": "string",
+            "description": "The subject line."
+          },
+          "body": {
+            "type": "string",
+            "description": "The email body, written in the user's voice."
+          },
+          "cc": {
+            "type": "string",
+            "description": "Comma-separated addresses to copy."
+          }
         },
-        "required": ["to", "subject", "body"]
+        "required": [
+          "to",
+          "subject",
+          "body"
+        ]
       }
     }
   },
@@ -91,16 +142,43 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "title": { "type": "string", "description": "The event title." },
-          "start": { "type": "string", "description": "Start time in local ISO 8601, for example 2026-09-16T15:30:00. Call get_current_time first if you need to work out a relative time." },
-          "end": { "type": "string", "description": "End time in local ISO 8601. Omit to use duration_minutes instead." },
-          "duration_minutes": { "type": "integer", "description": "Length in minutes when end is not given. Defaults to 60." },
-          "all_day": { "type": "boolean", "description": "True for an all-day event." },
-          "location": { "type": "string", "description": "Where the event takes place." },
-          "notes": { "type": "string", "description": "Longer notes to attach." },
-          "alarm_minutes_before": { "type": "integer", "description": "Add an alert this many minutes before the start." }
+          "title": {
+            "type": "string",
+            "description": "The event title."
+          },
+          "start": {
+            "type": "string",
+            "description": "Start time in local ISO 8601, for example 2026-09-16T15:30:00. Call get_current_time first if you need to work out a relative time."
+          },
+          "end": {
+            "type": "string",
+            "description": "End time in local ISO 8601. Omit to use duration_minutes instead."
+          },
+          "duration_minutes": {
+            "type": "integer",
+            "description": "Length in minutes when end is not given. Defaults to 60."
+          },
+          "all_day": {
+            "type": "boolean",
+            "description": "True for an all-day event."
+          },
+          "location": {
+            "type": "string",
+            "description": "Where the event takes place."
+          },
+          "notes": {
+            "type": "string",
+            "description": "Longer notes to attach."
+          },
+          "alarm_minutes_before": {
+            "type": "integer",
+            "description": "Add an alert this many minutes before the start."
+          }
         },
-        "required": ["title", "start"]
+        "required": [
+          "title",
+          "start"
+        ]
       }
     }
   },
@@ -112,11 +190,23 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "start": { "type": "string", "description": "Range start in local ISO 8601." },
-          "end": { "type": "string", "description": "Range end in local ISO 8601." },
-          "query": { "type": "string", "description": "Only return events whose title or location contains this." }
+          "start": {
+            "type": "string",
+            "description": "Range start in local ISO 8601."
+          },
+          "end": {
+            "type": "string",
+            "description": "Range end in local ISO 8601."
+          },
+          "query": {
+            "type": "string",
+            "description": "Only return events whose title or location contains this."
+          }
         },
-        "required": ["start", "end"]
+        "required": [
+          "start",
+          "end"
+        ]
       }
     }
   },
@@ -128,10 +218,19 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "start": { "type": "string", "description": "Start in local ISO 8601." },
-          "end": { "type": "string", "description": "End in local ISO 8601." }
+          "start": {
+            "type": "string",
+            "description": "Start in local ISO 8601."
+          },
+          "end": {
+            "type": "string",
+            "description": "End in local ISO 8601."
+          }
         },
-        "required": ["start", "end"]
+        "required": [
+          "start",
+          "end"
+        ]
       }
     }
   },
@@ -143,9 +242,14 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "event_id": { "type": "string", "description": "The event_id returned by find_events." }
+          "event_id": {
+            "type": "string",
+            "description": "The event_id returned by find_events."
+          }
         },
-        "required": ["event_id"]
+        "required": [
+          "event_id"
+        ]
       }
     }
   },
@@ -157,12 +261,32 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "title": { "type": "string", "description": "What to be reminded about." },
-          "due": { "type": "string", "description": "When it is due, in local ISO 8601." },
-          "notes": { "type": "string", "description": "Extra detail." },
-          "priority": { "type": "string", "description": "Priority level.", "enum": ["none", "low", "medium", "high"] }
+          "title": {
+            "type": "string",
+            "description": "What to be reminded about."
+          },
+          "due": {
+            "type": "string",
+            "description": "When it is due, in local ISO 8601."
+          },
+          "notes": {
+            "type": "string",
+            "description": "Extra detail."
+          },
+          "priority": {
+            "type": "string",
+            "description": "Priority level.",
+            "enum": [
+              "none",
+              "low",
+              "medium",
+              "high"
+            ]
+          }
         },
-        "required": ["title"]
+        "required": [
+          "title"
+        ]
       }
     }
   },
@@ -174,7 +298,10 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "include_completed": { "type": "boolean", "description": "Also include finished reminders." }
+          "include_completed": {
+            "type": "boolean",
+            "description": "Also include finished reminders."
+          }
         },
         "required": []
       }
@@ -188,9 +315,14 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "reminder_id": { "type": "string", "description": "The reminder_id returned by find_reminders." }
+          "reminder_id": {
+            "type": "string",
+            "description": "The reminder_id returned by find_reminders."
+          }
         },
-        "required": ["reminder_id"]
+        "required": [
+          "reminder_id"
+        ]
       }
     }
   },
@@ -202,11 +334,23 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "title": { "type": "string", "description": "The notification title." },
-          "at": { "type": "string", "description": "When to fire, in local ISO 8601." },
-          "body": { "type": "string", "description": "Secondary line of text." }
+          "title": {
+            "type": "string",
+            "description": "The notification title."
+          },
+          "at": {
+            "type": "string",
+            "description": "When to fire, in local ISO 8601."
+          },
+          "body": {
+            "type": "string",
+            "description": "Secondary line of text."
+          }
         },
-        "required": ["title", "at"]
+        "required": [
+          "title",
+          "at"
+        ]
       }
     }
   },
@@ -218,10 +362,18 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "name": { "type": "string", "description": "The exact name of the existing shortcut." },
-          "input": { "type": "string", "description": "Text to pass into the shortcut as its input." }
+          "name": {
+            "type": "string",
+            "description": "The exact name of the existing shortcut."
+          },
+          "input": {
+            "type": "string",
+            "description": "Text to pass into the shortcut as its input."
+          }
         },
-        "required": ["name"]
+        "required": [
+          "name"
+        ]
       }
     }
   },
@@ -236,10 +388,36 @@
           "app": {
             "type": "string",
             "description": "Which app to open.",
-            "enum": ["calendar", "reminders", "notes", "clock", "camera", "photos", "maps", "music", "podcasts", "phone", "messages", "mail", "facetime", "settings", "shortcuts", "find my", "health", "wallet", "app store", "safari", "whatsapp", "spotify", "gmail"]
+            "enum": [
+              "calendar",
+              "reminders",
+              "notes",
+              "clock",
+              "camera",
+              "photos",
+              "maps",
+              "music",
+              "podcasts",
+              "phone",
+              "messages",
+              "mail",
+              "facetime",
+              "settings",
+              "shortcuts",
+              "find my",
+              "health",
+              "wallet",
+              "app store",
+              "safari",
+              "whatsapp",
+              "spotify",
+              "gmail"
+            ]
           }
         },
-        "required": ["app"]
+        "required": [
+          "app"
+        ]
       }
     }
   },
@@ -251,10 +429,24 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "destination": { "type": "string", "description": "Address or place name." },
-          "mode": { "type": "string", "description": "Travel mode.", "enum": ["driving", "walking", "transit", "cycling"] }
+          "destination": {
+            "type": "string",
+            "description": "Address or place name."
+          },
+          "mode": {
+            "type": "string",
+            "description": "Travel mode.",
+            "enum": [
+              "driving",
+              "walking",
+              "transit",
+              "cycling"
+            ]
+          }
         },
-        "required": ["destination"]
+        "required": [
+          "destination"
+        ]
       }
     }
   },
@@ -266,9 +458,14 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "query": { "type": "string", "description": "Artist, album, song or playlist to look for." }
+          "query": {
+            "type": "string",
+            "description": "Artist, album, song or playlist to look for."
+          }
         },
-        "required": ["query"]
+        "required": [
+          "query"
+        ]
       }
     }
   },
@@ -280,9 +477,14 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "query": { "type": "string", "description": "What to search for." }
+          "query": {
+            "type": "string",
+            "description": "What to search for."
+          }
         },
-        "required": ["query"]
+        "required": [
+          "query"
+        ]
       }
     }
   },
@@ -294,9 +496,33 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "text": { "type": "string", "description": "The text to copy." }
+          "text": {
+            "type": "string",
+            "description": "The text to copy."
+          }
         },
-        "required": ["text"]
+        "required": [
+          "text"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "run_javascript",
+      "description": "Run JavaScript in a sandbox on this phone. Returns the value of the last expression and anything printed with console.log. Use it for any arithmetic beyond the trivial, percentages, unit and date calculations, and to test code you have written before giving it to the user. No network, no files, 10 second limit. Use BigInt (123n) for integers larger than 2^53.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "JavaScript source. The final expression is the returned value."
+          }
+        },
+        "required": [
+          "code"
+        ]
       }
     }
   }

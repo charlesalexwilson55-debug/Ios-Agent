@@ -6,29 +6,27 @@ import MLXLMCommon
 // provides the #huggingFaceTokenizerLoader() macro, and its expansion calls
 // Tokenizers.AutoTokenizer directly — so `import Tokenizers` (swift-transformers)
 // is required here for the expanded code to compile, even though nothing in
-// this file names that module explicitly. Remove it and the build fails inside
-// macro-generated code, which is a confusing place to be.
+// this file names that module explicitly.
 import MLXHuggingFace
 import Tokenizers
+import os
 
 /// The only file that touches MLX.
 ///
 /// Everything above this layer speaks in `RunnerEvent` and `ArgumentValue`, so
 /// the agent loop, the tools and the UI carry no dependency on the inference
-/// framework. That matters for two reasons: MLX's API moves quickly, and this
-/// project is authored on Windows where none of it can be compiled. Keeping
-/// the surface area to one file means an API change is one file to fix rather
-/// than a hunt through the app.
-///
-/// Framework-side names deliberately avoided in the rest of the app because
-/// they collide with ours: MLXLMCommon defines both `ToolSpec` (which is just
-/// `[String: any Sendable]`) and `JSONValue`. Ours are `ToolDescriptor` and
-/// `ArgumentValue` for that reason.
+/// framework. MLXLMCommon defines `ToolSpec`, `JSONValue`, `ToolCall` and
+/// `Chat`; swift-transformers defines several of the same names. Ours are
+/// `ToolDescriptor` and `ArgumentValue`, and framework names are qualified.
 actor ModelRunner {
 
     /// What the agent loop consumes. No MLX types cross this boundary.
     enum RunnerEvent {
+        /// Answer text, with any thinking already removed.
         case text(String)
+        /// Qwen3 `<think>` content, delivered separately so the UI can fold it
+        /// away and the history can leave it out.
+        case reasoning(String)
         /// `id` is whatever the framework assigned, which may be nil; the
         /// agent loop assigns its own when it is.
         case toolCall(id: String?, name: String, arguments: ArgumentValue)
@@ -39,6 +37,7 @@ actor ModelRunner {
         case noModelLoaded
         case loadFailed(String)
         case generationFailed(String)
+        case insufficientMemory(String)
 
         var errorDescription: String? {
             switch self {
@@ -48,6 +47,8 @@ actor ModelRunner {
                 return "The model could not be loaded: \(why)"
             case .generationFailed(let why):
                 return "Generation failed: \(why)"
+            case .insufficientMemory(let why):
+                return why
             }
         }
     }
@@ -55,38 +56,91 @@ actor ModelRunner {
     private var container: ModelContainer?
     private var loadedDirectory: String?
 
-    /// Human-readable name of what is loaded, used in the system prompt so the
-    /// model can answer "what are you" correctly.
+    /// Bytes of KV cache per generated token for the loaded model, from its
+    /// config.json. Drives the memory budget below.
+    private var kvBytesPerToken = 150_000
+
+    /// Human-readable name of what is loaded, used in the system prompt.
     private(set) var loadedName: String = "a local model"
 
     var isLoaded: Bool { container != nil }
 
+    // MARK: - Memory policy
+    //
+    // The crash on long or difficult answers is iOS terminating the app for
+    // exceeding its memory limit. MLX does not know that limit exists: its own
+    // ceiling defaults to 1.5x the GPU's recommended working set, which on an
+    // iPhone is far past what iOS allows a single app. So MLX keeps growing the
+    // KV cache until iOS kills the process, with no error and no chance to stop.
+    //
+    // The fix is to ask iOS how much headroom is left
+    // (os_proc_available_memory) and budget against that:
+    // - the KV cache is stored at 8 bits, roughly halving the cost of each token,
+    // - the prompt is prefilled in smaller steps to lower the peak,
+    // - the answer length is capped to what the remaining memory can hold,
+    // - MLX's own limit is set just under the real ceiling, so it frees cached
+    //   buffers and waits instead of allocating past it,
+    // - and a request that cannot fit is refused with a message, not a crash.
+
+    private static let megabyte = 1_048_576
+    private static let kvBits = 8
+    private static let prefillStepSize = 256
+    /// Kept free for SwiftUI, the tokenizer, the JavaScript sandbox and the
+    /// transient activations of each forward pass.
+    private static let reserveBytes = 450 * megabyte
+    /// Scratch memory needed while the prompt is being processed.
+    private static let prefillWorkspaceBytes = 200 * megabyte
+    /// Below this many tokens of room an answer is not worth starting.
+    private static let minimumAnswerTokens = 128
+
+    /// Memory left before iOS terminates the app, or nil where the API does
+    /// not apply (it returns 0 off-device).
+    private static func availableMemory() -> Int? {
+        let bytes = os_proc_available_memory()
+        return bytes > 0 ? Int(bytes) : nil
+    }
+
+    private static func estimateKVBytesPerToken(directory: URL) -> Int? {
+        guard let data = try? Data(contentsOf: directory.appendingPathComponent("config.json")),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let layers = json["num_hidden_layers"] as? Int
+        else { return nil }
+        let heads = json["num_attention_heads"] as? Int ?? 32
+        let kvHeads = json["num_key_value_heads"] as? Int ?? heads
+        let hidden = json["hidden_size"] as? Int ?? 4096
+        let headDim = json["head_dim"] as? Int ?? hidden / max(heads, 1)
+        let elements = layers * kvHeads * headDim * 2
+        // Quantised values plus a 16-bit scale and bias per 64-element group.
+        let bytesPerElement = Double(kvBits) / 8 + 4.0 / 64
+        return Int(Double(elements) * bytesPerElement)
+    }
+
     // MARK: - Loading
 
-    /// Loads a model from a local directory.
-    ///
-    /// Uses the local-directory overload of `loadModelContainer`, which takes
-    /// a `URL` and a tokenizer loader and nothing else. The alternative —
-    /// `LLMModelFactory.shared.loadContainer(from:using:configuration:)` with
-    /// a `ModelConfiguration(directory:)` — needs a `Downloader` passed in for
-    /// a load that will never touch the network. Taking the overload that
-    /// cannot download is both simpler and a better match for the guarantee
-    /// this app makes: it works with the network off.
-    ///
-    /// The tradeoff is no `ModelConfiguration`, so no place to force a
-    /// `toolCallFormat` or extra EOS tokens. Qwen3's format is resolved from
-    /// the model metadata and chat template, so that costs nothing here; a
-    /// model needing an override would have to go back to the factory call.
+    /// Loads a model from a local directory with the overload that cannot
+    /// reach the network.
     func load(directory: URL, displayName: String, adapterDirectory: URL? = nil) async throws {
         let signature = directory.path + "|" + (adapterDirectory?.path ?? "")
         if loadedDirectory == signature, container != nil { return }
 
         // Release the previous model first. Two multi-gigabyte models resident
-        // at once is an immediate jetsam kill on a phone.
+        // at once is an immediate termination on a phone.
         container = nil
         loadedDirectory = nil
+        MLX.Memory.clearCache()
+        MLX.Memory.cacheLimit = 32 * Self.megabyte
 
-        configureMemoryLimits()
+        // Refuse up front when the weights alone cannot fit, instead of letting
+        // iOS kill the app halfway through loading them.
+        if let headroom = Self.availableMemory() {
+            let weights = Self.weightsSize(directory)
+            if weights + Self.reserveBytes > headroom {
+                throw RunnerError.insufficientMemory(String(
+                    format: "This model needs about %.1f GB but only %.1f GB is available to "
+                        + "Conduit. Close other apps, or choose a smaller model.",
+                    Double(weights) / 1e9, Double(headroom) / 1e9))
+            }
+        }
 
         do {
             let loaded = try await loadModelContainer(
@@ -99,39 +153,30 @@ actor ModelRunner {
             container = loaded
             loadedDirectory = signature
             loadedName = displayName
+            kvBytesPerToken = Self.estimateKVBytesPerToken(directory: directory) ?? 150_000
         } catch {
             container = nil
             throw RunnerError.loadFailed(error.localizedDescription)
         }
     }
 
-    /// Layers a LoRA adapter onto the loaded model.
-    ///
-    /// Adapters are applied after the base model is resident, which is what
-    /// makes the cheap fine-tuning path viable: a ~100MB adapter folder rather
-    /// than a second 4.6GB copy of the weights.
-    ///
-    /// Two on-disk formats are accepted, told apart by `adapter_config.json`:
-    ///
-    /// - **PEFT** (what Unsloth and Hugging Face `peft` write, and what
-    ///   training/train_lora.py produces) carries a `peft_type` key and an
-    ///   `adapter_model.safetensors`. Loaded with `LoRAContainer.fromPEFT`,
-    ///   which renames the keys and reorients the matrices itself — so an
-    ///   adapter straight off the GPU box needs no conversion step.
-    /// - **MLX-native** (what `mlx_lm.lora` writes) has `fine_tune_type` and
-    ///   `adapters.safetensors`. Loaded with `LoRAContainer.from`.
-    ///
-    /// Failing to apply an adapter throws rather than degrading silently. A
-    /// model that loads but ignores its adapter looks exactly like a
-    /// fine-tune that did not work, and that is a miserable thing to debug.
+    private static func weightsSize(_ directory: URL) -> Int {
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: [.fileSizeKey])) ?? []
+        return files
+            .filter { $0.pathExtension == "safetensors" }
+            .compactMap { try? $0.resourceValues(forKeys: [.fileSizeKey]).fileSize }
+            .reduce(0, +)
+    }
+
+    /// Layers a LoRA adapter onto the loaded model. PEFT adapters (what
+    /// Unsloth and `peft` write) and MLX-native adapters are both accepted.
     private static func applyAdapter(at directory: URL, to container: ModelContainer) async throws {
         let adapter: LoRAContainer = try isPEFTAdapter(directory)
             ? LoRAContainer.fromPEFT(directory: directory)
             : LoRAContainer.from(directory: directory)
 
-        // The explicit parameter type selects the ModelContext overload of
-        // perform; ModelContainer also has a two-argument
-        // (LanguageModel, Tokenizer) overload.
+        // The explicit parameter type selects the ModelContext overload of perform.
         try await container.perform { (context: ModelContext) in
             try adapter.load(into: context.model)
         }
@@ -149,135 +194,172 @@ actor ModelRunner {
         container = nil
         loadedDirectory = nil
         loadedName = "a local model"
-    }
-
-    /// Caps MLX's buffer cache.
-    ///
-    /// MLX keeps freed GPU buffers in a cache to avoid reallocation. That is
-    /// the right default on a Mac and the wrong one on a phone holding a 4.6GB
-    /// model, where the cache is what pushes the process over the jetsam limit.
-    /// A small cap trades a little throughput for not being killed.
-    ///
-    /// For finer control, MLXLMCommon ships wired-memory policies
-    /// (`WiredSumPolicy`, `WiredMemoryUtils.tune`) that can be passed per
-    /// generation as a `wiredMemoryTicket:`. Worth adopting once there are real
-    /// measurements from the device; this cap is the safe starting point.
-    private func configureMemoryLimits() {
-        MLX.Memory.cacheLimit = 32 * 1024 * 1024
+        MLX.Memory.clearCache()
     }
 
     // MARK: - Generation
 
-    /// Streams one assistant turn as an async sequence.
+    /// Streams one assistant turn.
     ///
-    /// A stream rather than a callback, for two reasons. A `@Sendable` callback
-    /// cannot capture and mutate the caller's local accumulators, which forces
-    /// either shared mutable state or a main-actor hop per token — and at a few
-    /// tokens per second on a phone, one `Task` allocation per token is waste
-    /// for no benefit. Consuming a stream on the main actor lets the caller use
-    /// ordinary local variables and keeps cancellation tied to the sequence.
     /// `nonisolated` so callers can write `for try await event in
-    /// runner.stream(...)` directly. An actor-isolated non-async method would
-    /// need `await` on the call expression itself, which reads badly inside a
-    /// for-await and is easy to forget. Building the stream touches no actor
-    /// state; the isolated work happens inside the Task below.
+    /// runner.stream(...)` directly; the isolated work happens in the Task.
     nonisolated func stream(
         messages: [Message],
         tools: [ToolDescriptor],
-        maxTokens: Int = 640
+        thinking: Bool
     ) -> AsyncThrowingStream<RunnerEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    try await self.generate(
-                        messages: messages,
-                        tools: tools,
-                        maxTokens: maxTokens
-                    ) { continuation.yield($0) }
+                    try await self.generate(messages: messages, tools: tools, thinking: thinking) {
+                        continuation.yield($0)
+                    }
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
                 }
             }
-            // Ties cancellation to the consumer: breaking out of the for-await
-            // loop stops generation instead of leaving it running unobserved.
             continuation.onTermination = { _ in task.cancel() }
         }
     }
 
-    /// Runs one turn, reporting events through a callback.
-    ///
-    /// `enable_thinking: false` goes through `additionalContext`, which is how
-    /// the chat template's `enable_thinking` flag is set. Qwen3 is a hybrid
-    /// reasoning model that emits long `<think>` blocks by default; for "add
-    /// this to my calendar" that is pure latency on a device already running
-    /// at a few tokens per second. The training data is rendered with the same
-    /// flag, so the prompt shape matches between training and inference.
     private func generate(
         messages: [Message],
         tools: [ToolDescriptor],
-        maxTokens: Int,
+        thinking: Bool,
         onEvent: @Sendable @escaping (RunnerEvent) -> Void
     ) async throws {
         guard let container else { throw RunnerError.noModelLoaded }
 
-        let chat = messages.map { $0.asChatMessage }
-        let schemas = tools.map(\.functionSchema)
         let input = UserInput(
-            chat: chat,
-            tools: schemas,
-            additionalContext: ["enable_thinking": false]
+            chat: messages.map { $0.asChatMessage },
+            tools: tools.map(\.functionSchema),
+            additionalContext: ["enable_thinking": thinking]
         )
 
-        // Qwen3's published non-thinking sampling settings. Temperature above
-        // ~0.8 measurably increases malformed tool calls at 4-bit, and topK
-        // defaults to 0 (disabled) here whereas Qwen recommends 20.
-        //
-        // Deliberately NOT setting maxKVSize, even though a bounded KV cache is
-        // the obvious lever against the memory ceiling an 8B model runs into.
-        // Bounding it engages a rotating cache, and if that evicts the head of
-        // the prompt it takes the system prompt with it — which is precisely
-        // where the "never claim you sent it" rule lives. Losing that silently,
-        // mid-conversation, is a far worse failure than being slow. Context is
-        // bounded in AgentSession.trimmedHistory() instead, where the system
-        // prompt is re-inserted by construction.
+        // Thinking needs room: reasoning often runs to a few thousand tokens
+        // before the answer begins. Code answers are long too.
+        let requestedTokens = thinking ? 4096 : 1536
+
+        MLX.Memory.clearCache()
+        let prepared = try await container.prepare(input: input)
+        let promptTokens = prepared.text.tokens.size
+        let maxTokens = try budgetTokens(promptTokens: promptTokens, requested: requestedTokens)
+
+        // Qwen3's published sampling settings for each mode.
         let parameters = GenerateParameters(
             maxTokens: maxTokens,
-            temperature: 0.7,
-            topP: 0.8,
-            topK: 20
+            kvBits: Self.kvBits,
+            temperature: thinking ? 0.6 : 0.7,
+            topP: thinking ? 0.95 : 0.8,
+            topK: 20,
+            prefillStepSize: Self.prefillStepSize
         )
 
-        do {
-            // Tools reach the model once, through UserInput: the chat template
-            // renders them into the system turn. In 3.31.4, generate() has no
-            // tools: parameter of its own (that exists only on main); the
-            // tool-call processor recognises calls from the format resolved at
-            // load time.
-            let prepared = try await container.prepare(input: input)
-            let stream = try await container.generate(input: prepared, parameters: parameters)
+        var splitter = ThinkSplitter()
+        func emit(_ pieces: [ThinkSplitter.Piece]) {
+            for piece in pieces where !piece.text.isEmpty {
+                onEvent(piece.isReasoning ? .reasoning(piece.text) : .text(piece.text))
+            }
+        }
 
+        do {
+            let stream = try await container.generate(input: prepared, parameters: parameters)
             for await event in stream {
+                if Task.isCancelled { break }
                 switch event {
                 case .chunk(let text):
-                    onEvent(.text(text))
+                    emit(splitter.feed(text))
                 case .toolCall(let call):
+                    emit(splitter.flush())
                     onEvent(.toolCall(
                         id: call.id,
                         name: call.function.name,
                         arguments: Self.convert(call.function.arguments)
                     ))
                 case .info(let info):
+                    emit(splitter.flush())
                     onEvent(.finished(tokensPerSecond: info.tokensPerSecond))
-                // The Generation enum gains cases (reasoning events, for
-                // example). An exhaustive switch would stop compiling on a
-                // dependency bump, so unknown events are ignored.
                 default:
                     break
                 }
             }
+            emit(splitter.flush())
         } catch {
             throw RunnerError.generationFailed(error.localizedDescription)
+        }
+        MLX.Memory.clearCache()
+    }
+
+    /// How many tokens this turn may generate without running out of memory.
+    private func budgetTokens(promptTokens: Int, requested: Int) throws -> Int {
+        guard let headroom = Self.availableMemory() else { return requested }
+
+        let usable = headroom - Self.reserveBytes
+        let promptCost = promptTokens * kvBytesPerToken + Self.prefillWorkspaceBytes
+        let answerTokens = (usable - promptCost) / max(kvBytesPerToken, 1)
+
+        guard answerTokens >= Self.minimumAnswerTokens else {
+            throw RunnerError.insufficientMemory(
+                "Not enough memory left to answer. Start a new conversation to clear the history, "
+                    + "close other apps, or turn off Think for shorter answers.")
+        }
+
+        // Keep MLX under the real ceiling: when it reaches this it frees cached
+        // buffers and waits, rather than allocating into a termination.
+        MLX.Memory.memoryLimit = MLX.Memory.activeMemory + max(usable, 0)
+        return min(requested, answerTokens)
+    }
+
+    // MARK: - Thinking
+
+    /// Separates Qwen3's `<think>…</think>` output from the answer while it
+    /// streams. Tags can be split across chunks, so any trailing text that
+    /// could be the start of a tag is held back until the next chunk decides it.
+    struct ThinkSplitter {
+        struct Piece {
+            let isReasoning: Bool
+            let text: String
+        }
+
+        private var buffer = ""
+        private var inThink = false
+        private static let open = "<think>"
+        private static let close = "</think>"
+
+        mutating func feed(_ chunk: String) -> [Piece] {
+            buffer += chunk
+            var pieces: [Piece] = []
+            while true {
+                let tag = inThink ? Self.close : Self.open
+                if let range = buffer.range(of: tag) {
+                    pieces.append(Piece(isReasoning: inThink, text: String(buffer[..<range.lowerBound])))
+                    buffer = String(buffer[range.upperBound...])
+                    inThink.toggle()
+                    continue
+                }
+                let keep = Self.partialTagSuffix(buffer, tag: tag)
+                let cut = buffer.index(buffer.endIndex, offsetBy: -keep)
+                pieces.append(Piece(isReasoning: inThink, text: String(buffer[..<cut])))
+                buffer = String(buffer[cut...])
+                return pieces
+            }
+        }
+
+        mutating func flush() -> [Piece] {
+            defer { buffer = "" }
+            return [Piece(isReasoning: inThink, text: buffer)]
+        }
+
+        /// Length of the longest suffix of `text` that is a prefix of `tag`.
+        private static func partialTagSuffix(_ text: String, tag: String) -> Int {
+            let maxLength = min(text.count, tag.count - 1)
+            guard maxLength > 0 else { return 0 }
+            for length in stride(from: maxLength, through: 1, by: -1)
+            where tag.hasPrefix(String(text.suffix(length))) {
+                return length
+            }
+            return 0
         }
     }
 
@@ -286,12 +368,8 @@ actor ModelRunner {
     /// The app's own message type, so nothing outside this file imports MLX.
     ///
     /// An assistant turn that requested tools carries those calls, and each
-    /// tool result carries the id of the call it answers. Both matter: without
-    /// the calls, the history shows the model a tool result it has no record
-    /// of asking for, and on the next step it tends to call the same tool
-    /// again. The training data is held to the same rule by
-    /// training/validate_dataset.py, so the prompt the model sees at runtime
-    /// matches the shape it was trained on.
+    /// tool result carries the id of the call it answers, so the model always
+    /// sees which call a result belongs to.
     struct Message {
         enum Role { case system, user, assistant, tool }
 
@@ -303,9 +381,7 @@ actor ModelRunner {
 
         let role: Role
         let content: String
-        /// For assistant turns: the tools this turn asked for.
         var calls: [Call] = []
-        /// For tool turns: the id of the call this result answers.
         var callID: String?
 
         static func system(_ text: String) -> Message { Message(role: .system, content: text) }
@@ -340,9 +416,6 @@ actor ModelRunner {
         }
     }
 
-    /// The reverse of `convert`: our arguments back into the framework's type,
-    /// for replaying a past tool call into the chat history. Same JSON
-    /// round-trip, same reasoning.
     fileprivate static func frameworkArguments(_ value: ArgumentValue) -> [String: MLXLMCommon.JSONValue] {
         guard let data = try? JSONEncoder().encode(value),
               let decoded = try? JSONDecoder().decode([String: MLXLMCommon.JSONValue].self, from: data)
@@ -350,25 +423,11 @@ actor ModelRunner {
         return decoded
     }
 
-    /// Bridges MLX's `JSONValue` to ours by round-tripping through JSON.
-    ///
-    /// Both types are `Codable`, so this needs no knowledge of the framework's
-    /// internal representation — no `sendableValue` accessor, no ladder of
-    /// `as?` casts guessing which numeric width the model happened to emit.
-    /// Encoding and decoding is a little more work at runtime than reading the
-    /// value directly, but a tool call is a few hundred bytes a handful of
-    /// times per turn, against generation measured in tokens per second. The
-    /// robustness is free in practice, and it is one fewer thing to break when
-    /// the dependency moves.
+    /// MLX's `JSONValue` to ours, by a JSON round trip; both types are Codable.
     private static func convert(_ arguments: [String: MLXLMCommon.JSONValue]) -> ArgumentValue {
         guard let data = try? JSONEncoder().encode(arguments),
               let value = try? JSONDecoder().decode(ArgumentValue.self, from: data)
-        else {
-            // An unparseable argument set is reported as empty rather than
-            // dropped: each tool then names the specific field it needed, and
-            // the model gets an actionable retry instead of silence.
-            return .object([:])
-        }
+        else { return .object([:]) }
         return value
     }
 }

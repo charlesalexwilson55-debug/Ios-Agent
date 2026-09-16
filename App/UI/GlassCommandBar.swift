@@ -16,6 +16,10 @@ import SwiftUI
 /// avoidance does not apply.
 struct GlassCommandBar: View {
     @Binding var draft: String
+    /// Qwen3 reasoning mode. Stays on the bar rather than in settings because
+    /// it is a per-question choice: on for maths and code, off for a quick
+    /// reminder that should not take twenty seconds.
+    @Binding var thinking: Bool
     let modelLabel: String
     let isWorking: Bool
     let isModelLoaded: Bool
@@ -77,7 +81,11 @@ struct GlassCommandBar: View {
     // MARK: - Input
 
     private var inputCapsule: some View {
-        HStack(alignment: .bottom, spacing: 8) {
+        HStack(alignment: .bottom, spacing: 4) {
+            thinkButton
+                .padding(.leading, 6)
+                .padding(.bottom, 4)
+
             TextField(placeholder, text: $draft, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 16))
@@ -88,7 +96,7 @@ struct GlassCommandBar: View {
                 .onSubmit {
                     if canSend { onSend() }
                 }
-                .padding(.leading, 16)
+                .padding(.leading, 2)
                 .padding(.vertical, 11)
 
             sendButton
@@ -98,6 +106,23 @@ struct GlassCommandBar: View {
         .frame(minHeight: 44)
         .glassEffect(.regular, in: .capsule)
         .glassEffectID("input", in: glassNamespace)
+    }
+
+    private var thinkButton: some View {
+        Button {
+            thinking.toggle()
+        } label: {
+            Image(systemName: thinking ? "brain.fill" : "brain")
+                .font(.system(size: 15, weight: .medium))
+                .frame(width: 34, height: 34)
+                .foregroundStyle(thinking ? Color.accentColor : Color.secondary)
+                .contentTransition(.symbolEffect(.replace))
+        }
+        .buttonStyle(.plain)
+        .animation(.easeOut(duration: 0.18), value: thinking)
+        .accessibilityLabel("Think")
+        .accessibilityValue(thinking ? "On" : "Off")
+        .accessibilityHint("Reason step by step before answering. Better for maths and code, slower.")
     }
 
     private var placeholder: String {

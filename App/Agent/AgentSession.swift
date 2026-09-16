@@ -17,6 +17,8 @@ struct TranscriptEntry: Identifiable {
     /// Set for tool entries so the UI can show the right glyph.
     var toolOutcome: Outcome?
     var isStreaming: Bool = false
+    /// Qwen3 thinking for assistant entries, shown folded away.
+    var reasoning: String = ""
 
     enum Outcome {
         case done
@@ -44,6 +46,10 @@ final class AgentSession {
     private(set) var isWorking = false
     /// Tokens per second from the last completed turn, shown in the model picker.
     private(set) var lastThroughput: Double?
+
+    /// Qwen3's reasoning mode. Much better at maths, logic and code; slower,
+    /// and it uses more memory per turn.
+    var thinkingEnabled: Bool = true
 
     /// Model-visible history, which is not the same as the transcript: it
     /// carries tool results and omits UI-only entries.
@@ -141,12 +147,18 @@ final class AgentSession {
                 // This loop body runs on the main actor, so the transcript can
                 // be mutated directly and the accumulators above can be plain
                 // locals.
-                for try await event in runner.stream(messages: messages, tools: tools) {
+                for try await event in runner.stream(
+                    messages: messages, tools: tools, thinking: thinkingEnabled
+                ) {
                     switch event {
                     case .text(let chunk):
                         replyText += chunk
                         if transcript.indices.contains(entryIndex) {
                             transcript[entryIndex].text = replyText
+                        }
+                    case .reasoning(let chunk):
+                        if transcript.indices.contains(entryIndex) {
+                            transcript[entryIndex].reasoning += chunk
                         }
                     case .toolCall(let id, let name, let arguments):
                         // The framework may not assign ids. Ours only need to
@@ -181,17 +193,21 @@ final class AgentSession {
 
             // No tools requested: the turn is the model's answer, and we stop.
             guard !pendingCalls.isEmpty else {
-                if replyText.isEmpty {
+                if replyText.isEmpty, transcript.indices.contains(entryIndex) {
                     // An empty reply with no tool call is a dead turn. Saying
                     // so is better than leaving a blank bubble.
-                    transcript[entryIndex].text =
-                        "I did not produce a reply. Try rephrasing the request."
+                    transcript[entryIndex].text = transcript[entryIndex].reasoning.isEmpty
+                        ? "I did not produce a reply. Try rephrasing the request."
+                        : "I ran out of room while thinking. Try a narrower question, "
+                            + "or turn off Think."
                 }
                 return
             }
 
-            // Drop the empty placeholder when the model went straight to a tool.
-            if replyText.isEmpty, transcript.indices.contains(entryIndex) {
+            // Drop the empty placeholder when the model went straight to a tool,
+            // unless it has reasoning worth keeping on screen.
+            if replyText.isEmpty, transcript.indices.contains(entryIndex),
+               transcript[entryIndex].reasoning.isEmpty {
                 transcript.remove(at: entryIndex)
             }
 
@@ -248,7 +264,9 @@ final class AgentSession {
         var replyText = ""
 
         do {
-            for try await event in runner.stream(messages: messages, tools: []) {
+            for try await event in runner.stream(
+                messages: messages, tools: [], thinking: false
+            ) {
                 if case .text(let chunk) = event {
                     replyText += chunk
                     if transcript.indices.contains(entryIndex) {

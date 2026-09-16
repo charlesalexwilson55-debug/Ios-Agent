@@ -27,6 +27,9 @@ struct RootView: View {
     @State private var draft = ""
     @State private var showingModelPicker = false
     @State private var loadingState: ModelLoadingState = .idle
+    /// Persisted so the choice survives relaunches. On by default: correct
+    /// answers to maths and code matter more than speed on those questions.
+    @AppStorage("conduit.thinking") private var thinking = true
 
     var body: some View {
         // A NavigationStack purely to host the toolbar. Without one the
@@ -53,6 +56,7 @@ struct RootView: View {
         .safeAreaInset(edge: .bottom) {
             GlassCommandBar(
                 draft: $draft,
+                thinking: $thinking,
                 modelLabel: catalog.selectedModel?.displayName ?? "Model",
                 isWorking: session?.isWorking ?? false,
                 isModelLoaded: isReady,
@@ -66,7 +70,9 @@ struct RootView: View {
                 .environment(catalog)
         }
         .task {
-            session = AgentSession(runner: runner, registry: ToolRegistry.standard())
+            let newSession = AgentSession(runner: runner, registry: ToolRegistry.standard())
+            newSession.thinkingEnabled = thinking
+            session = newSession
             await catalog.refresh()
             // Reload whatever was in use last launch, so the app comes back
             // ready rather than making the user pick again every time.
@@ -79,6 +85,9 @@ struct RootView: View {
         }
         // A task handed over by Siri or a Shortcut while the app was already
         // running arrives on foreground rather than at launch.
+        .onChange(of: thinking) { _, enabled in
+            session?.thinkingEnabled = enabled
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { consumePendingTask() }
         }
