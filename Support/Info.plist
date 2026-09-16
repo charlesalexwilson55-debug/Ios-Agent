@@ -11,7 +11,6 @@
   <key>CFBundleVersion</key><string>1</string>
   <key>LSRequiresIPhoneOS</key><true/>
   <key>MinimumOSVersion</key><string>26.0</string>
-  <key>UIDeviceFamily</key><array><integer>1</integer></array>
   <key>UIRequiredDeviceCapabilities</key><array><string>arm64</string></array>
   <key>UILaunchScreen</key><dict/>
   <key>UISupportedInterfaceOrientations</key>

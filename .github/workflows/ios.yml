@@ -66,61 +66,6 @@ jobs:
         id: build
         run: bash scripts/build-ios.sh
 
-      # Runs whether the build passed or failed. On failure this is the only
-      # way the diagnostics escape the runner without admin log access; on
-      # success it records the warning list, which is worth watching.
-      - name: Publish build diagnostics
-        if: always()
-        env:
-          RUN_ID: ${{ github.run_id }}
-          RUN_NUMBER: ${{ github.run_number }}
-          SHA: ${{ github.sha }}
-          OUTCOME: ${{ steps.build.outcome }}
-        run: |
-          mkdir -p .ci-out
-          {
-            echo "run      #$RUN_NUMBER ($RUN_ID)"
-            echo "commit   $SHA"
-            echo "outcome  $OUTCOME"
-            echo "xcode    $(xcodebuild -version | head -1)"
-            echo "ios sdk  $(xcrun --sdk iphoneos --show-sdk-version)"
-            echo
-            if [ -f build/xcodebuild.log ]; then
-              # Grepping only for "error: " missed run #2 entirely: a failed
-              # build *command* (plugin validation, linking, codesign) emits no
-              # compiler diagnostic at all, so the errors section came back
-              # empty on a build that had very much failed. The alternation
-              # below covers those non-diagnostic failure shapes too.
-              echo "=== errors ==="
-              grep -nE "error: |ARCHIVE FAILED|BUILD FAILED|The following build commands failed|Validate plug-in|fatal error|ld: |clang: error|Undefined symbol|No such module|could not resolve|Missing package product" \
-                build/xcodebuild.log | sort -u -t: -k2 | head -120 || echo "(none)"
-              echo
-              echo "=== warnings (first 40 unique) ==="
-              grep -E "warning: " build/xcodebuild.log | sed 's/^.*warning: /warning: /' | sort -u | head -40 || echo "(none)"
-              echo
-              echo "=== last 120 raw lines ==="
-              tail -120 build/xcodebuild.log
-            else
-              echo "No xcodebuild.log was produced - the build failed before xcodebuild ran."
-              echo "Check the 'Build IPA' step console for the earlier failure."
-            fi
-          } > .ci-out/diagnostics.txt
-
-          cat .ci-out/diagnostics.txt
-
-          # Force-pushed single-commit orphan branch: this is a status file,
-          # not history worth keeping, and it must never clutter main.
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout --orphan ci-diagnostics
-          git rm -rf --cached . >/dev/null 2>&1 || true
-          find . -maxdepth 1 -not -name '.git' -not -name '.ci-out' -not -name '.' -exec rm -rf {} + || true
-          mv .ci-out/diagnostics.txt ./diagnostics.txt
-          rmdir .ci-out || true
-          git add diagnostics.txt
-          git commit -q -m "Build diagnostics for run #$RUN_NUMBER ($OUTCOME)"
-          git push -q --force origin ci-diagnostics
-
       - uses: actions/upload-artifact@v4
         with:
           name: Conduit-unsigned-ipa
@@ -135,3 +80,69 @@ jobs:
           name: Conduit-entitlements
           path: Support/Conduit.entitlements
           if-no-files-found: error
+
+      # A release asset is downloadable from a plain public URL, unlike an
+      # Actions artifact, which needs a signed-in browser or an API token.
+      # The single "latest" release is replaced on every green build of main.
+      - name: Publish IPA to the latest release
+        if: success() && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest             artifacts/Conduit-unsigned.ipa             Support/Conduit.entitlements             --target "$GITHUB_SHA"             --prerelease             --title "Latest build (${GITHUB_SHA::7})"             --notes "Unsigned build of ${GITHUB_SHA}. Re-sign with Sideloadly using Conduit.entitlements so the increased memory limit is kept."
+
+      # Runs last and whether the build passed or failed. Job logs need repo
+      # admin rights to download through the API, so the compiler output is
+      # pushed to a branch readable from a public raw URL instead.
+      #
+      # It works in a scratch directory and pushes from there. An earlier
+      # version checked out an orphan branch inside the workspace and deleted
+      # the working tree, which would have removed the IPA before a
+      # successful build got to upload it.
+      - name: Publish build diagnostics
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_NUMBER: ${{ github.run_number }}
+          SHA: ${{ github.sha }}
+          OUTCOME: ${{ steps.build.outcome }}
+        run: |
+          out="$(mktemp -d)"
+          {
+            echo "run      #$RUN_NUMBER ($RUN_ID)"
+            echo "commit   $SHA"
+            echo "outcome  $OUTCOME"
+            echo "xcode    $(xcodebuild -version | head -1)"
+            echo "ios sdk  $(xcrun --sdk iphoneos --show-sdk-version)"
+            if [ -f artifacts/Conduit-unsigned.ipa ]; then
+              echo "ipa      $(stat -f%z artifacts/Conduit-unsigned.ipa) bytes"
+            fi
+            echo
+            if [ -f build/xcodebuild.log ]; then
+              # Also catches failed build commands (plugin validation, linking,
+              # App Intents metadata), which emit no "error:" diagnostic.
+              echo "=== errors ==="
+              grep -nE "error: |ARCHIVE FAILED|BUILD FAILED|The following build commands failed|Validate plug-in|fatal error|ld: |clang: error|Undefined symbol|No such module|could not resolve|Missing package product"                 build/xcodebuild.log | sort -u -t: -k2 | head -120 || echo "(none)"
+              echo
+              echo "=== warnings (first 40 unique) ==="
+              grep -E "warning: " build/xcodebuild.log | sed 's/^.*warning: /warning: /' | sort -u | head -40 || echo "(none)"
+              echo
+              echo "=== last 120 raw lines ==="
+              tail -120 build/xcodebuild.log
+            else
+              echo "No xcodebuild.log was produced - the build failed before xcodebuild ran."
+            fi
+          } > "$out/diagnostics.txt"
+          cat "$out/diagnostics.txt"
+
+          cd "$out"
+          git init -q
+          git checkout -q -b ci-diagnostics
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add diagnostics.txt
+          git commit -q -m "Build diagnostics for run #$RUN_NUMBER ($OUTCOME)"
+          git push -q --force "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" ci-diagnostics

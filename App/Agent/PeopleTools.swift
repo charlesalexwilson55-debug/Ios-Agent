@@ -329,7 +329,7 @@ final class PeopleTools: ToolProviding {
                             "iOS refused to start the call. On a device with no cellular service, "
                                 + "try FaceTime instead by passing facetime true.")
         }
-        return .staged("place_call",
+        return .handedOff("place_call",
                        useFaceTime ? "Starting FaceTime with \(label)" : "Calling \(label)",
                        detail: [
                            "recipient": label,
@@ -396,7 +396,7 @@ final class PeopleTools: ToolProviding {
                 URLQueryItem(name: "body", value: body),
             ]
             if let url = components.url, await ComposePresenter.open(url) {
-                return .staged("send_email", "Opened your mail app with the draft",
+                return .handedOff("send_email", "Opened your mail app with the draft",
                                detail: ["outcome": "handed off to an external mail app"])
             }
             return .failure("send_email", "Could not compose an email: \(why)")

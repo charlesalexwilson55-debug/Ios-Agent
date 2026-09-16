@@ -20,7 +20,10 @@ struct TranscriptEntry: Identifiable {
 
     enum Outcome {
         case done
+        /// Staged in a system sheet; the user must tap send.
         case awaitingUser
+        /// Another app took over; the result is unobservable.
+        case handedOff
         case failed
     }
 }
@@ -49,6 +52,8 @@ final class AgentSession {
     private let runner: ModelRunner
     private let registry: ToolRegistry
     private var task: Task<Void, Never>?
+    /// Source of tool-call ids when the framework does not supply one.
+    private var callCounter = 0
 
     /// Cap on tool calls per user request.
     ///
@@ -108,6 +113,7 @@ final class AgentSession {
         cancel()
         transcript.removeAll()
         history.removeAll()
+        callCounter = 0
         lastThroughput = nil
     }
 
@@ -129,7 +135,7 @@ final class AgentSession {
             transcript.append(TranscriptEntry(kind: .assistant, text: "", isStreaming: true))
 
             var replyText = ""
-            var pendingCalls: [(name: String, arguments: ArgumentValue)] = []
+            var pendingCalls: [ModelRunner.Message.Call] = []
 
             do {
                 // This loop body runs on the main actor, so the transcript can
@@ -142,8 +148,15 @@ final class AgentSession {
                         if transcript.indices.contains(entryIndex) {
                             transcript[entryIndex].text = replyText
                         }
-                    case .toolCall(let name, let arguments):
-                        pendingCalls.append((name, arguments))
+                    case .toolCall(let id, let name, let arguments):
+                        // The framework may not assign ids. Ours only need to
+                        // be unique within the history, so a counter is enough.
+                        callCounter += 1
+                        pendingCalls.append(ModelRunner.Message.Call(
+                            id: id ?? "call_\(callCounter)",
+                            name: name,
+                            arguments: arguments
+                        ))
                     case .finished(let throughput):
                         lastThroughput = throughput
                     }
@@ -159,8 +172,11 @@ final class AgentSession {
 
             finishStreaming(at: entryIndex, text: replyText)
 
-            if !replyText.isEmpty {
-                history.append(.assistant(replyText))
+            // The assistant turn is recorded whenever it said something OR
+            // asked for tools. A tool-only turn has empty text, and dropping
+            // it would leave the tool results below with no call on record.
+            if !replyText.isEmpty || !pendingCalls.isEmpty {
+                history.append(.assistant(replyText, calls: pendingCalls))
             }
 
             // No tools requested: the turn is the model's answer, and we stop.
@@ -181,7 +197,7 @@ final class AgentSession {
 
             for call in pendingCalls {
                 if Task.isCancelled { return }
-                await execute(call.name, arguments: call.arguments)
+                await execute(call)
             }
 
             // On the last permitted iteration, tell the model to stop calling
@@ -198,21 +214,28 @@ final class AgentSession {
         }
     }
 
-    private func execute(_ name: String, arguments: ArgumentValue) async {
+    private func execute(_ call: ModelRunner.Message.Call) async {
+        let name = call.name
         let index = transcript.count
         let label = registry.spec(named: name)?.name ?? name
         transcript.append(TranscriptEntry(kind: .tool, text: "Running \(label)…"))
 
-        let outcome = await registry.run(name, arguments: arguments)
+        let outcome = await registry.run(name, arguments: call.arguments)
 
         if transcript.indices.contains(index) {
             transcript[index].text = outcome.summary
-            transcript[index].toolOutcome = outcome.ok
-                ? (outcome.awaitingUserConfirmation ? .awaitingUser : .done)
-                : .failed
+            if outcome.ok {
+                switch outcome.completion {
+                case .completed: transcript[index].toolOutcome = .done
+                case .awaitingUser: transcript[index].toolOutcome = .awaitingUser
+                case .handedOff: transcript[index].toolOutcome = .handedOff
+                }
+            } else {
+                transcript[index].toolOutcome = .failed
+            }
         }
 
-        history.append(.tool(outcome.modelResponseJSON, name: name))
+        history.append(.tool(outcome.modelResponseJSON, callID: call.id))
     }
 
     /// One final generation with tools withheld, to produce a closing reply.

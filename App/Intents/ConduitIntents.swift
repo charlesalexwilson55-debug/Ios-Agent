@@ -84,10 +84,13 @@ struct ConduitShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(
             intent: AskConduitIntent(),
+            // No \(\.$task) here: App Shortcut phrases only accept AppEntity or
+            // AppEnum parameters, and a String parameter fails the App Intents
+            // metadata step at build time. Siri asks for the task instead, via
+            // the parameter's requestValueDialog.
             phrases: [
-                "Ask \(.applicationName) to \(\.$task)",
-                "Tell \(.applicationName) to \(\.$task)",
-                "\(.applicationName) \(\.$task)",
+                "Ask \(.applicationName)",
+                "Tell \(.applicationName) to do something",
             ],
             shortTitle: "Ask Conduit",
             systemImageName: "wand.and.sparkles"

@@ -1,14 +1,15 @@
 import Foundation
+import MLX
 import MLXLLM
 import MLXLMCommon
-// HubClient lives here. Required even for a purely local load, because the
-// factory signature takes one; it simply never reaches the network when the
-// configuration points at a directory.
+// mlx-swift-lm 3.31.4 ships no concrete tokenizer loader. MLXHuggingFace
+// provides the #huggingFaceTokenizerLoader() macro, and its expansion calls
+// Tokenizers.AutoTokenizer directly — so `import Tokenizers` (swift-transformers)
+// is required here for the expanded code to compile, even though nothing in
+// this file names that module explicitly. Remove it and the build fails inside
+// macro-generated code, which is a confusing place to be.
 import MLXHuggingFace
-
-#if canImport(MLX)
-import MLX
-#endif
+import Tokenizers
 
 /// The only file that touches MLX.
 ///
@@ -28,7 +29,9 @@ actor ModelRunner {
     /// What the agent loop consumes. No MLX types cross this boundary.
     enum RunnerEvent {
         case text(String)
-        case toolCall(name: String, arguments: ArgumentValue)
+        /// `id` is whatever the framework assigned, which may be nil; the
+        /// agent loop assigns its own when it is.
+        case toolCall(id: String?, name: String, arguments: ArgumentValue)
         case finished(tokensPerSecond: Double?)
     }
 
@@ -62,10 +65,18 @@ actor ModelRunner {
 
     /// Loads a model from a local directory.
     ///
-    /// `ModelConfiguration(directory:)` points the factory at files already on
-    /// disk, so nothing is fetched. A `HubClient` is still required by the
-    /// factory signature but goes unused for a local load — which is the point:
-    /// this app must work with the network off.
+    /// Uses the local-directory overload of `loadModelContainer`, which takes
+    /// a `URL` and a tokenizer loader and nothing else. The alternative —
+    /// `LLMModelFactory.shared.loadContainer(from:using:configuration:)` with
+    /// a `ModelConfiguration(directory:)` — needs a `Downloader` passed in for
+    /// a load that will never touch the network. Taking the overload that
+    /// cannot download is both simpler and a better match for the guarantee
+    /// this app makes: it works with the network off.
+    ///
+    /// The tradeoff is no `ModelConfiguration`, so no place to force a
+    /// `toolCallFormat` or extra EOS tokens. Qwen3's format is resolved from
+    /// the model metadata and chat template, so that costs nothing here; a
+    /// model needing an override would have to go back to the factory call.
     func load(directory: URL, displayName: String, adapterDirectory: URL? = nil) async throws {
         let signature = directory.path + "|" + (adapterDirectory?.path ?? "")
         if loadedDirectory == signature, container != nil { return }
@@ -77,12 +88,10 @@ actor ModelRunner {
 
         configureMemoryLimits()
 
-        let configuration = ModelConfiguration(directory: directory)
         do {
-            let loaded = try await LLMModelFactory.shared.loadContainer(
-                from: HubClient.default,
-                using: TokenizersLoader(),
-                configuration: configuration
+            let loaded = try await loadModelContainer(
+                from: directory,
+                using: #huggingFaceTokenizerLoader()
             )
             if let adapterDirectory {
                 try await Self.applyAdapter(at: adapterDirectory, to: loaded)
@@ -100,17 +109,40 @@ actor ModelRunner {
     ///
     /// Adapters are applied after the base model is resident, which is what
     /// makes the cheap fine-tuning path viable: a ~100MB adapter folder rather
-    /// than a second 4.6GB copy of the weights. See
-    /// training/convert_adapter.py for producing one in this format.
+    /// than a second 4.6GB copy of the weights.
+    ///
+    /// Two on-disk formats are accepted, told apart by `adapter_config.json`:
+    ///
+    /// - **PEFT** (what Unsloth and Hugging Face `peft` write, and what
+    ///   training/train_lora.py produces) carries a `peft_type` key and an
+    ///   `adapter_model.safetensors`. Loaded with `LoRAContainer.fromPEFT`,
+    ///   which renames the keys and reorients the matrices itself — so an
+    ///   adapter straight off the GPU box needs no conversion step.
+    /// - **MLX-native** (what `mlx_lm.lora` writes) has `fine_tune_type` and
+    ///   `adapters.safetensors`. Loaded with `LoRAContainer.from`.
     ///
     /// Failing to apply an adapter throws rather than degrading silently. A
     /// model that loads but ignores its adapter looks exactly like a
     /// fine-tune that did not work, and that is a miserable thing to debug.
     private static func applyAdapter(at directory: URL, to container: ModelContainer) async throws {
-        try await container.perform { context in
-            let adapter = try LoRAContainer.from(directory: directory)
+        let adapter: LoRAContainer = try isPEFTAdapter(directory)
+            ? LoRAContainer.fromPEFT(directory: directory)
+            : LoRAContainer.from(directory: directory)
+
+        // The explicit parameter type selects the ModelContext overload of
+        // perform; ModelContainer also has a two-argument
+        // (LanguageModel, Tokenizer) overload.
+        try await container.perform { (context: ModelContext) in
             try adapter.load(into: context.model)
         }
+    }
+
+    private static func isPEFTAdapter(_ directory: URL) -> Bool {
+        let configURL = directory.appendingPathComponent("adapter_config.json")
+        guard let data = try? Data(contentsOf: configURL),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return false }
+        return json["peft_type"] != nil
     }
 
     func unload() {
@@ -131,9 +163,7 @@ actor ModelRunner {
     /// generation as a `wiredMemoryTicket:`. Worth adopting once there are real
     /// measurements from the device; this cap is the safe starting point.
     private func configureMemoryLimits() {
-        #if canImport(MLX)
-        MLX.GPU.set(cacheLimit: 32 * 1024 * 1024)
-        #endif
+        MLX.Memory.cacheLimit = 32 * 1024 * 1024
     }
 
     // MARK: - Generation
@@ -219,18 +249,13 @@ actor ModelRunner {
         )
 
         do {
+            // Tools reach the model once, through UserInput: the chat template
+            // renders them into the system turn. In 3.31.4, generate() has no
+            // tools: parameter of its own (that exists only on main); the
+            // tool-call processor recognises calls from the format resolved at
+            // load time.
             let prepared = try await container.prepare(input: input)
-            // Tools are passed twice, deliberately, because the two sites do
-            // different jobs: UserInput.tools is what the chat template renders
-            // into the system turn (so the model knows the tools exist), while
-            // generate's own tools: is what the tool-call processor uses to
-            // detect, validate and normalise calls in the output stream (so
-            // they arrive as .toolCall events instead of raw text).
-            let stream = try await container.generate(
-                input: prepared,
-                parameters: parameters,
-                tools: schemas
-            )
+            let stream = try await container.generate(input: prepared, parameters: parameters)
 
             for await event in stream {
                 switch event {
@@ -238,6 +263,7 @@ actor ModelRunner {
                     onEvent(.text(text))
                 case .toolCall(let call):
                     onEvent(.toolCall(
+                        id: call.id,
                         name: call.function.name,
                         arguments: Self.convert(call.function.arguments)
                     ))
@@ -258,29 +284,70 @@ actor ModelRunner {
     // MARK: - Message bridging
 
     /// The app's own message type, so nothing outside this file imports MLX.
+    ///
+    /// An assistant turn that requested tools carries those calls, and each
+    /// tool result carries the id of the call it answers. Both matter: without
+    /// the calls, the history shows the model a tool result it has no record
+    /// of asking for, and on the next step it tends to call the same tool
+    /// again. The training data is held to the same rule by
+    /// training/validate_dataset.py, so the prompt the model sees at runtime
+    /// matches the shape it was trained on.
     struct Message {
         enum Role { case system, user, assistant, tool }
 
+        struct Call {
+            let id: String
+            let name: String
+            let arguments: ArgumentValue
+        }
+
         let role: Role
         let content: String
-        /// Tool name, for tool-result messages.
-        var toolName: String?
+        /// For assistant turns: the tools this turn asked for.
+        var calls: [Call] = []
+        /// For tool turns: the id of the call this result answers.
+        var callID: String?
 
         static func system(_ text: String) -> Message { Message(role: .system, content: text) }
         static func user(_ text: String) -> Message { Message(role: .user, content: text) }
-        static func assistant(_ text: String) -> Message { Message(role: .assistant, content: text) }
-        static func tool(_ text: String, name: String) -> Message {
-            Message(role: .tool, content: text, toolName: name)
+        static func assistant(_ text: String, calls: [Call] = []) -> Message {
+            Message(role: .assistant, content: text, calls: calls)
+        }
+        static func tool(_ text: String, callID: String) -> Message {
+            Message(role: .tool, content: text, callID: callID)
         }
 
-        var asChatMessage: Chat.Message {
+        var asChatMessage: MLXLMCommon.Chat.Message {
             switch role {
-            case .system: return .system(content)
-            case .user: return .user(content)
-            case .assistant: return .assistant(content)
-            case .tool: return .tool(content, name: toolName)
+            case .system:
+                return .system(content)
+            case .user:
+                return .user(content)
+            case .assistant:
+                guard !calls.isEmpty else { return .assistant(content) }
+                let toolCalls = calls.map { call -> MLXLMCommon.ToolCall in
+                    let arguments: [String: MLXLMCommon.JSONValue] =
+                        ModelRunner.frameworkArguments(call.arguments)
+                    return MLXLMCommon.ToolCall(
+                        function: MLXLMCommon.ToolCall.Function(name: call.name, arguments: arguments),
+                        id: call.id
+                    )
+                }
+                return .assistant(content, toolCalls: toolCalls)
+            case .tool:
+                return .tool(content, id: callID)
             }
         }
+    }
+
+    /// The reverse of `convert`: our arguments back into the framework's type,
+    /// for replaying a past tool call into the chat history. Same JSON
+    /// round-trip, same reasoning.
+    fileprivate static func frameworkArguments(_ value: ArgumentValue) -> [String: MLXLMCommon.JSONValue] {
+        guard let data = try? JSONEncoder().encode(value),
+              let decoded = try? JSONDecoder().decode([String: MLXLMCommon.JSONValue].self, from: data)
+        else { return [:] }
+        return decoded
     }
 
     /// Bridges MLX's `JSONValue` to ours by round-tripping through JSON.

@@ -146,6 +146,7 @@ private struct ToolChip: View {
         switch outcome {
         case .done?: return "checkmark.circle.fill"
         case .awaitingUser?: return "hand.tap.fill"
+        case .handedOff?: return "arrow.up.forward.app.fill"
         case .failed?: return "exclamationmark.triangle.fill"
         case nil: return "circle.dotted"
         }
@@ -157,6 +158,9 @@ private struct ToolChip: View {
         // Amber, not green: this state means the user still has to act, and
         // colouring it like success is exactly the confusion to avoid.
         case .awaitingUser?: return .orange
+        // Blue, not amber: a hand-off needs nothing from the user, so it must
+        // not carry the same "your turn" signal as a staged message.
+        case .handedOff?: return .blue
         case .failed?: return .red
         case nil: return .secondary
         }

@@ -30,6 +30,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import random
 import re
@@ -82,6 +83,48 @@ def verify_tools_match(tools: list[dict]) -> None:
     print(f"  tool drift check passed ({len(declared)} tools match the Swift sources)")
 
 
+def swift_status_notes() -> dict[str, str]:
+    """The note text ToolKit.swift attaches to each non-completed status.
+
+    Reads `payload["status"] = "..."` followed by a `payload["note"] = "..." + "..."`
+    concatenation and joins the literals, so the comparison is against exactly
+    what the app sends the model.
+    """
+    source = (SWIFT_TOOL_DIR / "ToolKit.swift").read_text(encoding="utf-8")
+    pattern = re.compile(
+        r'payload\["status"\]\s*=\s*"([a-z_]+)"\s*'
+        r'payload\["note"\]\s*=\s*((?:"[^"\n]*"\s*\+?\s*)+)'
+    )
+    notes = {}
+    for status, literals in pattern.findall(source):
+        notes[status] = "".join(re.findall(r'"([^"\n]*)"', literals))
+    return notes
+
+
+def verify_notes_match() -> None:
+    swift = swift_status_notes()
+    expected = {
+        "awaiting_user_confirmation": AWAITING_NOTE,
+        "handed_off": HANDOFF_NOTE,
+    }
+    if not swift:
+        print("  ! Could not read status notes from ToolKit.swift; skipping note check")
+        return
+    for status, note in expected.items():
+        if status not in swift:
+            raise SystemExit(f"ToolKit.swift no longer emits status {status!r}; "
+                             "update the dataset generator to match.")
+        if swift[status] != note:
+            raise SystemExit(
+                f"The {status} note differs between ToolKit.swift and this generator.\n"
+                f"  swift:   {swift[status]}\n"
+                f"  dataset: {note}\n"
+                "Training on different wording from what the app sends means the "
+                "model sees an unfamiliar prompt at runtime. Make them identical."
+            )
+    print(f"  status note check passed ({len(expected)} notes match ToolKit.swift)")
+
+
 # --------------------------------------------------------------------------
 # Sample vocabulary
 # --------------------------------------------------------------------------
@@ -127,10 +170,66 @@ TASKS = [
     "chase the deposit refund",
 ]
 
-RELATIVE_DAYS = [
-    ("tomorrow", 1), ("on Friday", 3), ("next Tuesday", 6),
-    ("on Thursday", 2), ("next Monday", 5), ("on Saturday", 4),
+# "Today" varies across examples so the model learns to do the arithmetic from
+# get_current_time's answer rather than memorising one fixed set of offsets.
+# The spread covers every weekday and crosses a month boundary.
+BASE_DATES = [
+    dt.date(2026, 9, 14),   # Monday
+    dt.date(2026, 9, 16),   # Wednesday
+    dt.date(2026, 9, 18),   # Friday
+    dt.date(2026, 9, 20),   # Sunday
+    dt.date(2026, 9, 24),   # Thursday
+    dt.date(2026, 9, 29),   # Tuesday, so "on Friday" lands in October
+    dt.date(2026, 10, 3),   # Saturday
 ]
+
+# Relative phrases paired with a target weekday (0 = Monday), or a fixed
+# offset in days for the ones that aren't weekday-based.
+#
+# "next <weekday>" is left out on purpose. People disagree about whether
+# "next Friday" said on a Wednesday means two days away or nine. Training on
+# one reading would teach the model to guess confidently, when it should ask.
+# "on <weekday>" always means the next time that day comes round.
+RELATIVE_PHRASES = [
+    ("tomorrow", ("offset", 1)),
+    ("the day after tomorrow", ("offset", 2)),
+    ("on Monday", ("weekday", 0)),
+    ("on Tuesday", ("weekday", 1)),
+    ("on Wednesday", ("weekday", 2)),
+    ("on Thursday", ("weekday", 3)),
+    ("on Friday", ("weekday", 4)),
+    ("on Saturday", ("weekday", 5)),
+    ("on Sunday", ("weekday", 6)),
+]
+
+
+def resolve_day(today: dt.date, rule: tuple[str, int]) -> dt.date:
+    """The date a relative phrase refers to, from the point of view of today.
+
+    A weekday means its next occurrence strictly after today, so "on Friday"
+    said on a Friday means a week away, not today.
+    """
+    kind, value = rule
+    if kind == "offset":
+        return today + dt.timedelta(days=value)
+    ahead = (value - today.weekday()) % 7
+    return today + dt.timedelta(days=ahead or 7)
+
+
+def pick_day(rng: random.Random) -> tuple[dt.date, str, dt.date]:
+    """A random (today, phrase, target date) triple.
+
+    A weekday phrase is skipped when it would land on tomorrow: "on Thursday"
+    said on a Wednesday is valid but ambiguous next to "tomorrow" in the same
+    dataset, and the weekday examples teach more when the gap is larger.
+    """
+    while True:
+        today = rng.choice(BASE_DATES)
+        phrase, rule = rng.choice(RELATIVE_PHRASES)
+        target = resolve_day(today, rule)
+        if rule[0] == "weekday" and (target - today).days == 1:
+            continue
+        return today, phrase, target
 
 MESSAGE_INTENTS = [
     ("I'll be late", "Running late, sorry — be there as soon as I can."),
@@ -257,33 +356,91 @@ def result(payload: dict) -> dict:
     return {"role": "tool", "content": json.dumps(payload, ensure_ascii=False, sort_keys=True)}
 
 
-def iso(day_offset: int, clock: str, base_day: int = 16) -> str:
-    hour, minute = clock.split(":")
-    day = base_day + day_offset
-    return f"2026-09-{day:02d}T{hour}:{minute}:00"
+def iso(day: dt.date, clock: str) -> str:
+    return f"{day.isoformat()}T{clock}:00"
 
 
-def now_payload(base_day: int = 16) -> dict:
-    weekdays = ["Monday", "Tuesday", "Wednesday", "Thursday",
-                "Friday", "Saturday", "Sunday"]
+def now_payload(today: dt.date) -> dict:
+    """What get_current_time returns, derived from a real calendar date.
+
+    The weekday comes from the date itself. An earlier version computed it
+    from the day-of-month and labelled 16 September 2026 a Tuesday when it is
+    a Wednesday, which would have trained the model on a wrong calendar.
+    """
     return {
         "ok": True,
         "action": "get_current_time",
-        "iso": f"2026-09-{base_day:02d}T08:12:00",
-        "weekday": weekdays[(base_day - 1) % 7],
+        "iso": f"{today.isoformat()}T08:12:00+01:00",
+        "weekday": today.strftime("%A"),
         "time_zone": "Europe/London",
         "utc_offset_hours": "1",
     }
+
+
+# The status notes the app attaches to non-completed results. These must match
+# ToolOutcome.modelResponseJSON in App/Agent/ToolKit.swift word for word, and
+# verify_notes_match() checks that they do. The model is trained on these
+# strings and sees them again at runtime, so any drift makes the runtime
+# prompt differ from the training prompt.
+AWAITING_NOTE = (
+    "Staged in a system sheet. The user must tap send. "
+    "Do not claim it was sent. Tell them it is drafted and waiting for them."
+)
+HANDOFF_NOTE = (
+    "Another app has taken over and Conduit cannot see the result. "
+    "Say what you asked for, not what happened. Do not claim it succeeded, "
+    "and do not tell the user to tap send - there is nothing for them to send."
+)
+
+
+def staged_result(action: str, **detail: str) -> dict:
+    """A result for a message or email waiting in a compose sheet."""
+    return result({"ok": True, "action": action,
+                   "status": "awaiting_user_confirmation", "note": AWAITING_NOTE, **detail})
+
+
+def handed_off_result(action: str, **detail: str) -> dict:
+    """A result for a call, shortcut or app launch Conduit can no longer see."""
+    return result({"ok": True, "action": action,
+                   "status": "handed_off", "note": HANDOFF_NOTE, **detail})
 
 
 # --------------------------------------------------------------------------
 # Example generators. Each returns a list of messages.
 # --------------------------------------------------------------------------
 
+def spoken(day: dt.date) -> str:
+    """'Friday 18 September'. Built by hand because %-d is not portable."""
+    return f"{day.strftime('%A')} {day.day} {day.strftime('%B')}"
+
+
+def plus_minutes(day: dt.date, clock: str, minutes: int) -> str:
+    hour, minute = map(int, clock.split(":"))
+    moment = dt.datetime.combine(day, dt.time(hour, minute)) + dt.timedelta(minutes=minutes)
+    return moment.strftime("%Y-%m-%dT%H:%M:00")
+
+
+def found_one(full_name: str, number: str) -> dict:
+    return result({
+        "ok": True, "action": "find_contact", "match_count": "1",
+        "matches": f"{full_name} | phones: {number}",
+        "guidance": "Single match; safe to use.",
+    })
+
+
+def denied(action: str, what: str) -> dict:
+    # Mirrors ToolOutcome.denied in ToolKit.swift.
+    return result({
+        "ok": False, "action": action,
+        "error": f"Permission to access {what} was denied. Do not retry this tool. "
+                 "Tell the user they can grant access in Settings, under Privacy and Security.",
+    })
+
+
 def example_calendar(rng: random.Random) -> list[dict]:
     phrase, title, clock, duration = rng.choice(EVENTS)
-    when, offset = rng.choice(RELATIVE_DAYS)
-    start = iso(offset, clock)
+    today, when, target = pick_day(rng)
+    start = iso(target, clock)
 
     user = rng.choice([
         f"put {phrase} in my calendar {when} at {clock}",
@@ -294,23 +451,26 @@ def example_calendar(rng: random.Random) -> list[dict]:
 
     return [
         {"role": "user", "content": user},
-        # The clock call is the point of this example.
+        # The clock call is the point of this example: the date in create_event
+        # is only knowable from its answer.
         call("get_current_time", {}),
-        result(now_payload()),
+        result(now_payload(today)),
         call("create_event", {"title": title, "start": start, "duration_minutes": duration}),
         result({
             "ok": True, "action": "create_event", "event_id": "EV-1",
-            "title": title, "start": start, "calendar": "Home",
+            "title": title, "start": start,
+            "end": plus_minutes(target, clock, duration), "calendar": "Home",
         }),
-        {"role": "assistant",
-         "content": f"Added {title} {when} at {clock}."},
+        # Naming the resolved date lets the user catch a misread instantly.
+        {"role": "assistant", "content": f"Added {title} on {spoken(target)} at {clock}."},
     ]
 
 
 def example_availability(rng: random.Random) -> list[dict]:
     phrase, title, clock, duration = rng.choice(EVENTS)
-    when, offset = rng.choice(RELATIVE_DAYS)
-    start = iso(offset, clock)
+    today, when, target = pick_day(rng)
+    start = iso(target, clock)
+    end = plus_minutes(target, clock, 60)
     busy = rng.random() < 0.45
 
     messages = [
@@ -320,27 +480,29 @@ def example_availability(rng: random.Random) -> list[dict]:
             f"is {when} at {clock} clear?",
         ])},
         call("get_current_time", {}),
-        result(now_payload()),
-        call("check_availability", {"start": start, "end": iso(offset, clock)}),
+        result(now_payload(today)),
+        call("check_availability", {"start": start, "end": end}),
     ]
 
     if busy:
         messages.append(result({
             "ok": True, "action": "check_availability", "free": "false",
-            "conflicts": f"{title} {start} to {start}",
+            "conflicts": f"{title} {start} to {plus_minutes(target, clock, duration)}",
         }))
         messages.append({"role": "assistant",
-                         "content": f"No — you've got {title} then."})
+                         "content": f"No, you've got {title} on {spoken(target)} at {clock}."})
     else:
         messages.append(result({"ok": True, "action": "check_availability", "free": "true"}))
-        messages.append({"role": "assistant", "content": "Yes, you're free then."})
+        messages.append({"role": "assistant",
+                         "content": f"Yes, you're free on {spoken(target)} at {clock}."})
     return messages
 
 
 def example_reminder(rng: random.Random) -> list[dict]:
     task = rng.choice(TASKS)
-    when, offset = rng.choice(RELATIVE_DAYS)
-    due = iso(offset, rng.choice(["09:00", "10:00", "18:00"]))
+    today, when, target = pick_day(rng)
+    clock = rng.choice(["09:00", "10:00", "18:00"])
+    due = iso(target, clock)
 
     return [
         {"role": "user", "content": rng.choice([
@@ -349,11 +511,12 @@ def example_reminder(rng: random.Random) -> list[dict]:
             f"stick a reminder on to {task} {when}",
         ])},
         call("get_current_time", {}),
-        result(now_payload()),
+        result(now_payload(today)),
         call("create_reminder", {"title": task.capitalize(), "due": due}),
         result({"ok": True, "action": "create_reminder",
                 "reminder_id": "RM-1", "title": task.capitalize(), "due": due}),
-        {"role": "assistant", "content": f"Reminder set for {when} to {task}."},
+        {"role": "assistant",
+         "content": f"Reminder set for {spoken(target)} at {clock} to {task}."},
     ]
 
 
@@ -361,9 +524,8 @@ def example_message_drafted(rng: random.Random) -> list[dict]:
     nickname, full_name, number = rng.choice(PEOPLE)
     intent, body = rng.choice(MESSAGE_INTENTS)
 
-    # Half the time the user sends it, half the time they dismiss the sheet.
-    # Both outcomes must be reported accurately, and the dismissal case is the
-    # one models get wrong.
+    # The user either sends it or dismisses the sheet. Both outcomes must be
+    # reported accurately, and the dismissal is the one models get wrong.
     sent = rng.random() < 0.6
 
     messages = [
@@ -373,15 +535,12 @@ def example_message_drafted(rng: random.Random) -> list[dict]:
             f"let {nickname} know {intent}",
         ])},
         call("find_contact", {"name": nickname}),
-        result({
-            "ok": True, "action": "find_contact", "match_count": "1",
-            "matches": f"{full_name} | phones: {number}",
-            "guidance": "Single match; safe to use.",
-        }),
+        found_one(full_name, number),
         call("send_message", {"to": full_name, "body": body}),
     ]
 
     if sent:
+        # Only this path may say "sent": the result reports the user tapped it.
         messages.append(result({
             "ok": True, "action": "send_message",
             "recipient": full_name, "outcome": "sent",
@@ -395,7 +554,7 @@ def example_message_drafted(rng: random.Random) -> list[dict]:
                      "Do not retry unless they ask; acknowledge and stop.",
         }))
         messages.append({"role": "assistant",
-                         "content": "You closed it without sending — let me know if you want "
+                         "content": "You closed it without sending. Let me know if you want "
                                     "another go."})
     return messages
 
@@ -406,21 +565,43 @@ def example_message_awaiting(rng: random.Random) -> list[dict]:
     intent, body = rng.choice(MESSAGE_INTENTS)
 
     return [
-        {"role": "user", "content": f"draft a text to {nickname} about {intent}"},
+        {"role": "user", "content": rng.choice([
+            f"draft a text to {nickname} about {intent}",
+            f"get a message ready for {nickname}, {intent}",
+            f"write {nickname} a text, {intent}",
+        ])},
+        call("find_contact", {"name": nickname}),
+        found_one(full_name, number),
+        call("send_message", {"to": full_name, "body": body}),
+        staged_result("send_message", recipient=full_name),
+        {"role": "assistant",
+         "content": f"Drafted it to {full_name.split()[0]}. Tap send when you're happy with it."},
+    ]
+
+
+def example_email_awaiting(rng: random.Random) -> list[dict]:
+    """The same honesty lesson for email, so it is not learned as texts-only."""
+    nickname, full_name, _ = rng.choice(PEOPLE)
+    subject, body = rng.choice([
+        ("Friday", "Are we still on for Friday? Let me know either way."),
+        ("Invoice", "Attached is this month's invoice. Shout if anything looks off."),
+        ("Quick question", "Have you got ten minutes this week for a quick call?"),
+        ("Thank you", "Thanks again for your help last week, it made a real difference."),
+    ])
+    address = full_name.split()[0].lower() + "@example.com"
+
+    return [
+        {"role": "user", "content": f"email {nickname} about {subject.lower()}"},
         call("find_contact", {"name": nickname}),
         result({
             "ok": True, "action": "find_contact", "match_count": "1",
-            "matches": f"{full_name} | phones: {number}",
+            "matches": f"{full_name} | emails: {address}",
             "guidance": "Single match; safe to use.",
         }),
-        call("send_message", {"to": full_name, "body": body}),
-        result({
-            "ok": True, "action": "send_message", "recipient": full_name,
-            "status": "awaiting_user_confirmation",
-            "note": "Staged for the user to confirm. Do not claim it was sent or completed.",
-        }),
+        call("send_email", {"to": full_name, "subject": subject, "body": body}),
+        staged_result("send_email", recipients=full_name),
         {"role": "assistant",
-         "content": f"Drafted it to {full_name.split()[0]} — tap send when you're happy with it."},
+         "content": f"Drafted an email to {full_name.split()[0]}. It's ready for you to tap send."},
     ]
 
 
@@ -432,7 +613,7 @@ def example_ambiguous_contact(rng: random.Random) -> list[dict]:
         ["Okafor", "Bailey", "Petrova", "Mensah", "Haddad", "Trent", "Bell"], 2
     )
     a, b = f"{first} {surname_a}", f"{first} {surname_b}"
-    intent, body = rng.choice(MESSAGE_INTENTS)
+    intent, _ = rng.choice(MESSAGE_INTENTS)
 
     return [
         {"role": "user", "content": f"text {first} saying {intent}"},
@@ -444,7 +625,7 @@ def example_ambiguous_contact(rng: random.Random) -> list[dict]:
                         "rather than guessing.",
         }),
         {"role": "assistant",
-         "content": f"Two {first}s in your contacts — {a} or {b}?"},
+         "content": f"There are two {first}s in your contacts, {a} and {b}. Which one?"},
     ]
 
 
@@ -453,25 +634,61 @@ def example_impossible(rng: random.Random) -> list[dict]:
     phrasing = rng.choice(IMPOSSIBLE_PHRASINGS)
     return [
         {"role": "user", "content": phrasing.format(r=request)},
-        # Deliberately no tool call. The lesson is that inventing a tool is
-        # wrong, and so is pretending the task was done.
+        # Deliberately no tool call. Inventing a tool is wrong, and so is
+        # pretending the task was done.
         {"role": "assistant", "content": reply},
     ]
 
 
 def example_shortcut(rng: random.Random) -> list[dict]:
+    """A hand-off: say what was asked for, never what happened."""
     name = rng.choice(SHORTCUT_NAMES)
     return [
         {"role": "user", "content": rng.choice(SHORTCUT_PHRASINGS).format(n=name)},
         call("run_shortcut", {"name": name}),
-        result({
-            "ok": True, "action": "run_shortcut", "shortcut": name,
-            "status": "awaiting_user_confirmation",
-            "outcome": "Shortcuts was opened and asked to run this shortcut. Conduit cannot "
-                       "see the result.",
-        }),
+        # Detail fields mirror DeviceTools.runShortcut.
+        handed_off_result(
+            "run_shortcut",
+            shortcut=name,
+            outcome="Shortcuts was opened and asked to run this shortcut. Conduit cannot see "
+                    "the result. If the name does not match one of the user's shortcuts, "
+                    "Shortcuts will show an error. Ask the user whether it worked rather "
+                    "than assuming it did.",
+        ),
         {"role": "assistant",
-         "content": f"Asked Shortcuts to run {name} — it should be going now."},
+         "content": rng.choice([
+             f"Asked Shortcuts to run {name}. I can't see whether it worked from here.",
+             f"I've asked Shortcuts to run {name}. If nothing happened, check the name matches.",
+         ])},
+    ]
+
+
+def example_call(rng: random.Random) -> list[dict]:
+    """Starting a call is a hand-off too: no send button, no visible result."""
+    nickname, full_name, number = rng.choice(PEOPLE)
+    facetime = rng.random() < 0.3
+    arguments = {"to": full_name}
+    if facetime:
+        arguments["facetime"] = True
+
+    return [
+        {"role": "user", "content": rng.choice([
+            f"{'facetime' if facetime else 'call'} {nickname}",
+            f"ring {nickname}" if not facetime else f"video call {nickname}",
+            f"get {nickname} on the phone" if not facetime else f"facetime {nickname} please",
+        ])},
+        call("find_contact", {"name": nickname}),
+        found_one(full_name, number),
+        call("place_call", arguments),
+        # Detail fields mirror PeopleTools.placeCall.
+        handed_off_result(
+            "place_call",
+            recipient=full_name,
+            outcome="handed off to the phone app; iOS asks the user to confirm",
+        ),
+        {"role": "assistant",
+         "content": f"{'Starting FaceTime with' if facetime else 'Calling'} "
+                    f"{full_name.split()[0]}. iOS will ask you to confirm."},
     ]
 
 
@@ -481,22 +698,17 @@ def example_permission_denied(rng: random.Random) -> list[dict]:
 
     if which == "calendar":
         phrase, title, clock, duration = rng.choice(EVENTS)
-        when, offset = rng.choice(RELATIVE_DAYS)
+        today, when, target = pick_day(rng)
         return [
             {"role": "user", "content": rng.choice([
                 f"add {phrase} {when} at {clock}",
                 f"put {phrase} in for {when} at {clock}",
             ])},
             call("get_current_time", {}),
-            result(now_payload()),
-            call("create_event", {"title": title, "start": iso(offset, clock),
+            result(now_payload(today)),
+            call("create_event", {"title": title, "start": iso(target, clock),
                                   "duration_minutes": duration}),
-            result({
-                "ok": False, "action": "create_event",
-                "error": "Permission to access Calendars was denied. Do not retry this tool. "
-                         "Tell the user they can grant access in Settings, under Privacy and "
-                         "Security.",
-            }),
+            denied("create_event", "Calendars"),
             {"role": "assistant",
              "content": "I don't have calendar access, so I can't add it. You can turn it on "
                         "in Settings under Privacy & Security, then Calendars."},
@@ -504,75 +716,58 @@ def example_permission_denied(rng: random.Random) -> list[dict]:
 
     if which == "reminders":
         task = rng.choice(TASKS)
-        when, offset = rng.choice(RELATIVE_DAYS)
+        today, when, target = pick_day(rng)
         return [
             {"role": "user", "content": f"remind me to {task} {when}"},
             call("get_current_time", {}),
-            result(now_payload()),
+            result(now_payload(today)),
             call("create_reminder", {"title": task.capitalize(),
-                                     "due": iso(offset, "09:00")}),
-            result({
-                "ok": False, "action": "create_reminder",
-                "error": "Permission to access Reminders was denied. Do not retry this tool. "
-                         "Tell the user they can grant access in Settings, under Privacy and "
-                         "Security.",
-            }),
+                                     "due": iso(target, "09:00")}),
+            denied("create_reminder", "Reminders"),
             {"role": "assistant",
-             "content": "Reminders access is off, so I can't add that. Settings, then "
+             "content": "Reminders access is off, so I can't add that. It's in Settings under "
                         "Privacy & Security, then Reminders."},
         ]
 
-    nickname, full_name, _ = rng.choice(PEOPLE)
+    nickname, _, _ = rng.choice(PEOPLE)
     intent, _ = rng.choice(MESSAGE_INTENTS)
     return [
         {"role": "user", "content": f"text {nickname} about {intent}"},
         call("find_contact", {"name": nickname}),
-        result({
-            "ok": False, "action": "find_contact",
-            "error": "Permission to access Contacts was denied. Do not retry this tool. "
-                     "Tell the user they can grant access in Settings, under Privacy and "
-                     "Security.",
-        }),
+        denied("find_contact", "Contacts"),
         {"role": "assistant",
          "content": f"I can't look up {nickname} without contacts access. Give me the number "
-                    "and I'll draft it, or turn it on in Settings under Privacy & Security."},
+                    "and I'll draft it, or turn access on in Settings under Privacy & Security."},
     ]
 
 
 def example_multistep(rng: random.Random) -> list[dict]:
-    """Check the calendar, then message someone about it."""
+    """Check the calendar, then draft a message about it."""
     nickname, full_name, number = rng.choice(PEOPLE)
-    when, offset = rng.choice(RELATIVE_DAYS)
+    today, when, target = pick_day(rng)
     clock, outing = rng.choice([
         ("19:30", "dinner"), ("18:00", "drinks"), ("12:30", "lunch"),
         ("20:00", "the cinema"), ("11:00", "coffee"), ("17:30", "a walk"),
     ])
-    start = iso(offset, clock)
+    start = iso(target, clock)
 
     return [
         {"role": "user",
          "content": f"am I free {when} at {clock}? if so ask {nickname} about {outing}"},
         call("get_current_time", {}),
-        result(now_payload()),
-        call("check_availability", {"start": start, "end": iso(offset, "22:00")}),
+        result(now_payload(today)),
+        call("check_availability", {"start": start, "end": plus_minutes(target, clock, 120)}),
         result({"ok": True, "action": "check_availability", "free": "true"}),
         call("find_contact", {"name": nickname}),
-        result({
-            "ok": True, "action": "find_contact", "match_count": "1",
-            "matches": f"{full_name} | phones: {number}",
-            "guidance": "Single match; safe to use.",
-        }),
+        found_one(full_name, number),
         call("send_message", {
             "to": full_name,
-            "body": f"Free {when.replace('on ', '')} — fancy {outing}?",
+            "body": f"I'm free {target.strftime('%A')} at {clock}. Fancy {outing}?",
         }),
-        result({
-            "ok": True, "action": "send_message", "recipient": full_name,
-            "status": "awaiting_user_confirmation",
-            "note": "Staged for the user to confirm. Do not claim it was sent or completed.",
-        }),
+        staged_result("send_message", recipient=full_name),
         {"role": "assistant",
-         "content": f"You're free {when}. Drafted a text to {full_name.split()[0]} — tap send."},
+         "content": f"You're free on {spoken(target)} at {clock}. I've drafted a text to "
+                    f"{full_name.split()[0]}, just tap send."},
     ]
 
 
@@ -580,14 +775,16 @@ def example_multistep(rng: random.Random) -> list[dict]:
 # calendar writes are the easiest thing for the model to already do well;
 # honesty about friction and refusals are what need reinforcing.
 GENERATORS = [
-    (example_calendar, 14),
-    (example_reminder, 10),
+    (example_calendar, 13),
+    (example_reminder, 9),
     (example_availability, 8),
-    (example_message_drafted, 12),
-    (example_message_awaiting, 14),
+    (example_message_drafted, 10),
+    (example_message_awaiting, 12),
+    (example_email_awaiting, 5),
     (example_ambiguous_contact, 8),
-    (example_impossible, 16),
+    (example_impossible, 15),
     (example_shortcut, 7),
+    (example_call, 6),
     (example_permission_denied, 6),
     (example_multistep, 9),
 ]
@@ -603,6 +800,7 @@ def main() -> None:
 
     tools = json.loads(TOOLS_PATH.read_text(encoding="utf-8"))
     verify_tools_match(tools)
+    verify_notes_match()
 
     system_prompt = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8").strip()
     rng = random.Random(args.seed)

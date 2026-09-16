@@ -219,6 +219,26 @@ struct ToolDescriptor {
 /// *failed* tool call is ordinary conversation, and the model should read the
 /// failure and choose differently. So failures come back as values, with
 /// `error` carrying text written for the model rather than for a log.
+/// How finished a successful tool call actually is.
+///
+/// Three states rather than two, because "not done" has two distinct shapes on
+/// iOS and the model must report them differently:
+///
+/// - `.completed` — it happened. Say so.
+/// - `.awaitingUser` — staged in a system sheet; the user must tap send. The
+///   task is NOT done, and someone needs to act.
+/// - `.handedOff` — another app owns it now and Conduit cannot observe the
+///   result. Nobody needs to act, but no outcome can be claimed either.
+///
+/// Collapsing the last two into one flag made the model say "tap send" about
+/// running a shortcut, which is wrong in a way that erodes trust in everything
+/// else it reports.
+enum ToolCompletion {
+    case completed
+    case awaitingUser
+    case handedOff
+}
+
 struct ToolOutcome {
     var ok: Bool
     var action: String
@@ -228,18 +248,26 @@ struct ToolOutcome {
     var detail: [String: String] = [:]
     /// Written for the model: say what was wrong AND what to try instead.
     var error: String?
-    /// True when the work is staged but iOS requires the user to finish it.
-    var awaitingUserConfirmation: Bool = false
+    var completion: ToolCompletion = .completed
 
     static func success(_ action: String, _ summary: String,
                         detail: [String: String] = [:]) -> ToolOutcome {
         ToolOutcome(ok: true, action: action, summary: summary, detail: detail, error: nil)
     }
 
+    /// Staged in a system sheet. The user still has to finish it.
     static func staged(_ action: String, _ summary: String,
                        detail: [String: String] = [:]) -> ToolOutcome {
         ToolOutcome(ok: true, action: action, summary: summary, detail: detail,
-                    error: nil, awaitingUserConfirmation: true)
+                    error: nil, completion: .awaitingUser)
+    }
+
+    /// Handed to another app. Conduit is now in the background and cannot see
+    /// what happened next.
+    static func handedOff(_ action: String, _ summary: String,
+                          detail: [String: String] = [:]) -> ToolOutcome {
+        ToolOutcome(ok: true, action: action, summary: summary, detail: detail,
+                    error: nil, completion: .handedOff)
     }
 
     static func failure(_ action: String, _ error: String,
@@ -263,9 +291,18 @@ struct ToolOutcome {
     var modelResponseJSON: String {
         var payload: [String: Any] = ["ok": ok, "action": action]
         if let error { payload["error"] = error }
-        if awaitingUserConfirmation {
+        switch completion {
+        case .completed:
+            break
+        case .awaitingUser:
             payload["status"] = "awaiting_user_confirmation"
-            payload["note"] = "Staged for the user to confirm. Do not claim it was sent or completed."
+            payload["note"] = "Staged in a system sheet. The user must tap send. "
+                + "Do not claim it was sent. Tell them it is drafted and waiting for them."
+        case .handedOff:
+            payload["status"] = "handed_off"
+            payload["note"] = "Another app has taken over and Conduit cannot see the result. "
+                + "Say what you asked for, not what happened. Do not claim it succeeded, "
+                + "and do not tell the user to tap send - there is nothing for them to send."
         }
         for (k, v) in detail { payload[k] = v }
         guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),

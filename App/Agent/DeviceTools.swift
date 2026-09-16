@@ -184,7 +184,7 @@ final class DeviceTools: ToolProviding {
         // A successful open only means Shortcuts was launched. If the name does
         // not match, Shortcuts itself shows the error and the app never hears
         // about it, so this must not be reported as the shortcut having run.
-        return .staged("run_shortcut", "Asked Shortcuts to run \(name)",
+        return .handedOff("run_shortcut", "Asked Shortcuts to run \(name)",
                        detail: [
                            "shortcut": name,
                            "outcome": "Shortcuts was opened and asked to run this shortcut. "
@@ -215,7 +215,7 @@ final class DeviceTools: ToolProviding {
                             "iOS refused to open \(requested). The app may not be installed, or "
                                 + "it may not accept being opened this way.")
         }
-        return .staged("open_app", "Opening \(requested)",
+        return .handedOff("open_app", "Opening \(requested)",
                        detail: ["app": requested, "outcome": "Conduit is now in the background"])
     }
 
@@ -238,7 +238,7 @@ final class DeviceTools: ToolProviding {
         guard let url = components?.url, await ComposePresenter.open(url) else {
             return .failure("get_directions", "Could not open Maps for \(destination).")
         }
-        return .staged("get_directions", "Directions to \(destination)",
+        return .handedOff("get_directions", "Directions to \(destination)",
                        detail: ["destination": destination])
     }
 
@@ -253,7 +253,7 @@ final class DeviceTools: ToolProviding {
         guard let url = components?.url, await ComposePresenter.open(url) else {
             return .failure("play_music", "Could not open Music for \(query).")
         }
-        return .staged("play_music", "Searching Music for \(query)",
+        return .handedOff("play_music", "Searching Music for \(query)",
                        detail: [
                            "query": query,
                            "outcome": "Music opened at the search results. Conduit cannot press "
@@ -270,7 +270,7 @@ final class DeviceTools: ToolProviding {
         guard let url = components?.url, await ComposePresenter.open(url) else {
             return .failure("web_search", "Could not open a browser.")
         }
-        return .staged("web_search", "Searching the web for \(query)",
+        return .handedOff("web_search", "Searching the web for \(query)",
                        detail: [
                            "query": query,
                            "outcome": "The browser opened with these results. You cannot read them; "

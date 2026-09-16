@@ -138,7 +138,11 @@ final class ComposePresenter: NSObject {
     }
 }
 
-extension ComposePresenter: MFMessageComposeViewControllerDelegate {
+// @preconcurrency: MessageUI predates Swift concurrency and does not mark
+// these delegate protocols @MainActor, although UIKit always calls them on the
+// main thread. Without the annotation the conformance is a data-race warning
+// now and an error under Swift 6.
+extension ComposePresenter: @preconcurrency MFMessageComposeViewControllerDelegate {
     func messageComposeViewController(_ controller: MFMessageComposeViewController,
                                       didFinishWith result: MessageComposeResult) {
         let mapped: Result
@@ -152,7 +156,7 @@ extension ComposePresenter: MFMessageComposeViewControllerDelegate {
     }
 }
 
-extension ComposePresenter: MFMailComposeViewControllerDelegate {
+extension ComposePresenter: @preconcurrency MFMailComposeViewControllerDelegate {
     func mailComposeController(_ controller: MFMailComposeViewController,
                                didFinishWith result: MFMailComposeResult,
                                error: Error?) {
