@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import UIKit
 
 /// One line in the visible transcript.
 struct TranscriptEntry: Identifiable {
@@ -44,6 +45,9 @@ final class AgentSession {
 
     private(set) var transcript: [TranscriptEntry] = []
     private(set) var isWorking = false
+    /// True only while the model is producing tokens, which is the one time
+    /// leaving the app is dangerous (see `leavingForeground`).
+    private(set) var isGenerating = false
     /// Tokens per second from the last completed turn, shown in the model picker.
     private(set) var lastThroughput: Double?
 
@@ -60,6 +64,10 @@ final class AgentSession {
     private var task: Task<Void, Never>?
     /// Source of tool-call ids when the framework does not supply one.
     private var callCounter = 0
+    /// What the user asked this turn, and what the model said just before.
+    /// Tool policy checks these, not the model's own reading of them.
+    private var currentRequest = ""
+    private var previousReply = ""
 
     /// Cap on tool calls per user request.
     ///
@@ -87,6 +95,8 @@ final class AgentSession {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !isWorking else { return }
 
+        previousReply = history.last(where: { $0.role == .assistant })?.content ?? ""
+        currentRequest = trimmed
         transcript.append(TranscriptEntry(kind: .user, text: trimmed))
         history.append(.user(trimmed))
         isWorking = true
@@ -115,6 +125,37 @@ final class AgentSession {
         }
     }
 
+    /// Called as soon as Conduit stops being the active app.
+    ///
+    /// iOS does not let background apps use the GPU, and MLX aborts the whole
+    /// process when a GPU command is refused. So a generation in progress is
+    /// stopped here, at the inactive step, which comes before the background
+    /// step and leaves time for the last token to finish. A turn that is only
+    /// waiting for the user to come back from another app is left alone.
+    func leavingForeground() {
+        Diagnostics.log("app.inactive generating=\(isGenerating)")
+        guard isGenerating else { return }
+        cancel()
+        transcript.append(TranscriptEntry(
+            kind: .error,
+            text: "Stopped because you switched away from Conduit. iOS does not let apps "
+                + "use the GPU in the background. Ask again to continue."
+        ))
+    }
+
+    /// Shows that the previous run was killed in the middle of some work.
+    func noteInterruptedWork(_ marker: String) {
+        let phase = marker.split(separator: " ").first.map(String.init) ?? ""
+        let what = phase == "load" ? "loading the model" : "answering"
+        transcript.append(TranscriptEntry(
+            kind: .error,
+            text: "Conduit was closed while \(what) last time, most likely because iOS ran "
+                + "out of memory for it. Try turning off Think, a shorter question, a new "
+                + "conversation, or a smaller model. Details are in conduit-log.txt in the "
+                + "Files app, under On My iPhone > Conduit."
+        ))
+    }
+
     func clear() {
         cancel()
         transcript.removeAll()
@@ -130,6 +171,7 @@ final class AgentSession {
         let systemPrompt = SystemPrompt.build(tools: tools)
 
         for iteration in 0..<maxToolIterations {
+            await waitUntilForeground()
             if Task.isCancelled { return }
 
             var messages: [ModelRunner.Message] = [.system(systemPrompt)]
@@ -142,6 +184,7 @@ final class AgentSession {
             var replyText = ""
             var pendingCalls: [ModelRunner.Message.Call] = []
 
+            isGenerating = true
             do {
                 // This loop body runs on the main actor, so the transcript can
                 // be mutated directly and the accumulators above can be plain
@@ -173,11 +216,23 @@ final class AgentSession {
                     }
                 }
             } catch {
+                isGenerating = false
                 finishStreaming(at: entryIndex, text: replyText)
                 transcript.append(TranscriptEntry(
                     kind: .error,
                     text: error.localizedDescription
                 ))
+                return
+            }
+            isGenerating = false
+
+            if Task.isCancelled {
+                // cancel() has already closed the bubble. Keep any partial
+                // answer, but run none of the tools it asked for.
+                if !replyText.isEmpty {
+                    finishStreaming(at: entryIndex, text: replyText)
+                    history.append(.assistant(replyText))
+                }
                 return
             }
 
@@ -231,6 +286,17 @@ final class AgentSession {
 
     private func execute(_ call: ModelRunner.Message.Call) async {
         let name = call.name
+
+        // Refused calls go back to the model only. The user asked a question,
+        // not for a failed tool chip.
+        if let refusal = ToolPolicy.refusal(
+            for: name, request: currentRequest, previousReply: previousReply
+        ) {
+            Diagnostics.log("tool.blocked \(name)")
+            history.append(.tool(refusal.modelResponseJSON, callID: call.id))
+            return
+        }
+        Diagnostics.log("tool.run \(name)")
         let index = transcript.count
         let label = registry.spec(named: name)?.name ?? name
         transcript.append(TranscriptEntry(kind: .tool, text: "Running \(label)…"))
@@ -251,10 +317,28 @@ final class AgentSession {
         }
 
         history.append(.tool(outcome.modelResponseJSON, callID: call.id))
+
+        // The tool switched to another app. Give the switch a moment to
+        // happen, then hold the turn until the user comes back.
+        if outcome.ok, outcome.completion == .handedOff {
+            try? await Task.sleep(for: .milliseconds(800))
+            await waitUntilForeground()
+        }
+    }
+
+    /// Returns once Conduit is the frontmost app, so the next generation never
+    /// starts in the background, where iOS refuses GPU work.
+    private func waitUntilForeground() async {
+        while UIApplication.shared.applicationState != .active {
+            if Task.isCancelled { return }
+            try? await Task.sleep(for: .milliseconds(300))
+        }
     }
 
     /// One final generation with tools withheld, to produce a closing reply.
     private func summarise(systemPrompt: String) async {
+        await waitUntilForeground()
+        if Task.isCancelled { return }
         var messages: [ModelRunner.Message] = [.system(systemPrompt)]
         messages.append(contentsOf: trimmedHistory())
 
@@ -262,6 +346,8 @@ final class AgentSession {
         transcript.append(TranscriptEntry(kind: .assistant, text: "", isStreaming: true))
         var replyText = ""
 
+        isGenerating = true
+        defer { isGenerating = false }
         do {
             for try await event in runner.stream(
                 messages: messages, tools: [], thinking: false

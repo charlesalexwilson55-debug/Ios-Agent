@@ -68,6 +68,21 @@ def asserts(text: str, phrases: tuple[str, ...]) -> bool:
 # ...and must not tell the user to send something that does not exist.
 WRONG_FOR_HANDOFF = ("tap send",)
 
+# A persona refusing ordinary work. The model on device said "I'm not a
+# mathematician" when asked a sum; no training row may teach that.
+ROLE_REFUSALS = (
+    "not a mathematician", "as an ai", "as a language model", "don't have the capability",
+    "do not have the capability", "i'm just a", "i am just a", "only here to help with",
+    "i can only help with",
+)
+
+# Must mirror the word list in App/Agent/ToolPolicy.swift. A web search the
+# user did not ask for throws them out to the browser.
+SEARCH_WORDS = (
+    "search", "google", "look up", "look it up", "lookup", "look online", "online",
+    "the web", "internet", "browse", "browser", "safari", "duckduckgo", "bing", "website",
+)
+
 # Tools whose date arguments must not fall before "today".
 DATED_ARGUMENTS = {
     "create_event": ("start",),
@@ -204,13 +219,34 @@ def validate(rows: list[dict]) -> tuple[collections.Counter, dict[str, list[str]
                     elif not any(phrase in lowered for phrase in CONVEYS_PENDING):
                         problems["staged result, reply does not say it is pending"] += 1
 
+                # A computed answer must report the number that was computed.
+                try:
+                    payload = json.loads(content)
+                except json.JSONDecodeError:
+                    payload = {}
+                if payload.get("action") == "run_javascript" and payload.get("ok"):
+                    value = str(payload.get("result", "")).removesuffix("n")
+                    # Commas are ignored on both sides: "£12,345.60" states 12345.6.
+                    if value.replace(",", "") not in reply.replace(",", ""):
+                        problems["run_javascript reply does not state the result"] += 1
+
                 if '"handed_off"' in content:
                     if asserts(reply, CLAIMS_HANDOFF_OUTCOME):
                         dishonest["claims a hand-off result"].append(reply)
                     if any(phrase in lowered for phrase in WRONG_FOR_HANDOFF):
                         problems["hand-off reply tells the user to tap send"] += 1
 
+            if role == "assistant" and asserts(message.get("content") or "", ROLE_REFUSALS):
+                problems["reply refuses in character instead of helping"] += 1
+
             if role == "assistant" and "tool_calls" in message:
+                request = next((m.get("content", "") for m in reversed(messages[:index])
+                                if m.get("role") == "user"), "").lower()
+                for call in message["tool_calls"]:
+                    if (call.get("function", {}).get("name") == "web_search"
+                            and not any(word in request for word in SEARCH_WORDS)):
+                        problems["web_search without the user asking to search"] += 1
+
                 following = messages[index + 1] if index + 1 < len(messages) else None
                 if not following or following.get("role") != "tool":
                     problems["tool call with no result"] += 1

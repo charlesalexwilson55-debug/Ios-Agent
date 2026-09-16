@@ -473,7 +473,7 @@
     "type": "function",
     "function": {
       "name": "web_search",
-      "description": "Open a web search in the browser. Use this when the user wants information you do not have; you are offline and cannot browse yourself.",
+      "description": "Open a web search in the browser. This leaves Conduit. Only call it when the user asks you to search the web or look something up online. Never call it to answer a question; answer from what you know instead.",
       "parameters": {
         "type": "object",
         "properties": {

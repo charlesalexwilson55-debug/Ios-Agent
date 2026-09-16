@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import math
 import random
 import re
 from pathlib import Path
@@ -418,8 +419,9 @@ AWAITING_NOTE = (
     "Do not claim it was sent. Tell them it is drafted and waiting for them."
 )
 HANDOFF_NOTE = (
-    "Another app has taken over and Conduit cannot see the result. "
-    "Say what you asked for, not what happened. Do not claim it succeeded, "
+    "Another app is now open and Conduit cannot see what happens there. "
+    "Tell the user which app you opened and why, for example: I've opened Maps "
+    "with directions to the station. Do not claim it succeeded, "
     "and do not tell the user to tap send - there is nothing for them to send."
 )
 
@@ -688,8 +690,8 @@ def example_shortcut(rng: random.Random) -> list[dict]:
         ),
         {"role": "assistant",
          "content": rng.choice([
-             f"Asked Shortcuts to run {name}. I can't see whether it worked from here.",
-             f"I've asked Shortcuts to run {name}. If nothing happened, check the name matches.",
+             f"I've opened Shortcuts to run {name}. I can't see whether it worked from here.",
+             f"I've opened Shortcuts to run {name}. If nothing happened, check the name matches.",
          ])},
     ]
 
@@ -802,6 +804,300 @@ def example_multistep(rng: random.Random) -> list[dict]:
     ]
 
 
+# --------------------------------------------------------------------------
+# Answering directly: maths, knowledge, code, and when to search
+# --------------------------------------------------------------------------
+#
+# Without these the dataset is all phone tasks and refusals, and a model
+# trained on it learns that anything which is not a phone task gets refused.
+# That is exactly the "I'm not a mathematician" failure seen on device.
+
+def js_number(x: float) -> str:
+    """What JavaScript prints for a number in the ranges used here."""
+    if x == int(x) and abs(x) < 1e21:
+        return str(int(x))
+    return repr(x)
+
+
+def js_round(x: float) -> float:
+    """Math.round: nearest integer, ties toward positive infinity."""
+    floor = math.floor(x)
+    return float(floor + 1 if x - floor >= 0.5 else floor)
+
+
+def near_tie(x: float) -> bool:
+    """True when rounding x could differ by a hair between two libm builds."""
+    return abs((x - math.floor(x)) - 0.5) < 1e-6
+
+
+def long_date(day: dt.date) -> str:
+    return f"{day.day} {day.strftime('%B')} {day.year}"
+
+
+def maths_problem(rng: random.Random) -> tuple[str, str, str, str] | None:
+    """(question, JavaScript, result as JS prints it, answer), or None to retry."""
+    kind = rng.choice(["percent", "split", "compound", "multiply", "sqrt",
+                       "miles", "fahrenheit", "factorial", "days"])
+
+    if kind == "percent":
+        p = rng.choice([5, 8.25, 12.5, 15, 17.5, 20, 22, 35])
+        n = rng.randint(120, 9999)
+        raw = n * p / 100 * 100
+        if near_tie(raw):
+            return None
+        value = js_number(js_round(raw) / 100)
+        return (rng.choice([f"what's {p}% of {n}", f"calculate {p} percent of {n}",
+                            f"{p}% of {n}?"]),
+                f"Math.round({n} * {p} / 100 * 100) / 100",
+                value, f"{p}% of {n} is {value}.")
+
+    if kind == "split":
+        total = f"{rng.randint(2000, 25000) / 100:.2f}"
+        people = rng.randint(2, 6)
+        tip = rng.choice([10, 12.5, 15, 20])
+        raw = float(total) * (1 + tip / 100) / people * 100
+        if near_tie(raw):
+            return None
+        each = js_round(raw) / 100
+        return (rng.choice([f"split £{total} between {people} people with a {tip}% tip",
+                            f"the bill is £{total}, add {tip}% tip and split it {people} ways"]),
+                f"Math.round({total} * (1 + {tip} / 100) / {people} * 100) / 100",
+                js_number(each), f"With a {tip}% tip that's £{each:.2f} each.")
+
+    if kind == "compound":
+        principal = rng.choice([1000, 2500, 5000, 10000, 20000])
+        rate = rng.choice([2, 3.5, 4, 4.5, 5, 6.25])
+        years = rng.randint(2, 25)
+        raw = principal * (1 + rate / 100) ** years * 100
+        if near_tie(raw):
+            return None
+        amount = js_round(raw) / 100
+        return (f"if I put £{principal} in savings at {rate}% a year, how much will I have "
+                f"after {years} years",
+                f"Math.round({principal} * (1 + {rate} / 100) ** {years} * 100) / 100",
+                js_number(amount),
+                f"After {years} years you'd have £{amount:,.2f}, assuming the interest is "
+                f"added once a year and you take nothing out.")
+
+    if kind == "multiply":
+        a, b = rng.randint(1000, 99999), rng.randint(100, 9999)
+        return (rng.choice([f"what's {a} times {b}", f"{a} x {b}", f"multiply {a} by {b}"]),
+                f"{a} * {b}", str(a * b), f"{a:,} × {b:,} = {a * b:,}.")
+
+    if kind == "sqrt":
+        root = rng.randint(12, 999)
+        return (f"what's the square root of {root * root}",
+                f"Math.sqrt({root * root})", str(root),
+                f"The square root of {root * root:,} is {root}.")
+
+    if kind == "miles":
+        miles = rng.choice([3.1, 5, 6.2, 10, 13.1, 26.2, 42, 60, 100, 250])
+        raw = miles * 1.609344 * 100
+        if near_tie(raw):
+            return None
+        km = js_number(js_round(raw) / 100)
+        return (f"how many km is {miles} miles",
+                f"Math.round({miles} * 1.609344 * 100) / 100",
+                km, f"{miles} miles is {km} km.")
+
+    if kind == "fahrenheit":
+        f = rng.randint(-20, 110)
+        raw = (f - 32) * 5 / 9 * 10
+        if near_tie(raw):
+            return None
+        c = js_number(js_round(raw) / 10)
+        return (f"convert {f}°F to celsius",
+                f"Math.round(({f} - 32) * 5 / 9 * 10) / 10",
+                c, f"{f}°F is {c}°C.")
+
+    if kind == "factorial":
+        n = rng.randint(21, 40)
+        exact = str(math.factorial(n))
+        return (f"what is {n} factorial exactly",
+                f"let f = 1n;\nfor (let i = 2n; i <= {n}n; i++) f *= i;\nf",
+                exact + "n", f"{n}! = {exact}")
+
+    # days between two dates
+    start = dt.date(2026, 1, 1) + dt.timedelta(days=rng.randint(0, 300))
+    end = start + dt.timedelta(days=rng.randint(10, 700))
+    days = (end - start).days
+    return (f"how many days are there between {long_date(start)} and {long_date(end)}",
+            f"(Date.UTC({end.year}, {end.month - 1}, {end.day}) - "
+            f"Date.UTC({start.year}, {start.month - 1}, {start.day})) / 86400000",
+            str(days), f"There are {days} days between those dates.")
+
+
+def example_maths(rng: random.Random) -> list[dict]:
+    problem = None
+    while problem is None:
+        problem = maths_problem(rng)
+    question, code, value, answer = problem
+    return [
+        {"role": "user", "content": question},
+        call("run_javascript", {"code": code}),
+        result({"action": "run_javascript", "ok": True, "result": value}),
+        {"role": "assistant", "content": answer},
+    ]
+
+
+# Short, checkable answers. Every one of these must be true.
+KNOWLEDGE = [
+    ("what's the capital of Australia", "Canberra."),
+    ("how many bones are in an adult human body", "206."),
+    ("who wrote Pride and Prejudice", "Jane Austen. It was published in 1813."),
+    ("what does HTTP stand for", "HyperText Transfer Protocol."),
+    ("what's the chemical symbol for gold", "Au, from the Latin aurum."),
+    ("what's the largest planet in the solar system", "Jupiter."),
+    ("what's the boiling point of water in fahrenheit", "212°F at sea level."),
+    ("how fast is the speed of light",
+     "299,792,458 metres per second in a vacuum, or about 300,000 km per second."),
+    ("how far away is the moon",
+     "About 384,400 km on average, which is roughly 238,900 miles."),
+    ("why is the sky blue",
+     "Air molecules scatter sunlight, and they scatter short blue wavelengths far more "
+     "than long red ones. That scattered blue light reaches your eyes from every part of "
+     "the sky, so the sky looks blue."),
+    ("what's the difference between a virus and bacteria",
+     "Bacteria are single-celled organisms that can live and reproduce on their own, and "
+     "many are harmless or useful. Viruses are much smaller and can only reproduce inside "
+     "another organism's cells. Antibiotics work against bacteria but not viruses."),
+    ("is a tomato a fruit",
+     "Botanically, yes: it grows from the flower and holds the seeds. In cooking it's "
+     "treated as a vegetable."),
+    ("what is the pythagorean theorem",
+     "In a right-angled triangle, the square of the hypotenuse equals the sum of the "
+     "squares of the other two sides: a² + b² = c². So a triangle with sides 3 and 4 has "
+     "a hypotenuse of 5."),
+    ("explain what a derivative is",
+     "A derivative measures how fast a function is changing at a point, which is the "
+     "slope of its graph there. The derivative of x² is 2x, so at x = 3 the curve is "
+     "rising at a rate of 6."),
+    ("what's the difference between affect and effect",
+     "Affect is usually a verb meaning to influence: the rain affected the match. Effect "
+     "is usually a noun meaning a result: the rain had an effect on the match."),
+    ("what's a prime number",
+     "A whole number greater than 1 whose only divisors are 1 and itself. The first few "
+     "are 2, 3, 5, 7, 11 and 13."),
+    ("how many continents are there",
+     "Seven, in the most common convention: Africa, Antarctica, Asia, Australia, Europe, "
+     "North America and South America."),
+    ("what's the difference between let and const in javascript",
+     "Both are block-scoped. A `const` binding can't be reassigned after it's set, while "
+     "a `let` binding can. The contents of a `const` object or array can still change."),
+    ("how do I reverse a list in python",
+     "Use `items.reverse()` to reverse it in place, or `items[::-1]` to get a new "
+     "reversed list and leave the original alone."),
+    ("write a python function that checks if a string is a palindrome",
+     "```python\n"
+     "def is_palindrome(text: str) -> bool:\n"
+     "    cleaned = \"\".join(ch.lower() for ch in text if ch.isalnum())\n"
+     "    return cleaned == cleaned[::-1]\n"
+     "```\n\n"
+     "It ignores case, spaces and punctuation, so "
+     "`is_palindrome(\"A man, a plan, a canal: Panama\")` returns `True`."),
+    ("write a sql query to get the 5 most recent orders",
+     "```sql\n"
+     "SELECT *\n"
+     "FROM orders\n"
+     "ORDER BY created_at DESC\n"
+     "LIMIT 5;\n"
+     "```\n\n"
+     "Swap `created_at` for whatever your date column is called."),
+    ("write a swift function that returns the average of an array of doubles",
+     "```swift\n"
+     "func average(_ values: [Double]) -> Double? {\n"
+     "    guard !values.isEmpty else { return nil }\n"
+     "    return values.reduce(0, +) / Double(values.count)\n"
+     "}\n"
+     "```\n\n"
+     "It returns `nil` for an empty array rather than dividing by zero."),
+    # Live information: no search unless asked, but say how to get it.
+    ("what's the weather going to be tomorrow",
+     "I can't check the weather because I'm offline. Ask me to search for it and I'll "
+     "open a web search."),
+    ("who won the football last night",
+     "I don't have live results because I'm offline. Ask me to look it up and I'll open "
+     "a web search for it."),
+    ("what's the bitcoin price right now",
+     "I can't see live prices because I'm offline. Ask me to search for it and I'll open "
+     "a web search."),
+]
+
+
+def example_knowledge(rng: random.Random) -> list[dict]:
+    question, answer = rng.choice(KNOWLEDGE)
+    if rng.random() < 0.5:
+        question = question[0].upper() + question[1:] + "?"
+    return [
+        {"role": "user", "content": question},
+        {"role": "assistant", "content": answer},
+    ]
+
+
+JS_TASKS = [
+    ("write a javascript function that returns the largest number in an array",
+     "function largest(numbers) {\n"
+     "  if (numbers.length === 0) return undefined;\n"
+     "  return numbers.reduce((a, b) => (b > a ? b : a));\n"
+     "}",
+     "largest([3, 17, -4, 9])", "17"),
+    ("write a javascript function to count the vowels in a string",
+     "function countVowels(text) {\n"
+     "  return (text.match(/[aeiou]/gi) || []).length;\n"
+     "}",
+     "countVowels(\"Hello World\")", "3"),
+    ("write a js function that checks whether a number is prime",
+     "function isPrime(n) {\n"
+     "  if (n < 2) return false;\n"
+     "  for (let i = 2; i * i <= n; i++) {\n"
+     "    if (n % i === 0) return false;\n"
+     "  }\n"
+     "  return true;\n"
+     "}",
+     "[isPrime(1), isPrime(2), isPrime(97), isPrime(91)]", "[false,true,true,false]"),
+    ("write a javascript function that reverses the words in a sentence",
+     "function reverseWords(sentence) {\n"
+     "  return sentence.trim().split(/\\s+/).reverse().join(\" \");\n"
+     "}",
+     "reverseWords(\"the quick brown fox\")", "fox brown quick the"),
+]
+
+
+def example_javascript(rng: random.Random) -> list[dict]:
+    question, function, test, value = rng.choice(JS_TASKS)
+    return [
+        {"role": "user", "content": question},
+        call("run_javascript", {"code": f"{function}\n\n{test}"}),
+        result({"action": "run_javascript", "ok": True, "result": value}),
+        {"role": "assistant",
+         "content": f"```javascript\n{function}\n```\n\n"
+                    f"I ran it: `{test}` returns `{value}`."},
+    ]
+
+
+SEARCH_TOPICS = [
+    "train times from Leeds to York", "the opening hours of the Science Museum",
+    "reviews of the Pixel 10", "the weather in Manchester this weekend",
+    "last night's Premier League results", "how to descale a Nespresso machine",
+    "cheap flights to Lisbon in October", "the Arsenal fixture list",
+]
+
+
+def example_search_requested(rng: random.Random) -> list[dict]:
+    topic = rng.choice(SEARCH_TOPICS)
+    request = rng.choice([f"search the web for {topic}", f"look up {topic} online",
+                          f"google {topic}", f"can you search {topic}"])
+    return [
+        {"role": "user", "content": request},
+        call("web_search", {"query": topic}),
+        handed_off_result(
+            "web_search", query=topic,
+            outcome="The browser opened with these results. You cannot read them; the user will.",
+        ),
+        {"role": "assistant", "content": f"I've opened a web search for {topic}."},
+    ]
+
+
 # Weighted so the behavioural lessons outnumber the format ones. Plain
 # calendar writes are the easiest thing for the model to already do well;
 # honesty about friction and refusals are what need reinforcing.
@@ -818,6 +1114,12 @@ GENERATORS = [
     (example_call, 6),
     (example_permission_denied, 6),
     (example_multistep, 9),
+    # Answering rather than acting. Small template spaces get small weights so
+    # each fills its share without a shortfall.
+    (example_maths, 14),
+    (example_knowledge, 5),
+    (example_javascript, 0.4),
+    (example_search_requested, 3),
 ]
 
 

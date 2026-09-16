@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 @main
 struct ConduitApp: App {
@@ -73,15 +74,35 @@ struct RootView: View {
             let newSession = AgentSession(runner: runner, registry: ToolRegistry.standard())
             newSession.thinkingEnabled = thinking
             session = newSession
+            Diagnostics.log("app.launch avail=\(Diagnostics.availableMB)MB")
+
+            // Read before loading, which writes a marker of its own.
+            let unfinished = Diagnostics.takeUnfinishedWork()
+            if let unfinished {
+                Diagnostics.log("app.previous-run-died-during \(unfinished)")
+                newSession.noteInterruptedWork(unfinished)
+            }
+            let diedWhileLoading = unfinished?.hasPrefix("load") ?? false
+
             await catalog.refresh()
             // Reload whatever was in use last launch, so the app comes back
-            // ready rather than making the user pick again every time.
-            if let previous = catalog.selectedModel {
+            // ready rather than making the user pick again every time. Not if
+            // loading it is what killed the last run: that would crash again
+            // on every launch.
+            if let previous = catalog.selectedModel, !diedWhileLoading {
                 await load(previous)
             } else {
                 showingModelPicker = true
             }
             consumePendingTask()
+        }
+        .task {
+            let warnings = NotificationCenter.default.notifications(
+                named: UIApplication.didReceiveMemoryWarningNotification)
+            for await _ in warnings {
+                Diagnostics.log("memory.warning avail=\(Diagnostics.availableMB)MB "
+                    + "generating=\(session?.isGenerating ?? false)")
+            }
         }
         // A task handed over by Siri or a Shortcut while the app was already
         // running arrives on foreground rather than at launch.
@@ -89,7 +110,11 @@ struct RootView: View {
             session?.thinkingEnabled = enabled
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { consumePendingTask() }
+            switch phase {
+            case .active: consumePendingTask()
+            case .inactive, .background: session?.leavingForeground()
+            default: break
+            }
         }
         .overlay(alignment: .top) {
             if case .loading = loadingState { loadingBanner }

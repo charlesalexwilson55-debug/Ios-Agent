@@ -142,6 +142,10 @@ actor ModelRunner {
             }
         }
 
+        Diagnostics.begin("load", "model=\(displayName) "
+            + "weights=\(Diagnostics.megabytes(Self.weightsSize(directory)))MB "
+            + "adapter=\(adapterDirectory?.lastPathComponent ?? "none") "
+            + "avail=\(Diagnostics.availableMB)MB")
         do {
             let loaded = try await loadModelContainer(
                 from: directory,
@@ -154,8 +158,12 @@ actor ModelRunner {
             loadedDirectory = signature
             loadedName = displayName
             kvBytesPerToken = Self.estimateKVBytesPerToken(directory: directory) ?? 150_000
+            Diagnostics.end("load", "ok kvBytesPerToken=\(kvBytesPerToken) "
+                + "active=\(Diagnostics.megabytes(MLX.Memory.activeMemory))MB "
+                + "avail=\(Diagnostics.availableMB)MB")
         } catch {
             container = nil
+            Diagnostics.end("load", "failed: \(error.localizedDescription)")
             throw RunnerError.loadFailed(error.localizedDescription)
         }
     }
@@ -257,10 +265,24 @@ actor ModelRunner {
         )
 
         var splitter = ThinkSplitter()
+        var generated = 0
         func emit(_ pieces: [ThinkSplitter.Piece]) {
             for piece in pieces where !piece.text.isEmpty {
                 onEvent(piece.isReasoning ? .reasoning(piece.text) : .text(piece.text))
             }
+        }
+
+        // Assigning any value resets the peak counter.
+        MLX.Memory.peakMemory = 0
+        Diagnostics.begin("generate", "prompt=\(promptTokens) max=\(maxTokens) "
+            + "think=\(thinking) tools=\(tools.count) "
+            + "active=\(Diagnostics.megabytes(MLX.Memory.activeMemory))MB "
+            + "avail=\(Diagnostics.availableMB)MB")
+        defer {
+            Diagnostics.end("generate", "chunks=\(generated) "
+                + "cancelled=\(Task.isCancelled) "
+                + "peak=\(Diagnostics.megabytes(MLX.Memory.peakMemory))MB "
+                + "avail=\(Diagnostics.availableMB)MB")
         }
 
         do {
@@ -269,6 +291,7 @@ actor ModelRunner {
                 if Task.isCancelled { break }
                 switch event {
                 case .chunk(let text):
+                    generated += 1
                     emit(splitter.feed(text))
                 case .toolCall(let call):
                     emit(splitter.flush())
@@ -286,6 +309,7 @@ actor ModelRunner {
             }
             emit(splitter.flush())
         } catch {
+            Diagnostics.log("generate.error \(error.localizedDescription)")
             throw RunnerError.generationFailed(error.localizedDescription)
         }
         MLX.Memory.clearCache()

@@ -300,8 +300,9 @@ struct ToolOutcome {
                 + "Do not claim it was sent. Tell them it is drafted and waiting for them."
         case .handedOff:
             payload["status"] = "handed_off"
-            payload["note"] = "Another app has taken over and Conduit cannot see the result. "
-                + "Say what you asked for, not what happened. Do not claim it succeeded, "
+            payload["note"] = "Another app is now open and Conduit cannot see what happens there. "
+                + "Tell the user which app you opened and why, for example: I've opened Maps "
+                + "with directions to the station. Do not claim it succeeded, "
                 + "and do not tell the user to tap send - there is nothing for them to send."
         }
         for (k, v) in detail { payload[k] = v }
