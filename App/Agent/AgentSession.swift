@@ -39,6 +39,8 @@ struct TranscriptEntry: Identifiable {
     var levelTitle: String?
     /// The steps of a long task, for `.activity` entries.
     var activity: ActivityLog?
+    /// Pictures shown with the entry, from `ImageStore`.
+    var imageIDs: [UUID] = []
 
     enum Outcome {
         case done
@@ -91,6 +93,11 @@ final class AgentSession {
     var workLevel: WorkLevel = .normal
     var autoLevel: Bool = false
 
+    /// The image-reading model on the phone, if there is one.
+    var visionModelDirectory: URL?
+    /// Pictures attached to the message being answered.
+    private var pendingImageIDs: [UUID] = []
+
     /// The saved chat this conversation is recorded under. A new one starts
     /// with each new conversation.
     private(set) var chatID = UUID()
@@ -142,13 +149,16 @@ final class AgentSession {
 
     // MARK: - Public entry points
 
-    func submit(_ text: String) {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !isWorking else { return }
+    func submit(_ text: String, imageData: [Data] = []) {
+        var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty || !imageData.isEmpty, !isWorking else { return }
+        if trimmed.isEmpty { trimmed = "What's in this picture?" }
+        pendingImageIDs = imageData.compactMap { ImageStore.shared.addPhoto($0, prompt: trimmed)?.id }
 
         previousReply = history.last(where: { $0.role == .assistant })?.content ?? ""
         currentRequest = trimmed
-        let userEntry = TranscriptEntry(kind: .user, text: trimmed)
+        var userEntry = TranscriptEntry(kind: .user, text: trimmed)
+        userEntry.imageIDs = pendingImageIDs
         transcript.append(userEntry)
         history.append(.user(trimmed))
         isWorking = true
@@ -251,6 +261,21 @@ final class AgentSession {
     // MARK: - The loop
 
     private func runTurn() async {
+        // Pictures go to the image model first; the chat model gets its
+        // descriptions with the user's words.
+        if !pendingImageIDs.isEmpty {
+            let ids = pendingImageIDs
+            pendingImageIDs = []
+            guard let described = await readImages(ids) else { return }
+            if let index = history.lastIndex(where: { $0.role == .user }) {
+                history[index] = .user(currentRequest + "\n\n" + described)
+            }
+        } else if let picture = ImageIntent.prompt(from: currentRequest) {
+            // Asked to make a picture: straight to the image model.
+            await createImage(picture)
+            return
+        }
+
         let persona = self.persona
         let phoneTask = TaskRouter.looksLikePhoneTask(currentRequest)
         let auto = autoLevel ? AutoConfig.choose(for: currentRequest, isPhoneTask: phoneTask) : nil
@@ -568,6 +593,135 @@ final class AgentSession {
         reporter.finish(writing)
         finishStreaming(at: entryIndex, text: replyText)
         history.append(.assistant(replyText))
+    }
+
+    // MARK: - Pictures
+
+    /// An activity entry and the reporter that updates it.
+    private func startActivity(_ title: String) -> (entryID: UUID, reporter: ActivityReporter) {
+        let entry = TranscriptEntry(kind: .activity, text: "", activity: ActivityLog(title: title))
+        transcript.append(entry)
+        let entryID = entry.id
+        let reporter = ActivityReporter { [weak self] change in
+            guard let self,
+                  let index = self.transcript.lastIndex(where: { $0.id == entryID }),
+                  var log = self.transcript[index].activity
+            else { return }
+            change(&log)
+            self.transcript[index].activity = log
+        }
+        return (entryID, reporter)
+    }
+
+    /// Describes each picture with the image model (or Apple's Vision when
+    /// there is none) and returns the descriptions for the chat model. Nil
+    /// when the turn was stopped.
+    private func readImages(_ ids: [UUID]) async -> String? {
+        let activity = startActivity(ids.count == 1 ? "Reading your picture" : "Reading \(ids.count) pictures")
+        let reporter = activity.reporter
+        activeReporter = activity
+        defer { activeReporter = nil }
+        UIApplication.shared.isIdleTimerDisabled = true
+        defer { UIApplication.shared.isIdleTimerDisabled = false }
+
+        var notes: [String] = []
+        var useModel = visionModelDirectory != nil
+        if let directory = visionModelDirectory {
+            let loading = reporter.begin("Loading the image model", detail: directory.lastPathComponent)
+            await waitUntilForeground()
+            await runner.suspend()
+            do {
+                try await VisionRunner.shared.load(directory: directory)
+                reporter.finish(loading)
+            } catch {
+                reporter.finish(loading, .failed, detail: error.localizedDescription)
+                useModel = false
+            }
+        }
+
+        for (number, id) in ids.enumerated() {
+            if Task.isCancelled { break }
+            let step = reporter.begin(ids.count == 1 ? "Reading the picture" : "Reading picture \(number + 1)",
+                                      detail: useModel ? "Image model" : "Apple Vision (no image model on the phone)")
+            guard let data = ImageStore.shared.modelData(id) else {
+                reporter.finish(step, .failed, detail: "The picture could not be opened")
+                continue
+            }
+            do {
+                let text: String
+                if useModel {
+                    await waitUntilForeground()
+                    isGenerating = true
+                    defer { isGenerating = false }
+                    text = try await VisionRunner.shared.describe(data, question: currentRequest)
+                } else {
+                    text = try await QuickVision.describe(data)
+                }
+                guard !text.isEmpty else {
+                    reporter.finish(step, .failed, detail: "Nothing came back")
+                    continue
+                }
+                notes.append(text)
+                ImageStore.shared.setDescription(id, text)
+                reporter.addItem(step, "What it sees", subtitle: String(text.prefix(160)), status: .done)
+                reporter.finish(step)
+            } catch {
+                reporter.finish(step, Task.isCancelled ? .stopped : .failed, detail: error.localizedDescription)
+            }
+        }
+
+        if visionModelDirectory != nil {
+            await VisionRunner.shared.unload()
+            let reload = reporter.begin("Bringing back the chat model")
+            await waitUntilForeground()
+            do {
+                try await runner.resume()
+                reporter.finish(reload)
+            } catch {
+                // It is loaded again on the next generation anyway.
+                reporter.finish(reload, .failed, detail: error.localizedDescription)
+            }
+        }
+        if Task.isCancelled { return nil }
+        guard !notes.isEmpty else {
+            transcript.append(TranscriptEntry(kind: .error, text: "The picture could not be read."))
+            return nil
+        }
+        let listed = notes.enumerated().map { index, note -> String in
+            "[Picture \(index + 1) that the user attached, as described by the image model]\n\(note)"
+        }
+        return listed.joined(separator: "\n\n")
+            + "\n\nYou cannot see the pictures yourself; answer from these descriptions."
+    }
+
+    /// Makes a picture with the image model and shows it.
+    private func createImage(_ prompt: String) async {
+        let style = ImageGenerator.style(for: currentRequest)
+        let activity = startActivity("Creating an image")
+        let reporter = activity.reporter
+        let step = reporter.begin("Drawing in the \(style.title.lowercased()) style", detail: prompt)
+        await waitUntilForeground()
+        do {
+            let image = try await ImageGenerator.create(prompt, style: style)
+            guard let stored = ImageStore.shared.addCreated(image, prompt: prompt, style: style.rawValue) else {
+                throw ImageGenerator.GenerationError.noImage
+            }
+            reporter.finish(step)
+            let lower = currentRequest.lowercased()
+            var text = "Here\u{2019}s \(prompt)."
+            if ["photo", "realistic", "real life", "photograph"].contains(where: { lower.contains($0) }) {
+                text += " The image model on your phone draws in animation, illustration and sketch "
+                    + "styles, so this is a drawing rather than a photo."
+            }
+            var reply = TranscriptEntry(kind: .assistant, text: text)
+            reply.imageIDs = [stored.id]
+            transcript.append(reply)
+            history.append(.assistant("I made a \(style.title.lowercased()) image of \(prompt) and "
+                + "showed it to the user."))
+        } catch {
+            reporter.finish(step, .failed, detail: error.localizedDescription)
+            transcript.append(TranscriptEntry(kind: .error, text: error.localizedDescription))
+        }
     }
 
     // MARK: - Drafts

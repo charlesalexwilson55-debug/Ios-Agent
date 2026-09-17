@@ -39,6 +39,7 @@ struct RootView: View {
     @State private var runner = ModelRunner()
     @State private var session: AgentSession?
     @State private var draft = ""
+    @State private var attachments: [PhotoAttachment] = []
     @State private var loadingState: ModelLoadingState = .idle
     /// Persisted so the choice survives relaunches. On by default: correct
     /// answers to maths and code matter more than speed on those questions.
@@ -87,6 +88,10 @@ struct RootView: View {
             newSession.autoLevel = autoLevel
             session = newSession
             Diagnostics.log("app.launch avail=\(Diagnostics.availableMB)MB")
+            VolumeKeys.shared.onQuickPress = {
+                withAnimation { sidebarOpen.toggle() }
+            }
+            VolumeKeys.shared.start()
 
             // Read before loading, which writes a marker of its own.
             let unfinished = Diagnostics.takeUnfinishedWork()
@@ -97,6 +102,7 @@ struct RootView: View {
             let diedWhileLoading = unfinished?.hasPrefix("load") ?? false
 
             await catalog.refresh()
+            newSession.visionModelDirectory = catalog.visionModels.first?.directory
             // Reload whatever was in use last launch, so the app comes back
             // ready rather than making the user pick again every time. Not if
             // loading it is what killed the last run: that would crash again
@@ -129,8 +135,12 @@ struct RootView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
-            case .active: consumePendingTask()
-            case .inactive, .background: session?.leavingForeground()
+            case .active:
+                consumePendingTask()
+                VolumeKeys.shared.start()
+            case .inactive, .background:
+                session?.leavingForeground()
+                if phase == .background { VolumeKeys.shared.stop() }
             default: break
             }
         }
@@ -185,6 +195,7 @@ struct RootView: View {
                 menuOpen: $menuOpen,
                 level: levelBinding,
                 autoLevel: $autoLevel,
+                attachments: $attachments,
                 personas: personas.personas,
                 selectedPersona: personas.selected,
                 onSelectPersona: { personas.select($0) },
@@ -230,6 +241,8 @@ struct RootView: View {
             LibrariesView()
         case .memory:
             MemoryView()
+        case .images:
+            ImagesView()
         case .personalities:
             PersonasView(startNew: $startNewPersona)
                 .environment(catalog)
@@ -261,6 +274,7 @@ struct RootView: View {
     }
 
     private func selectFromPage(_ model: DiscoveredModel) {
+        session?.visionModelDirectory = catalog.visionModels.first?.directory
         select(model)
         page = .chat
     }
@@ -285,8 +299,10 @@ struct RootView: View {
 
     private func send() {
         let text = draft
+        let images = attachments.map(\.data)
         draft = ""
-        session?.submit(text)
+        attachments = []
+        session?.submit(text, imageData: images)
     }
 
     /// Runs a task handed over by Siri or a Shortcut.

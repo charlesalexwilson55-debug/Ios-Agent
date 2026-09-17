@@ -58,7 +58,7 @@ struct TranscriptView: View {
     private func row(for entry: TranscriptEntry) -> some View {
         switch entry.kind {
         case .user:
-            UserBubble(text: entry.text)
+            UserBubble(text: entry.text, imageIDs: entry.imageIDs)
         case .assistant:
             AssistantText(entry: entry, accent: accent) { index in
                 onShowDraft(index, entry.id)
@@ -79,8 +79,23 @@ struct TranscriptView: View {
 
 private struct UserBubble: View {
     let text: String
+    var imageIDs: [UUID] = []
 
     var body: some View {
+        VStack(alignment: .trailing, spacing: 6) {
+            if !imageIDs.isEmpty {
+                HStack(spacing: 6) {
+                    Spacer(minLength: 40)
+                    ForEach(imageIDs, id: \.self) { id in
+                        StoredImageView(id: id, maxHeight: 150, cornerRadius: 14)
+                    }
+                }
+            }
+            bubble
+        }
+    }
+
+    private var bubble: some View {
         HStack {
             Spacer(minLength: 40)
             Text(text)
@@ -103,6 +118,10 @@ private struct AssistantText: View {
             if !entry.reasoning.isEmpty {
                 ReasoningView(reasoning: entry.reasoning,
                               isThinking: entry.isStreaming && entry.text.isEmpty && entry.draftTarget == 0)
+            }
+
+            ForEach(entry.imageIDs, id: \.self) { id in
+                StoredImageView(id: id, maxHeight: 340)
             }
 
             ForEach(MessageSegment.parse(entry.text)) { segment in

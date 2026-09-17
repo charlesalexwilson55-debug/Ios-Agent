@@ -63,6 +63,11 @@ actor ModelRunner {
     /// Human-readable name of what is loaded, used in the system prompt.
     private(set) var loadedName: String = "a local model"
 
+    /// What was last loaded, so the model can be put aside while the image
+    /// model runs and brought back afterwards.
+    private var lastLoad: (directory: URL, name: String, adapter: URL?)?
+    private(set) var isSuspended = false
+
     var isLoaded: Bool { container != nil }
 
     // MARK: - Memory policy
@@ -161,7 +166,10 @@ actor ModelRunner {
             + "adapter=\(adapterDirectory?.lastPathComponent ?? "none") "
             + "avail=\(Diagnostics.availableMB)MB")
         do {
-            let loaded = try await loadModelContainer(
+            // The LLM factory explicitly: the generic loader tries the vision
+            // factory first, which would load a text-only Qwen3.5 checkpoint
+            // twice before giving up on it.
+            let loaded = try await LLMModelFactory.shared.loadContainer(
                 from: directory,
                 using: #huggingFaceTokenizerLoader()
             )
@@ -171,6 +179,8 @@ actor ModelRunner {
             container = loaded
             loadedDirectory = signature
             loadedName = displayName
+            lastLoad = (directory, displayName, adapterDirectory)
+            isSuspended = false
             kvBytesPerToken = Self.estimateKVBytesPerToken(directory: directory) ?? 150_000
             Diagnostics.end("load", "ok kvBytesPerToken=\(kvBytesPerToken) "
                 + "active=\(Diagnostics.megabytes(MLX.Memory.activeMemory))MB "
@@ -216,7 +226,26 @@ actor ModelRunner {
         container = nil
         loadedDirectory = nil
         loadedName = "a local model"
+        lastLoad = nil
+        isSuspended = false
         MLX.Memory.clearCache()
+    }
+
+    /// Frees the chat model's memory, remembering it for `resume()`.
+    func suspend() {
+        guard container != nil else { return }
+        container = nil
+        loadedDirectory = nil
+        isSuspended = true
+        MLX.Memory.clearCache()
+        Diagnostics.log("model.suspend avail=\(Diagnostics.availableMB)MB")
+    }
+
+    /// Brings back a suspended chat model.
+    func resume() async throws {
+        guard isSuspended, let lastLoad else { return }
+        try await load(directory: lastLoad.directory, displayName: lastLoad.name,
+                       adapterDirectory: lastLoad.adapter)
     }
 
     // MARK: - Generation
@@ -263,6 +292,8 @@ actor ModelRunner {
         sampling: Sampling,
         onEvent: @Sendable @escaping (RunnerEvent) -> Void
     ) async throws {
+        // A model put aside for the image model comes back on first use.
+        if container == nil, isSuspended { try await resume() }
         guard let container else { throw RunnerError.noModelLoaded }
 
         let input = UserInput(

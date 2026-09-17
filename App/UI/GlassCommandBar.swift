@@ -1,4 +1,12 @@
+import PhotosUI
 import SwiftUI
+
+/// A photo waiting to be sent with the next message.
+struct PhotoAttachment: Identifiable {
+    let id = UUID()
+    let data: Data
+    let preview: UIImage
+}
 
 /// The bottom command bar: the plus menu, one wide glass text field, and Send.
 ///
@@ -24,6 +32,8 @@ struct GlassCommandBar: View {
     /// The work level slider, and whether Auto sets it per message instead.
     @Binding var level: WorkLevel
     @Binding var autoLevel: Bool
+    /// Photos to send with the next message.
+    @Binding var attachments: [PhotoAttachment]
 
     let personas: [Persona]
     let selectedPersona: Persona?
@@ -38,6 +48,7 @@ struct GlassCommandBar: View {
     let onStop: () -> Void
 
     @FocusState private var isFocused: Bool
+    @State private var pickerItems: [PhotosPickerItem] = []
 
     /// Every control on the bar is centred on the same line: half the height
     /// of a one-line bar, measured from its bottom edge. They sit at the
@@ -52,7 +63,7 @@ struct GlassCommandBar: View {
     private static let menuPersonaLimit = 5
 
     private var canSend: Bool {
-        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && isModelLoaded
+        (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty) && isModelLoaded
     }
 
     var body: some View {
@@ -79,6 +90,51 @@ struct GlassCommandBar: View {
     // MARK: - Input
 
     private var inputField: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if !attachments.isEmpty {
+                attachmentStrip
+            }
+            inputRow
+        }
+        // Bottom-aligned, so the controls' padding is measured from the
+        // bar's own bottom edge.
+        .frame(maxWidth: .infinity, minHeight: 2 * Self.controlCentre, alignment: .bottom)
+        .contentShape(.rect)
+        .onTapGesture { if isModelLoaded { isFocused = true } }
+        .glassEffect(.regular, in: .rect(cornerRadius: Self.controlCentre))
+    }
+
+    private var attachmentStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(attachments) { attachment in
+                    Image(uiImage: attachment.preview)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 58, height: 58)
+                        .clipShape(.rect(cornerRadius: 12))
+                        .overlay(alignment: .topTrailing) {
+                            Button {
+                                attachments.removeAll { $0.id == attachment.id }
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 18))
+                                    .symbolRenderingMode(.palette)
+                                    .foregroundStyle(.white, .black.opacity(0.6))
+                            }
+                            .buttonStyle(.plain)
+                            .offset(x: 5, y: -5)
+                            .accessibilityLabel("Remove photo")
+                        }
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 12)
+            .padding(.bottom, 2)
+        }
+    }
+
+    private var inputRow: some View {
         HStack(alignment: .bottom, spacing: 6) {
             plusButton
                 .padding(.leading, Self.plusLeading)
@@ -100,12 +156,6 @@ struct GlassCommandBar: View {
                 .padding(.trailing, 10)
                 .padding(.bottom, bottomPadding(for: Self.smallButton))
         }
-        // Bottom-aligned, so the controls' padding is measured from the
-        // bar's own bottom edge.
-        .frame(maxWidth: .infinity, minHeight: 2 * Self.controlCentre, alignment: .bottom)
-        .contentShape(.rect)
-        .onTapGesture { if isModelLoaded { isFocused = true } }
-        .glassEffect(.regular, in: .rect(cornerRadius: Self.controlCentre))
     }
 
     /// Bottom padding that centres a control of this height on the bar's
@@ -228,6 +278,27 @@ struct GlassCommandBar: View {
             }
 
             Divider().padding(.vertical, 4).padding(.horizontal, 12)
+
+            PhotosPicker(selection: $pickerItems, maxSelectionCount: 4, matching: .images) {
+                HStack(spacing: 10) {
+                    Image(systemName: "photo.badge.plus")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(Color.black.opacity(0.75))
+                        .frame(width: 24)
+                    Text("Add photo")
+                        .font(.system(size: 15))
+                        .foregroundStyle(Color.black)
+                    Spacer(minLength: 8)
+                }
+                .padding(.horizontal, 16)
+                .frame(height: 40)
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .onChange(of: pickerItems) { _, items in
+                guard !items.isEmpty else { return }
+                loadPhotos(items)
+            }
 
             menuRow(symbol: thinking ? "brain.fill" : "brain", title: "Think",
                     trailing: autoLevel ? "Auto" : (thinking ? "On" : "Off"),
@@ -368,6 +439,20 @@ struct GlassCommandBar: View {
         .buttonStyle(.plain)
         .accessibilityLabel(title)
         .accessibilityValue(trailing ?? "")
+    }
+
+    private func loadPhotos(_ items: [PhotosPickerItem]) {
+        pickerItems = []
+        menuOpen = false
+        Task {
+            for item in items {
+                guard let data = try? await item.loadTransferable(type: Data.self),
+                      let image = UIImage(data: data)
+                else { continue }
+                let preview = image.preparingThumbnail(of: CGSize(width: 180, height: 180)) ?? image
+                attachments.append(PhotoAttachment(data: data, preview: preview))
+            }
+        }
     }
 
     // MARK: - Send

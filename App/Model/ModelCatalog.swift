@@ -16,6 +16,17 @@ struct DiscoveredModel: Identifiable, Hashable {
     /// True for a LoRA adapter directory rather than a full model.
     let isAdapter: Bool
 
+    /// Image-reading models, which are not chat models. Qwen3.5 is left out:
+    /// its checkpoints on the phone are text-only.
+    static let visionArchitectures: Set<String> = [
+        "qwen3_vl", "qwen2_vl", "qwen2_5_vl", "smolvlm", "fastvlm", "llava_qwen2", "lfm2_vl",
+        "lfm2-vl", "idefics3", "paligemma", "glm_ocr", "pixtral",
+    ]
+
+    var isVisionModel: Bool {
+        architecture.map { Self.visionArchitectures.contains($0) } ?? false
+    }
+
     var sizeDescription: String {
         let formatter = ByteCountFormatter()
         formatter.countStyle = .file
@@ -66,6 +77,8 @@ struct DiscoveredModel: Identifiable, Hashable {
 final class ModelCatalog {
     private(set) var models: [DiscoveredModel] = []
     private(set) var adapters: [DiscoveredModel] = []
+    /// Image-reading models found on the phone.
+    private(set) var visionModels: [DiscoveredModel] = []
     private(set) var isScanning = false
 
     /// Directory path of the selected model, persisted across launches.
@@ -141,7 +154,8 @@ final class ModelCatalog {
             Self.scan(roots: roots)
         }.value
 
-        models = found.models.sorted { $0.displayName < $1.displayName }
+        models = found.models.filter { !$0.isVisionModel }.sorted { $0.displayName < $1.displayName }
+        visionModels = found.models.filter(\.isVisionModel).sorted { $0.displayName < $1.displayName }
         adapters = found.adapters.sorted { $0.displayName < $1.displayName }
 
         // A selection pointing at a deleted folder would silently fail to

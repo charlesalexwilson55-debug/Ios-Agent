@@ -241,30 +241,41 @@ final class ResearchEngine {
         for query in queries { usedQueries.insert(Self.key(query)) }
         let items = queries.map { activity.addItem(step, $0, subtitle: "Waiting") }
         let width = Limits.parallelSearches
+        // The group's body is not on the main actor, so progress goes through
+        // the small helpers below.
         return await withTaskGroup(of: (Int, [WebSearch.Result]).self) { group in
             var lists = Array(repeating: [WebSearch.Result](), count: queries.count)
-            func store(_ done: (Int, [WebSearch.Result])) {
-                lists[done.0] = done.1
-                activity.updateItem(items[done.0],
-                                    subtitle: done.1.count == 1 ? "1 result" : "\(done.1.count) results",
-                                    status: done.1.isEmpty ? .skipped : .done)
-            }
             for (index, query) in queries.enumerated() {
-                if activity.isStopped(step) { break }
+                if await self.searchStopped(step) { break }
                 if index >= width, let done = await group.next() {
-                    store(done)
+                    lists[done.0] = done.1
+                    await self.markSearched(items[done.0], results: done.1.count)
                 }
-                activity.updateItem(items[index], subtitle: "Searching\u{2026}")
+                await self.markSearching(items[index])
                 group.addTask {
                     let results = (try? await WebSearch.search(query))?.results ?? []
                     return (index, results)
                 }
             }
             for await done in group {
-                store(done)
+                lists[done.0] = done.1
+                await self.markSearched(items[done.0], results: done.1.count)
             }
             return lists
         }
+    }
+
+    private func searchStopped(_ step: UUID) -> Bool {
+        activity.isStopped(step)
+    }
+
+    private func markSearching(_ item: UUID) {
+        activity.updateItem(item, subtitle: "Searching\u{2026}")
+    }
+
+    private func markSearched(_ item: UUID, results: Int) {
+        activity.updateItem(item, subtitle: results == 1 ? "1 result" : "\(results) results",
+                            status: results == 0 ? .skipped : .done)
     }
 
     // MARK: - Following leads

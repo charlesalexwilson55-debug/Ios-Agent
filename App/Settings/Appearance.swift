@@ -127,6 +127,7 @@ struct AppearanceSettingsView: View {
     @AppStorage(Appearance.accentKey) private var accentHex = ""
     @AppStorage(Appearance.backdropKey) private var backdrop = Appearance.Backdrop.aurora.rawValue
     @AppStorage(Appearance.textSizeKey) private var textSize = Appearance.TextSize.standard.rawValue
+    @AppStorage(VolumeKeys.enabledKey) private var volumeKeys = true
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -185,6 +186,19 @@ struct AppearanceSettingsView: View {
                 .pickerStyle(.segmented)
                 Text("The quick brown fox jumps over the lazy dog.")
                     .font(.system(size: 16 * (Appearance.TextSize(rawValue: textSize)?.scale ?? 1)))
+            }
+
+            Section {
+                Toggle("Volume buttons open the menu", isOn: $volumeKeys)
+                    .onChange(of: volumeKeys) { _, on in
+                        if on { VolumeKeys.shared.start() } else { VolumeKeys.shared.stop() }
+                    }
+            } header: {
+                Text("Controls")
+            } footer: {
+                Text("Press volume up then down quickly, or one button twice quickly, to open or close the "
+                    + "menu. Holding a button still changes the volume. Presses at full or zero volume "
+                    + "cannot be seen by apps.")
             }
 
             Section {

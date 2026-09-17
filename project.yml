@@ -33,6 +33,10 @@ targets:
         product: MLXLLM
       - package: MLXLM
         product: MLXLMCommon
+      # Image reading (Qwen3-VL). Chat models are loaded through the LLM
+      # factory explicitly, so linking this does not change how they load.
+      - package: MLXLM
+        product: MLXVLM
       - package: MLXLM
         product: MLXHuggingFace
       - package: Transformers
