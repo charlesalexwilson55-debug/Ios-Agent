@@ -14,6 +14,8 @@ struct TranscriptView: View {
     var accent: Color = .conduitAccent
     /// Shows another draft of an answer: the draft's index and the entry.
     var onShowDraft: (Int, UUID) -> Void = { _, _ in }
+    /// Stops a step or skips an item of an activity: its id and the entry.
+    var onCancelActivity: (UUID, UUID) -> Void = { _, _ in }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -63,6 +65,12 @@ struct TranscriptView: View {
             }
         case .tool:
             ToolChip(text: entry.text, outcome: entry.toolOutcome)
+        case .activity:
+            if let log = entry.activity {
+                ActivityCard(log: log, accent: accent) { id in
+                    onCancelActivity(id, entry.id)
+                }
+            }
         case .error:
             ErrorRow(text: entry.text)
         }

@@ -63,6 +63,9 @@ enum ToolPolicy {
         "delete_event": ["delete", "remove", "cancel", "clear"],
         "complete_reminder": ["done", "complete", "tick", "finish", "mark"],
         "run_shortcut": ["shortcut", "run"],
+        "google_gmail_draft": ["email", "mail", "draft", "reply", "send", "write"],
+        "google_calendar_add": ["add", "book", "schedule", "calendar", "event", "put"],
+        "google_tasks_add": ["task", "add", "remind", "todo", "to-do"],
     ]
 
     private static let affirmatives: Set<String> = [

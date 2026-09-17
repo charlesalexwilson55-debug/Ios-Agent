@@ -116,6 +116,21 @@ final class ProfileStore {
         persistAccounts()
     }
 
+    /// Adds a plain list, such as YouTube subscriptions, as account data.
+    func importList(_ items: [String], service: String, heading: String) async throws {
+        guard !items.isEmpty else { throw TextExtractor.ExtractError.empty }
+        let text = heading + ":\n" + items.joined(separator: "\n")
+        let collection = Self.collection(for: service)
+        try await KnowledgeIndex.shared.remove(collection: collection)
+        try await KnowledgeIndex.shared.add(id: "\(collection)/export", source: .profile, collection: collection,
+                                            title: "\(service) \(heading.lowercased())", text: text)
+        let account = ImportedAccount(service: service, imported: Date(), characters: text.count,
+                                      highlights: "subscribed to " + items.prefix(8).joined(separator: ", "))
+        accounts.removeAll { $0.service == service }
+        accounts.append(account)
+        persistAccounts()
+    }
+
     func removeAccount(_ service: String) async {
         accounts.removeAll { $0.service == service }
         persistAccounts()

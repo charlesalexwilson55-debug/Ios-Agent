@@ -5,6 +5,9 @@
   <key>CFBundleDisplayName</key><string>Conduit</string>
   <key>CFBundleExecutable</key><string>Conduit</string>
   <key>CFBundleIdentifier</key><string>com.charles.conduit</string>
+  <!-- The Google Cloud iOS client ID used by Settings > Connectors > Google.
+       Not a secret. Empty until one is created; it can also be pasted in the app. -->
+  <key>GoogleClientID</key><string></string>
   <key>CFBundleName</key><string>Conduit</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>0.1.0</string>

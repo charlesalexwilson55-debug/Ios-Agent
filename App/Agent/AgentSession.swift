@@ -9,6 +9,8 @@ struct TranscriptEntry: Identifiable {
         case assistant
         /// A tool ran; shown as a compact chip rather than a chat bubble.
         case tool
+        /// A long task shown as steps, such as research.
+        case activity
         case error
     }
 
@@ -35,6 +37,8 @@ struct TranscriptEntry: Identifiable {
     var historyIndex: Int?
     /// The work level that wrote the drafts.
     var levelTitle: String?
+    /// The steps of a long task, for `.activity` entries.
+    var activity: ActivityLog?
 
     enum Outcome {
         case done
@@ -232,7 +236,13 @@ final class AgentSession {
             .filter { $0.kind == .assistant && !$0.reasoning.isEmpty }
             .map { $0.reasoning }
             .joined(separator: "\n\n")
-        let actions = entries.filter { $0.kind == .tool }.map { $0.text }
+        let actions = entries.flatMap { entry -> [String] in
+            if entry.kind == .tool { return [entry.text] }
+            guard let log = entry.activity else { return [] }
+            return log.steps.map { step in
+                [step.title, step.detail].compactMap { $0 }.joined(separator: ": ")
+            }
+        }
         let thought = ThoughtRecord(request: request, reasoning: String(reasoning.prefix(20_000)),
                                     actions: actions, answer: answer)
         ConversationStore.shared.record(chatID: chatID, thought: thought, persona: persona)
@@ -253,18 +263,23 @@ final class AgentSession {
         let mcp = MCPStore.shared
         let requestServers = mcp.servers(namedIn: currentRequest)
         let personaServers = persona.map { mcp.servers(namedIn: $0.connectors) } ?? []
+        let requestGoogle = GoogleTools.toolNames(for: currentRequest)
+        let personaGoogle = persona.map { GoogleTools.toolNames(for: $0.connectors) } ?? []
         var mode = TaskRouter.mode(for: currentRequest, previousTurnUsedPhoneTools: lastTurnUsedPhoneTools)
-        // Naming a connected server is a request to use it.
-        if !requestServers.isEmpty { mode = .task }
+        // Naming a connected server or Google service is a request to use it.
+        if !requestServers.isEmpty || !requestGoogle.isEmpty { mode = .task }
         let online = onlineEnabled && Connectivity.shared.isOnline
 
-        let builtIn = registry.specs.filter { !$0.name.hasPrefix(MCPStore.toolPrefix) }
+        let builtIn = registry.specs.filter {
+            !$0.name.hasPrefix(MCPStore.toolPrefix) && !$0.name.hasPrefix(GoogleTools.prefix)
+        }
         var tools = TaskRouter.tools(from: builtIn, mode: mode, online: online)
         if let persona {
             var allowed = persona.allowedToolNames
             // A personality that names only MCP servers gets just those, plus
             // the clock and calculator.
-            if allowed == nil, !personaServers.isEmpty, !Connector.namesEverything(persona.connectors) {
+            if allowed == nil, !personaServers.isEmpty || !personaGoogle.isEmpty,
+               !Connector.namesEverything(persona.connectors) {
                 allowed = Connector.alwaysAllowed
             }
             if let allowed {
@@ -272,8 +287,10 @@ final class AgentSession {
             }
         }
         if online {
-            let mcpNames = mcp.toolNames(for: requestServers + personaServers)
-            tools += registry.specs.filter { mcpNames.contains($0.name) }
+            let outside = mcp.toolNames(for: requestServers + personaServers)
+                .union(requestGoogle)
+                .union(personaGoogle)
+            tools += registry.specs.filter { outside.contains($0.name) }
         }
 
         var systemPrompt = SystemPrompt.build(tools: tools, mode: mode)
@@ -429,14 +446,23 @@ final class AgentSession {
 
     // MARK: - Research
 
-    /// Follows the request across the web with `ResearchEngine`, showing one
-    /// progress chip, then writes up what was found.
+    /// The research run in progress, so its steps can be stopped from the chat.
+    @ObservationIgnored private var activeReporter: (entryID: UUID, reporter: ActivityReporter)?
+
+    /// Stops a step or skips an item in a running activity.
+    func cancelActivity(_ id: UUID, in entryID: UUID) {
+        guard let active = activeReporter, active.entryID == entryID else { return }
+        active.reporter.cancel(id)
+    }
+
+    /// Follows the request across the web with `ResearchEngine`, showing its
+    /// steps as they happen, then writes up what was found.
     private func runResearch(level: WorkLevel) async {
         lastTurnUsedPhoneTools = false
         guard onlineEnabled, Connectivity.shared.isOnline else {
             let text = onlineEnabled
                 ? "Research needs the internet, and there is no signal right now."
-                : "Research needs the internet. Turn on the globe button, then ask again."
+                : "Research needs the internet. Turn on Online in the plus menu, then ask again."
             transcript.append(TranscriptEntry(kind: .error, text: text))
             return
         }
@@ -446,15 +472,24 @@ final class AgentSession {
         UIApplication.shared.isIdleTimerDisabled = true
         defer { UIApplication.shared.isIdleTimerDisabled = false }
 
-        let chip = TranscriptEntry(kind: .tool, text: "Researching\u{2026}")
-        transcript.append(chip)
-        // Found by id, not position: a late progress update must not land on
-        // another entry after the conversation is cleared.
-        func updateChip(_ text: String, _ outcome: TranscriptEntry.Outcome?) {
-            guard let index = transcript.lastIndex(where: { $0.id == chip.id }) else { return }
-            transcript[index].text = text
-            transcript[index].toolOutcome = outcome
+        let entry = TranscriptEntry(
+            kind: .activity, text: "",
+            activity: ActivityLog(title: "Research: " + ResearchEngine.searchQuery(from: currentRequest))
+        )
+        transcript.append(entry)
+        let entryID = entry.id
+        // Found by id, not position: a late update must not land on another
+        // entry after the conversation is cleared.
+        let reporter = ActivityReporter { [weak self] change in
+            guard let self,
+                  let index = self.transcript.lastIndex(where: { $0.id == entryID }),
+                  var log = self.transcript[index].activity
+            else { return }
+            change(&log)
+            self.transcript[index].activity = log
         }
+        activeReporter = (entryID, reporter)
+        defer { activeReporter = nil }
 
         let engine = ResearchEngine(
             request: currentRequest,
@@ -463,10 +498,7 @@ final class AgentSession {
                 guard let self else { throw CancellationError() }
                 return try await self.ask(system: system, user: user)
             },
-            progress: { progress in
-                let facts = progress.facts == 1 ? "1 detail" : "\(progress.facts) details"
-                updateChip("\(progress.activity) \u{00B7} \(facts) so far", nil)
-            }
+            activity: reporter
         )
 
         let findings: ResearchEngine.Findings
@@ -474,31 +506,28 @@ final class AgentSession {
             findings = try await engine.run()
         } catch {
             if Task.isCancelled || error is CancellationError {
-                updateChip("Research stopped", .failed)
+                reporter.finish(reporter.begin("Research stopped"), .stopped)
                 return
             }
-            updateChip("Research failed", .failed)
-            transcript.append(TranscriptEntry(kind: .error, text: error.localizedDescription))
+            reporter.finish(reporter.begin("Research failed", detail: error.localizedDescription), .failed)
             return
         }
         readWebContent = true
         Diagnostics.log("research searches=\(findings.searches) pages=\(findings.pagesChecked) "
             + "matched=\(findings.pagesMatched) facts=\(findings.facts.count)")
 
-        let pages = findings.pagesChecked == 1 ? "1 page" : "\(findings.pagesChecked) pages"
         guard !findings.facts.isEmpty else {
-            updateChip("Checked \(pages), none clearly matched", .failed)
             let reply = "I couldn't find pages that were clearly about this. Try adding something "
                 + "that narrows it down, such as a job, a company, a school or a town."
             transcript.append(TranscriptEntry(kind: .assistant, text: reply))
             history.append(.assistant(reply))
             return
         }
-        updateChip("Researched \(pages) \u{00B7} \(findings.pagesMatched) matched "
-            + "\u{00B7} \(findings.facts.count) details", .done)
 
         await waitUntilForeground()
         if Task.isCancelled { return }
+        let writing = reporter.begin("Writing answer",
+                                     detail: "From \(findings.facts.count) details on \(findings.pagesMatched) pages")
         let messages: [ModelRunner.Message] = [
             .system(ResearchEngine.reportPrompt),
             .user(ResearchEngine.reportInput(request: currentRequest, findings: findings)),
@@ -518,12 +547,14 @@ final class AgentSession {
             }
         } catch {
             isGenerating = false
+            reporter.finish(writing, .failed, detail: error.localizedDescription)
             finishStreaming(at: entryIndex, text: replyText)
             transcript.append(TranscriptEntry(kind: .error, text: error.localizedDescription))
             return
         }
         isGenerating = false
         if Task.isCancelled {
+            reporter.finish(writing, .stopped)
             if !replyText.isEmpty {
                 finishStreaming(at: entryIndex, text: replyText)
                 history.append(.assistant(replyText))
@@ -534,6 +565,7 @@ final class AgentSession {
             // Fall back to the notes themselves rather than an empty bubble.
             replyText = findings.facts.map { "- \($0.text) (\($0.site))" }.joined(separator: "\n")
         }
+        reporter.finish(writing)
         finishStreaming(at: entryIndex, text: replyText)
         history.append(.assistant(replyText))
     }
@@ -670,22 +702,40 @@ final class AgentSession {
 
     /// One short generation with no tools and no thinking, for the research
     /// checks. Waits for the foreground, as every generation must.
+    /// The research check in progress. A skipped check can still be winding
+    /// down when the next one starts, and two generations must never overlap.
+    @ObservationIgnored private var checkInFlight: Task<String, Error>?
+
     private func ask(system: String, user: String) async throws -> String {
+        while let previous = checkInFlight {
+            _ = try? await previous.value
+            if checkInFlight == previous { checkInFlight = nil }
+        }
         await waitUntilForeground()
         try Task.checkCancellation()
-        isGenerating = true
-        defer { isGenerating = false }
-        var text = ""
-        for try await event in runner.stream(
-            messages: [.system(system), .user(user)],
-            tools: [],
-            thinking: false,
-            sampling: .extraction(maxTokens: 320)
-        ) {
-            if case .text(let chunk) = event { text += chunk }
+        let runner = self.runner
+        let task = Task { @MainActor () throws -> String in
+            self.isGenerating = true
+            defer { self.isGenerating = false }
+            var text = ""
+            for try await event in runner.stream(
+                messages: [.system(system), .user(user)],
+                tools: [],
+                thinking: false,
+                sampling: .extraction(maxTokens: 320)
+            ) {
+                if case .text(let chunk) = event { text += chunk }
+            }
+            try Task.checkCancellation()
+            return text
         }
-        try Task.checkCancellation()
-        return text
+        checkInFlight = task
+        defer { if checkInFlight == task { checkInFlight = nil } }
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
     }
 
     private func execute(_ call: ModelRunner.Message.Call) async {
@@ -712,7 +762,7 @@ final class AgentSession {
         }
         Diagnostics.log("tool.run \(name)")
         // Web pages and outside servers both return text Conduit cannot trust.
-        if TaskRouter.webToolNames.contains(name) || mcpServer != nil {
+        if TaskRouter.webToolNames.contains(name) || mcpServer != nil || name.hasPrefix(GoogleTools.prefix) {
             readWebContent = true
         } else if !TaskRouter.answerToolNames.contains(name) {
             usedPhoneTools = true

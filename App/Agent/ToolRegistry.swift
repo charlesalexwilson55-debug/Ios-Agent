@@ -38,6 +38,7 @@ final class ToolRegistry {
             WebTools(),
         ], dynamicProviders: [
             MCPTools(),
+            GoogleTools(),
         ])
     }
 

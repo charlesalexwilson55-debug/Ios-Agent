@@ -50,6 +50,8 @@ struct ConnectorsSettingsView: View {
 
     var body: some View {
         List {
+            GoogleConnectSection()
+
             Section {
                 if store.servers.isEmpty {
                     Text("No servers yet.")

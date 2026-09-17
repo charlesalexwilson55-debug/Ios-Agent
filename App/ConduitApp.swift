@@ -148,7 +148,8 @@ struct RootView: View {
             TranscriptView(
                 entries: session?.transcript ?? [],
                 accent: personas.selected?.color ?? Color.conduitAccent,
-                onShowDraft: { index, id in session?.showDraft(index, of: id) }
+                onShowDraft: { index, id in session?.showDraft(index, of: id) },
+                onCancelActivity: { id, entryID in session?.cancelActivity(id, in: entryID) }
             )
             // A tap anywhere above the bar closes the plus menu.
             .overlay {
