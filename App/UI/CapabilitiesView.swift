@@ -37,6 +37,16 @@ struct CapabilitiesView: View {
                  + "for each message. Phone actions are never done twice."),
         Item(text: "Use MCP servers on the internet",
              note: "Add them in Settings > Connectors, then name one in a message."),
+        Item(text: "Use your Google account",
+             note: "Gmail (search, read, save drafts), Calendar, Drive, Docs, Sheets, Tasks, Contacts and "
+                 + "YouTube, after connecting Google in Settings > Connectors."),
+        Item(text: "Answer from your own documents",
+             note: "Libraries index PDFs, Office files, notes, code and photos of pages on the phone."),
+        Item(text: "Remember earlier chats",
+             note: "Every chat is saved on the Memory page and looked up when it helps, even offline."),
+        Item(text: "Read pictures and draw new ones",
+             note: "Add a photo from the plus menu, or ask it to draw something. Drawings use Apple's "
+                 + "on-device image model, in animation, illustration or sketch style."),
     ]
 
     private let oneTap: [Item] = [
