@@ -225,6 +225,10 @@ struct RootView: View {
         switch page {
         case .chat:
             EmptyView()
+        case .libraries:
+            LibrariesView()
+        case .memory:
+            MemoryView()
         case .personalities:
             PersonasView(startNew: $startNewPersona)
                 .environment(catalog)

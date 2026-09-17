@@ -5,11 +5,12 @@ import SwiftUI
 /// sits where a Back button would be.
 struct SettingsView: View {
     enum Tab: String, CaseIterable, Identifiable {
-        case connectors, appearance, power
+        case connectors, you, appearance, power
         var id: String { rawValue }
         var title: String {
             switch self {
             case .connectors: "Connectors"
+            case .you: "You"
             case .appearance: "Appearance"
             case .power: "Power"
             }
@@ -32,6 +33,7 @@ struct SettingsView: View {
 
                 switch Tab(rawValue: tabRaw) ?? .connectors {
                 case .connectors: ConnectorsSettingsView()
+                case .you: ProfileSettingsView()
                 case .appearance: AppearanceSettingsView()
                 case .power: PowerSettingsView()
                 }

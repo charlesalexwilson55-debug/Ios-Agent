@@ -87,6 +87,10 @@ final class AgentSession {
     var workLevel: WorkLevel = .normal
     var autoLevel: Bool = false
 
+    /// The saved chat this conversation is recorded under. A new one starts
+    /// with each new conversation.
+    private(set) var chatID = UUID()
+
     /// Model-visible history, which is not the same as the transcript: it
     /// carries tool results and omits UI-only entries.
     private var history: [ModelRunner.Message] = []
@@ -140,12 +144,14 @@ final class AgentSession {
 
         previousReply = history.last(where: { $0.role == .assistant })?.content ?? ""
         currentRequest = trimmed
-        transcript.append(TranscriptEntry(kind: .user, text: trimmed))
+        let userEntry = TranscriptEntry(kind: .user, text: trimmed)
+        transcript.append(userEntry)
         history.append(.user(trimmed))
         isWorking = true
 
         task = Task { [weak self] in
             await self?.runTurn()
+            self?.recordTurn(after: userEntry.id, request: trimmed)
             self?.isWorking = false
         }
     }
@@ -212,6 +218,24 @@ final class AgentSession {
         lastThroughput = nil
         lastTurnUsedPhoneTools = false
         readWebContent = false
+        chatID = UUID()
+    }
+
+    /// Saves the finished exchange to the memory bank.
+    private func recordTurn(after userEntryID: UUID, request: String) {
+        guard let start = transcript.firstIndex(where: { $0.id == userEntryID }) else { return }
+        let entries = transcript[(start + 1)...]
+        guard let answer = entries.last(where: { $0.kind == .assistant && !$0.text.isEmpty })?.text else {
+            return
+        }
+        let reasoning = entries
+            .filter { $0.kind == .assistant && !$0.reasoning.isEmpty }
+            .map { $0.reasoning }
+            .joined(separator: "\n\n")
+        let actions = entries.filter { $0.kind == .tool }.map { $0.text }
+        let thought = ThoughtRecord(request: request, reasoning: String(reasoning.prefix(20_000)),
+                                    actions: actions, answer: answer)
+        ConversationStore.shared.record(chatID: chatID, thought: thought, persona: persona)
     }
 
     // MARK: - The loop
@@ -255,6 +279,23 @@ final class AgentSession {
         var systemPrompt = SystemPrompt.build(tools: tools, mode: mode)
         if let persona {
             systemPrompt += "\n\n" + persona.promptSection
+        }
+        if let profile = ProfileStore.shared.promptSection {
+            systemPrompt += "\n\n" + profile
+        }
+        // Earlier turns of this chat are still in the history unless it has
+        // been trimmed, so they are only searched once it has.
+        let notes = await Recall.notes(
+            for: currentRequest,
+            libraries: LibraryStore.shared.enabledCollections,
+            excludingChat: history.count > maxHistoryMessages ? nil : ConversationStore.collection(for: chatID)
+        )
+        if !notes.isEmpty {
+            systemPrompt += "\n\n" + notes.promptSection
+            var chip = TranscriptEntry(kind: .tool, text: "Found \(notes.hits.count) note"
+                + (notes.hits.count == 1 ? "" : "s") + ": " + notes.sourceNames.joined(separator: ", "))
+            chip.toolOutcome = .done
+            transcript.append(chip)
         }
         let thinking = auto?.thinking ?? (level.forcesThinking || thinkingEnabled)
         let toolSteps = level.toolSteps
