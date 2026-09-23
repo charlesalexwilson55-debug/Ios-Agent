@@ -333,7 +333,6 @@ final class AgentSession {
             return
         }
 
-        let phoneTask = TaskRouter.looksLikePhoneTask(currentRequest)
         let selection = pendingResearchSelection
         pendingResearchSelection = nil
         let resume = pendingResearchRun

@@ -134,7 +134,7 @@ struct PowerSettingsView: View {
                 .padding(.vertical, 8)
             }
 
-            Section("Energy in context") {
+            Section {
                 ForEach(comparisons.indices, id: \.self) { index in
                     let item = comparisons[index]
                     HStack(spacing: 12) {
@@ -152,6 +152,8 @@ struct PowerSettingsView: View {
                     }
                     .padding(.vertical, 3)
                 }
+            } header: {
+                Text("Energy in context")
             } footer: {
                 Text("Comparisons use rounded example capacities. Energy is estimated from generation time at 6 W; iOS does not provide a direct per-app power meter. A 9V battery stores less energy than a phone charge.")
             }
