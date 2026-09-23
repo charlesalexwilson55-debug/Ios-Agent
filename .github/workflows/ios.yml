@@ -65,11 +65,14 @@ jobs:
       - name: Build IPA
         id: build
         run: |
-          mkdir -p artifacts
-          xcrun swiftc -swift-version 5 -parse-as-library \
-            App/Agent/ResearchPlan.swift App/Agent/ResearchEngine.swift App/Agent/Activity.swift \
-            App/Web/WebSearch.swift scripts/research-tests.swift -o artifacts/research-tests
-          artifacts/research-tests
+          set -o pipefail
+          mkdir -p artifacts build
+          {
+            xcrun swiftc -swift-version 5 -parse-as-library \
+              App/Agent/ResearchPlan.swift App/Agent/ResearchEngine.swift App/Agent/Activity.swift \
+              App/Web/WebSearch.swift scripts/research-tests.swift -o artifacts/research-tests \
+              && artifacts/research-tests
+          } 2>&1 | tee build/xcodebuild.log
           bash scripts/build-ios.sh
 
       - uses: actions/upload-artifact@v4

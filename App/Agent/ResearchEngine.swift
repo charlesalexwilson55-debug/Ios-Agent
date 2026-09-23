@@ -590,10 +590,16 @@ final class ResearchEngine {
     }
 
     private func ranked(_ results: [WebSearch.Result]) -> [WebSearch.Result] {
-        results.enumerated().map { ($0.offset, $0.element, plan?.score(title: $0.element.title, summary: $0.element.summary, url: $0.element.url) ?? 0) }
-            .filter { $0.2 >= 0 }
-            .sorted { $0.2 == $1.2 ? $0.0 < $1.0 : $0.2 > $1.2 }
-            .map { $0.1 }
+        var scored: [(index: Int, result: WebSearch.Result, score: Int)] = []
+        for (index, result) in results.enumerated() {
+            let score = plan?.score(title: result.title, summary: result.summary, url: result.url) ?? 0
+            if score >= 0 { scored.append((index: index, result: result, score: score)) }
+        }
+        scored.sort { first, second in
+            if first.score == second.score { return first.index < second.index }
+            return first.score > second.score
+        }
+        return scored.map { $0.result }
     }
 
     /// Adds new facts and returns how many were new.
