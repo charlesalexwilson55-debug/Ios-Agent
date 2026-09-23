@@ -33,6 +33,7 @@ struct ModelPickerSheet: View {
                 capabilitiesSection
             }
             .scrollContentBackground(.hidden)
+            .background(BackdropView())
             .navigationTitle("Model")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

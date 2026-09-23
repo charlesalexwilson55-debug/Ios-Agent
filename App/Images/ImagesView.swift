@@ -111,6 +111,7 @@ struct ImagesView: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 24)
             }
+            .background(BackdropView())
             .navigationTitle("Images")
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {

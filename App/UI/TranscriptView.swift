@@ -44,6 +44,7 @@ struct TranscriptView: View {
             .onChange(of: entries.count) { _, _ in scroll(proxy) }
             .onChange(of: entries.last?.text) { _, _ in scroll(proxy) }
         }
+        .background(BackdropView())
     }
 
     private static let bottomAnchor = "conduit.transcript.bottom"

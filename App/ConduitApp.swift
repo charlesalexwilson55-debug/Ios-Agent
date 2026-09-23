@@ -94,7 +94,14 @@ struct RootView: View {
             VolumeKeys.shared.onUp = { selectAdjacentPage(-1) }
             VolumeKeys.shared.onDown = { selectAdjacentPage(1) }
             VolumeKeys.shared.onDoublePress = {
-                withAnimation { sidebarOpen.toggle() }
+                withAnimation {
+                    if showingSettings {
+                        showingSettings = false
+                        sidebarOpen = true
+                    } else {
+                        sidebarOpen.toggle()
+                    }
+                }
             }
             VolumeKeys.shared.start()
 
@@ -349,7 +356,7 @@ struct RootView: View {
 /// Liquid Glass samples and refracts what is behind it, so a flat fill makes
 /// every glass surface look inert. A soft, low-contrast gradient gives the
 /// material something to work with without competing with the text.
-private struct BackdropView: View {
+struct BackdropView: View {
     @Environment(\.colorScheme) private var colorScheme
     @AppStorage(Appearance.backdropKey) private var backdrop = Appearance.Backdrop.aurora.rawValue
 

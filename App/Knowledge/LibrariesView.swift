@@ -16,6 +16,7 @@ struct LibrariesView: View {
                 if layout == "grid" { grid }
                 else { list }
             }
+            .background(BackdropView())
             .navigationTitle("Libraries")
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
