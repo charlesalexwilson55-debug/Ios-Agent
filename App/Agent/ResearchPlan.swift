@@ -75,11 +75,20 @@ struct ResearchPlan {
     }
 
     func accepts(evidence: [String], text: String) -> Bool {
-        let grounded = evidence.filter { $0.count >= 15 && Self.contains($0, in: text) }
-        guard !grounded.isEmpty else { return false }
-        if subject == nil { return true }
-        // At least one quote must link the name to a distinguishing clue.
-        return grounded.contains { hasSubject(in: $0) && !matchedClues(in: $0).isEmpty }
+        evidence.contains { !attributedEvidence($0, text: text).isEmpty }
+    }
+
+    /// Never attach a neighbouring person's sentence to a valid identity quote.
+    /// Each retained statement must itself link the name and distinguishing clue.
+    func attributedEvidence(_ quote: String, text: String) -> [String] {
+        guard quote.count >= 15, Self.contains(quote, in: text) else { return [] }
+        guard subject != nil else { return [quote] }
+        let separated = quote.replacingOccurrences(
+            of: #"(?<=[.!?;])\s+|\n+|\s+(?:while|whereas|but|and)\s+"#,
+            with: "\n", options: [.regularExpression, .caseInsensitive])
+        return separated.components(separatedBy: .newlines).filter {
+            hasSubject(in: $0) && !matchedClues(in: $0).isEmpty
+        }
     }
 
     func score(title: String, summary: String, url: URL) -> Int {

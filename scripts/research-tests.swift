@@ -41,6 +41,12 @@ final class SearchFixtureProtocol: URLProtocol {
         precondition(plan.accepts(evidence: ["Jane Example is a doctor at Harbour Clinic in Melbourne."], text: "Jane Example is a doctor at Harbour Clinic in Melbourne."), "Name and disambiguating clues should pass")
         let professionOnly = ResearchPlan(request: "Jane Example scientist", subject: "Jane Example", keywords: ["Jane Example", "scientist"])
         precondition(!professionOnly.accepts(evidence: ["Jane Example is a scientist."], text: "Jane Example is a scientist."))
+        let twoPeople = "Jane Example works in Sydney. John Other works in Melbourne."
+        precondition(!plan.accepts(evidence: [twoPeople], text: twoPeople), "Do not borrow another person's city")
+        let joinedPeople = "Jane Example works in Sydney and John Other works in Melbourne."
+        precondition(!plan.accepts(evidence: [joinedPeople], text: joinedPeople), "Do not borrow a city across joined statements")
+        let mixedQuote = "Jane Example works at Harbour Clinic. John Other won the surgical award."
+        precondition(plan.attributedEvidence(mixedQuote, text: mixedQuote) == ["Jane Example works at Harbour Clinic."], "Only retain the subject's own statement")
         precondition(plan.score(title: "Website builder", summary: "Make a website with Wix", url: URL(string: "https://wix.com/")!) < 0)
         precondition(plan.score(title: "Jane Example — doctor", summary: "Harbour Clinic Melbourne", url: URL(string: "https://harbour-clinic.example/team/jane")!) > 0)
         precondition(plan.score(title: "Jane Example", summary: "Doctor at Harbour Clinic Melbourne", url: URL(string: "https://jane-clinic.wixsite.com/home")!) > 0, "Do not ban real practices hosted by Wix")

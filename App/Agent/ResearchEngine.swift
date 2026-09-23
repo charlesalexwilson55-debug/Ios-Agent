@@ -479,7 +479,7 @@ final class ResearchEngine {
 
         pagesMatched += 1
         matchedHosts.insert(result.url.host?.lowercased().replacingOccurrences(of: "www.", with: "") ?? result.site)
-        let grounded = verdict.evidence.filter { plan?.accepts(evidence: [$0], text: text) == true }
+        let grounded = verdict.evidence.flatMap { plan?.attributedEvidence($0, text: text) ?? [] }
         for clue in plan?.matchedClues(in: grounded.joined(separator: " ")) ?? [] { matchedClues.insert(clue) }
         // Keep verbatim source evidence as the facts. A small model's unsupported
         // paraphrase must never become a seed for the next research round.
