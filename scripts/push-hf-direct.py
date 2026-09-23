@@ -14,9 +14,9 @@ from pymobiledevice3.lockdown import create_using_usbmux
 from pymobiledevice3.services.house_arrest import HouseArrestService
 
 
-REPO = "mlx-community/Qwen3.5-9B-4bit"
-FOLDER = "Qwen3.5-9B-MLX-4bit"
-BUNDLE = "com.charles.conduit.64997U5DUX"
+REPO = sys.argv[1] if len(sys.argv) > 1 else "mlx-community/Qwen3.5-9B-4bit"
+FOLDER = sys.argv[2] if len(sys.argv) > 2 else "Qwen3.5-9B-MLX-4bit"
+BUNDLE = sys.argv[3] if len(sys.argv) > 3 else "com.charles.conduit.64997U5DUX"
 SKIP = {"README.md", ".gitattributes"}
 
 
@@ -28,21 +28,29 @@ async def main():
     files = [item for item in HfApi().model_info(REPO, files_metadata=True).siblings
              if item.rfilename not in SKIP]
     files.sort(key=lambda item: item.size or 0)
-    total = sum(item.size or 0 for item in files)
     lockdown = await create_using_usbmux()
     afc = await HouseArrestService.create(lockdown, BUNDLE, documents_only=True)
     target = f"/Documents/{FOLDER}"
     try:
-        free = int((await afc.get_device_info()).get("FSFreeBytes", 0))
-        if free < total + 500_000_000:
-            raise RuntimeError(f"Phone needs {total / 1e9:.2f} GB plus 0.5 GB free; has {free / 1e9:.2f} GB")
         await afc.makedirs(target)
+        existing = set(await afc.listdir(target))
+        missing = []
+        for item in files:
+            if item.rfilename in existing:
+                stat = await afc.stat(f"{target}/{item.rfilename}")
+                if int(stat.get("st_size", -1)) == item.size:
+                    continue
+            missing.append(item)
+        needed = sum(item.size or 0 for item in missing)
+        free = int((await afc.get_device_info()).get("FSFreeBytes", 0))
+        if free < needed + 500_000_000:
+            raise RuntimeError(f"Phone needs {needed / 1e9:.2f} GB plus 0.5 GB free; has {free / 1e9:.2f} GB")
         timeout = aiohttp.ClientTimeout(total=None, sock_read=180)
         async with aiohttp.ClientSession(timeout=timeout) as client:
             for item in files:
                 name = item.rfilename
                 path = f"{target}/{name}"
-                if name in await afc.listdir(target):
+                if name in existing:
                     stat = await afc.stat(path)
                     if int(stat.get("st_size", -1)) == item.size:
                         log(f"already present: {name}")

@@ -100,7 +100,9 @@ struct ModelPickerSheet: View {
             }
             .padding(.vertical, 8)
 
-            ScrollView(.horizontal, showsIndicators: false) {
+            GeometryReader { geometry in
+              ScrollViewReader { reader in
+               ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .top, spacing: 12) {
                     Button { isImporting = true } label: {
                         VStack(spacing: 9) {
@@ -115,6 +117,7 @@ struct ModelPickerSheet: View {
                     .buttonStyle(.plain)
                     .disabled(isCopying)
                     .accessibilityLabel("Add model")
+                    .id("add-model")
                     ForEach(catalog.models) { model in
                         Button { onSelect(model) } label: {
                             VStack(spacing: 9) {
@@ -139,8 +142,12 @@ struct ModelPickerSheet: View {
                         .accessibilityLabel("Select \(model.displayName)")
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: catalog.models.isEmpty ? .center : .leading)
+                .frame(minWidth: geometry.size.width,
+                       alignment: catalog.models.isEmpty ? .center : .leading)
                 .animation(.spring(response: 0.36, dampingFraction: 0.82), value: catalog.models.count)
+               }
+               .onAppear { reader.scrollTo("add-model", anchor: .leading) }
+              }
             }
             .frame(height: 108)
             if let selected = catalog.selectedModel {

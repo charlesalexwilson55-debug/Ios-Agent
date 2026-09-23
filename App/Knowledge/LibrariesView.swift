@@ -257,9 +257,9 @@ struct LibraryDetailView: View {
                     + "of text. Apple Vision reads photos on this iPhone; text is indexed locally.")
             }
 
-            if let ids = library.photoIDs, !ids.isEmpty {
+            if !library.readablePhotoIDs.isEmpty {
                 Section("Photos") {
-                    ForEach(ids.reversed(), id: \.self) { id in
+                    ForEach(library.readablePhotoIDs.reversed(), id: \.self) { id in
                         if let picture = ImageStore.shared.thumbnail(id, size: 160) {
                             Button {
                                 selectedPhotoID = id
@@ -335,7 +335,7 @@ struct LibraryDetailView: View {
                               var updated = store.libraries.first(where: { $0.id == library.id }) else {
                             throw TextExtractor.ExtractError.empty
                         }
-                        updated.photoIDs = (updated.photoIDs ?? []) + [image.id]
+                        updated.photoIDs = updated.readablePhotoIDs + [image.id]
                         if updated.coverPinned != true { updated.coverImageID = image.id }
                         store.update(updated)
                         if let text = try? await TextExtractor.imageText(data),

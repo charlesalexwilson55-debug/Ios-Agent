@@ -16,6 +16,12 @@ struct Library: Identifiable, Codable, Hashable {
     /// nil on older libraries; true when the user picked a cover explicitly.
     var coverPinned: Bool?
 
+    /// Older libraries predate photoIDs but still keep their cover image.
+    var readablePhotoIDs: [UUID] {
+        if let photoIDs, !photoIDs.isEmpty { return photoIDs }
+        return coverImageID.map { [$0] } ?? []
+    }
+
     var collection: String { "library:\(id.uuidString)" }
 
     static let symbols = [
@@ -63,13 +69,13 @@ final class LibraryStore {
         let text = request.lowercased()
         guard ["photo", "picture", "image"].contains(where: { text.contains($0) }) else { return nil }
         let matches = libraries.filter {
-            !$0.name.isEmpty && text.contains($0.name.lowercased()) && !($0.photoIDs ?? []).isEmpty
+            !$0.name.isEmpty && text.contains($0.name.lowercased()) && !$0.readablePhotoIDs.isEmpty
         }
-        if matches.count == 1 { return matches[0].photoIDs?.last }
+        if matches.count == 1 { return matches[0].readablePhotoIDs.last }
         guard matches.isEmpty,
               ["latest photo", "last photo", "most recent photo", "latest picture", "last picture"]
                 .contains(where: { text.contains($0) }) else { return nil }
-        let photos = libraries.flatMap { $0.photoIDs ?? [] }
+        let photos = libraries.flatMap(\.readablePhotoIDs)
         return ImageStore.shared.images.first(where: { photos.contains($0.id) })?.id
     }
 
