@@ -21,7 +21,22 @@ final class ProviderFixtureProtocol: URLProtocol {
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
-        Self.requests.append(request)
+        // URLSession commonly converts a POST's httpBody to an InputStream
+        // before handing it to URLProtocol. Capture that body while it is live.
+        var recorded = request
+        if recorded.httpBody == nil, let stream = request.httpBodyStream {
+            stream.open()
+            defer { stream.close() }
+            var data = Data()
+            var buffer = [UInt8](repeating: 0, count: 4096)
+            while true {
+                let count = stream.read(&buffer, maxLength: buffer.count)
+                if count <= 0 { break }
+                data.append(contentsOf: buffer.prefix(count))
+            }
+            recorded.httpBody = data
+        }
+        Self.requests.append(recorded)
         let reply = Self.replies.removeFirst()
         let response = HTTPURLResponse(
             url: request.url!,
