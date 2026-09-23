@@ -27,14 +27,13 @@ struct ModelPickerSheet: View {
             List {
                 modelsSection
                 if !catalog.adapters.isEmpty { adaptersSection }
-                importSection
                 downloadSection
                 permissionsSection
                 capabilitiesSection
             }
             .scrollContentBackground(.hidden)
             .background(BackdropView())
-            .navigationTitle("Model")
+            .navigationTitle("Models")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -80,35 +79,77 @@ struct ModelPickerSheet: View {
 
     private var modelsSection: some View {
         Section {
-            if catalog.models.isEmpty {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("No models on this device")
-                        .font(.system(size: 15, weight: .medium))
-                    Text("Add one below by importing a folder or downloading.")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.vertical, 4)
-            }
-
-            ForEach(catalog.models) { model in
-                Button {
-                    onSelect(model)
-                } label: {
-                    ModelRow(
-                        model: model,
-                        isSelected: catalog.selectedModelID == model.id,
-                        loadingState: loadingState
-                    )
+            VStack(spacing: 14) {
+                Text("Upload a model")
+                    .font(.title2.bold())
+                    .frame(maxWidth: .infinity)
+                Button { isImporting = true } label: {
+                    VStack(spacing: 8) {
+                        Image(systemName: "folder.badge.plus")
+                            .font(.system(size: 32, weight: .light))
+                        Text("Choose a model folder or ZIP")
+                            .font(.subheadline)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 104)
+                    .background(Color.conduitAccent.opacity(0.12), in: .rect(cornerRadius: 18))
+                    .overlay { RoundedRectangle(cornerRadius: 18).strokeBorder(Color.conduitAccent.opacity(0.35)) }
                 }
                 .buttonStyle(.plain)
-                .swipeActions(edge: .trailing) {
-                    Button(role: .destructive) {
-                        Task { await catalog.delete(model) }
-                    } label: {
-                        Label("Delete", systemImage: "trash")
+                .disabled(isCopying)
+                if isCopying { ProgressView("Importing model…") }
+            }
+            .padding(.vertical, 8)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: .top, spacing: 12) {
+                    Button { isImporting = true } label: {
+                        VStack(spacing: 9) {
+                            Image(systemName: "plus")
+                                .font(.system(size: 24, weight: .medium))
+                                .frame(width: 54, height: 54)
+                                .background(Color.conduitAccent.opacity(0.15), in: .rect(cornerRadius: 16))
+                            Text("Add model").font(.caption).lineLimit(1)
+                        }
+                        .frame(width: 94)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isCopying)
+                    .accessibilityLabel("Add model")
+                    ForEach(catalog.models) { model in
+                        Button { onSelect(model) } label: {
+                            VStack(spacing: 9) {
+                                Image(systemName: petIcon(for: model))
+                                    .font(.system(size: 28))
+                                    .frame(width: 54, height: 54)
+                                    .background(Color.conduitAccent.opacity(0.15), in: .rect(cornerRadius: 16))
+                                Text(model.displayName)
+                                    .font(.caption)
+                                    .lineLimit(2)
+                                    .frame(height: 32, alignment: .top)
+                            }
+                            .frame(width: 104)
+                            .foregroundStyle(catalog.selectedModelID == model.id ? Color.conduitAccent : Color.primary)
+                        }
+                        .buttonStyle(.plain)
+                        .contextMenu {
+                            Button("Delete model", systemImage: "trash", role: .destructive) {
+                                Task { await catalog.delete(model) }
+                            }
+                        }
+                        .accessibilityLabel("Select \(model.displayName)")
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: catalog.models.isEmpty ? .center : .leading)
+                .animation(.spring(response: 0.36, dampingFraction: 0.82), value: catalog.models.count)
+            }
+            .frame(height: 108)
+            if let selected = catalog.selectedModel {
+                ModelRow(model: selected, isSelected: true, loadingState: loadingState)
+            }
+            if !catalog.visionModels.isEmpty {
+                Text("Image reader: \(catalog.visionModels.map(\.displayName).joined(separator: ", "))")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
         } header: {
             Text("On this device")
@@ -117,6 +158,12 @@ struct ModelPickerSheet: View {
                 Text("Scanning…")
             }
         }
+    }
+
+    private func petIcon(for model: DiscoveredModel) -> String {
+        let pets = ["pawprint.fill", "hare.fill", "tortoise.fill", "bird.fill", "fish.fill", "ladybug.fill"]
+        let hash = model.displayName.utf8.reduce(UInt64(0)) { ($0 &* 31) &+ UInt64($1) }
+        return pets[Int(hash % UInt64(pets.count))]
     }
 
     private var adaptersSection: some View {
@@ -165,20 +212,6 @@ struct ModelPickerSheet: View {
     }
 
     // MARK: - Adding
-
-    private var importSection: some View {
-        Section {
-            Button {
-                isImporting = true
-            } label: {
-                Label("Add model file or folder", systemImage: "plus.circle")
-            }
-            .disabled(isCopying)
-            if isCopying { ProgressView("Importing model…") }
-        } footer: {
-            Text("Press + and choose a ZIP of the complete MLX model, or its folder. Keep the config, tokenizer and all weight files together.")
-        }
-    }
 
     private var downloadSection: some View {
         Section {

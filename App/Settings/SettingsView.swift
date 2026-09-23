@@ -17,6 +17,18 @@ struct SettingsView: View {
             case .information: "Information"
             }
         }
+        var symbol: String {
+            switch self {
+            case .connectors: "point.3.connected.trianglepath.dotted"
+            case .web: "globe"
+            case .you: "person.crop.circle"
+            case .appearance: "paintpalette"
+            case .power: "bolt"
+            case .memory: "square.grid.2x2"
+            case .research: "magnifyingglass"
+            case .information: "info.circle"
+            }
+        }
     }
 
     let isWorking: Bool
@@ -24,12 +36,20 @@ struct SettingsView: View {
     let onOpenChat: (ChatRecord) -> Void
     let onResumeResearch: (ResearchRun) -> Void
     let onClose: () -> Void
-    @AppStorage("conduit.settings.tab") private var tabRaw = Tab.connectors.rawValue
+    @State private var selectedTab: Tab?
 
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Settings").font(.title2.bold())
+                if selectedTab != nil {
+                    Button { withAnimation { selectedTab = nil } } label: {
+                        Image(systemName: "chevron.left")
+                            .frame(width: 34, height: 34)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Back to settings")
+                }
+                Text(selectedTab?.title ?? "Settings").font(.title2.bold())
                 Spacer()
                 Button(action: onClose) {
                     Image(systemName: "xmark")
@@ -44,25 +64,9 @@ struct SettingsView: View {
             .padding(.top, 16)
             .padding(.bottom, 10)
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 7) {
-                    ForEach(Tab.allCases) { tab in
-                        Button { tabRaw = tab.rawValue } label: {
-                            Text(tab.title)
-                                .font(.system(size: 13, weight: .medium))
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                                .background(tabRaw == tab.rawValue ? Color.conduitAccent.opacity(0.35) : .white.opacity(0.08), in: .capsule)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.horizontal, 18)
-            }
-            .padding(.bottom, 10)
-
-            Group {
-                switch Tab(rawValue: tabRaw) ?? .connectors {
+            if let selectedTab {
+                Group {
+                switch selectedTab {
                 case .connectors: ConnectorsSettingsView()
                 case .web: OnlineSettingsView()
                 case .you: ProfileSettingsView()
@@ -73,10 +77,48 @@ struct SettingsView: View {
                     ResearchArchiveView(isWorking: isWorking, canResume: canResume, onResume: onResumeResearch)
                 case .information: NavigationStack { CapabilitiesView() }
                 }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List {
+                    Section("Connections") {
+                        settingsRow(.connectors)
+                        settingsRow(.web)
+                    }
+                    Section("Personal") {
+                        settingsRow(.you)
+                        settingsRow(.appearance)
+                        settingsRow(.power)
+                    }
+                    Section("Saved work") {
+                        settingsRow(.memory)
+                        settingsRow(.research)
+                    }
+                    Section("About") {
+                        settingsRow(.information)
+                    }
+                }
+                .scrollContentBackground(.hidden)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .environment(\.colorScheme, .dark)
+    }
+
+    private func settingsRow(_ tab: Tab) -> some View {
+        Button { withAnimation(.easeInOut(duration: 0.18)) { selectedTab = tab } } label: {
+            HStack(spacing: 12) {
+                Image(systemName: tab.symbol)
+                    .frame(width: 28)
+                    .foregroundStyle(Color.conduitAccent)
+                Text(tab.title)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(tab.title)
     }
 }
 

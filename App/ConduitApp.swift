@@ -45,6 +45,9 @@ struct RootView: View {
     @State private var research = false
     @State private var page: AppPage = .chat
     @State private var sidebarOpen = false
+    @State private var sidebarPreview = false
+    @State private var previewTask: Task<Void, Never>?
+    @State private var pageDirection = 1
     @State private var showingSettings = false
     @State private var menuOpen = false
     /// Views that draw with the chosen accent colour and text size are
@@ -60,13 +63,18 @@ struct RootView: View {
             // coming back keeps the scroll position and any unsent draft.
             chatPage
                 .opacity(page == .chat ? 1 : 0)
+                .offset(y: page == .chat ? 0 : (pageDirection > 0 ? -48 : 48))
                 .allowsHitTesting(page == .chat)
                 .accessibilityHidden(page != .chat)
             if page != .chat {
                 otherPage
-                    .transition(.opacity)
+                    .id(page)
+                    .transition(.asymmetric(
+                        insertion: .move(edge: pageDirection > 0 ? .bottom : .top).combined(with: .opacity),
+                        removal: .move(edge: pageDirection > 0 ? .top : .bottom).combined(with: .opacity)
+                    ))
             }
-            SidebarOverlay(page: $page, isOpen: $sidebarOpen) {
+            SidebarOverlay(page: $page, isOpen: $sidebarOpen, isPreviewing: sidebarPreview) {
                 showingSettings = true
             }
                 .id(appearanceKey)
@@ -145,6 +153,9 @@ struct RootView: View {
         .onChange(of: research) { _, enabled in
             session?.researchEnabled = enabled
         }
+        .onChange(of: catalog.visionModels) { _, models in
+            session?.visionModelDirectory = models.first?.directory
+        }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .active:
@@ -195,6 +206,11 @@ struct RootView: View {
                             .lineLimit(1)
                     }
                     .foregroundStyle(.secondary)
+                    .padding(.horizontal, 13)
+                    .padding(.vertical, 7)
+                    .background(.black.opacity(0.32), in: .capsule)
+                    .overlay { Capsule().strokeBorder(.white.opacity(0.86), lineWidth: 0.8) }
+                    .shadow(color: .blue.opacity(0.65), radius: 10)
                     .accessibilityLabel(modelStatus)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
@@ -233,9 +249,10 @@ struct RootView: View {
         case .chat:
             EmptyView()
         case .libraries:
-            LibrariesView()
-        case .images:
-            ImagesView()
+            LibrariesView { id, question in
+                session?.submit(question, libraryPhotoID: id)
+                withAnimation { page = .chat }
+            }
         case .models:
             ModelPickerSheet(onSelect: selectFromPage, loadingState: loadingState, showsDoneButton: false)
                 .environment(catalog)
@@ -269,7 +286,18 @@ struct RootView: View {
         guard !showingSettings else { return }
         let pages = AppPage.allCases
         guard let index = pages.firstIndex(of: page) else { return }
-        withAnimation { page = pages[(index + offset + pages.count) % pages.count] }
+        pageDirection = offset
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.85)) {
+            page = pages[(index + offset + pages.count) % pages.count]
+            sidebarPreview = true
+        }
+        previewTask?.cancel()
+        previewTask = Task {
+            try? await Task.sleep(for: .milliseconds(850))
+            if !Task.isCancelled {
+                withAnimation { sidebarPreview = false }
+            }
+        }
     }
 
     private var settingsWindow: some View {

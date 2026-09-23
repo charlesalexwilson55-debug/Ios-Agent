@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 /// The Libraries page: collections of documents Conduit searches when it
 /// answers.
 struct LibrariesView: View {
+    let onAskPhoto: (UUID, String) -> Void
     @State private var store = LibraryStore.shared
     @AppStorage("conduit.libraries.layout") private var layout = "list"
     @State private var creating = false
@@ -44,7 +45,7 @@ struct LibrariesView: View {
                 }
             }
             .sheet(item: $opened) { library in
-                LibraryDetailView(libraryID: library.id)
+                LibraryDetailView(libraryID: library.id, onAskPhoto: onAskPhoto)
             }
             .task {
                 for library in store.libraries { await store.refresh(library) }
@@ -130,11 +131,19 @@ struct LibrariesView: View {
 
     private func row(_ library: Library) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: library.symbol)
-                .font(.system(size: 18))
-                .foregroundStyle(library.enabled ? Color.conduitAccent : Color.secondary)
-                .frame(width: 34, height: 34)
-                .background { RoundedRectangle(cornerRadius: 9).fill(Color.conduitAccent.opacity(0.12)) }
+            Group {
+                if let id = library.photoIDs?.last ?? library.coverImageID,
+                   let picture = ImageStore.shared.thumbnail(id, size: 120) {
+                    Image(uiImage: picture).resizable().scaledToFill()
+                } else {
+                    Image(systemName: library.symbol)
+                        .font(.system(size: 18))
+                        .foregroundStyle(library.enabled ? Color.conduitAccent : Color.secondary)
+                }
+            }
+            .frame(width: 44, height: 44)
+            .background { RoundedRectangle(cornerRadius: 10).fill(Color.conduitAccent.opacity(0.12)) }
+            .clipShape(.rect(cornerRadius: 10))
             VStack(alignment: .leading, spacing: 2) {
                 Text(library.name.isEmpty ? "Untitled" : library.name)
                     .foregroundStyle(.primary)
@@ -170,6 +179,7 @@ struct LibrariesView: View {
 /// One library: its documents, adding more, and a search to try it out.
 struct LibraryDetailView: View {
     let libraryID: UUID
+    let onAskPhoto: (UUID, String) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var store = LibraryStore.shared
@@ -183,6 +193,8 @@ struct LibraryDetailView: View {
     @State private var hits: [KnowledgeIndex.Hit] = []
     @State private var searching = false
     @State private var confirmDelete = false
+    @State private var selectedPhotoID: UUID?
+    @State private var photoQuestion = ""
 
     private var library: Library? {
         store.libraries.first { $0.id == libraryID }
@@ -245,6 +257,28 @@ struct LibraryDetailView: View {
                     + "of text. Apple Vision reads photos on this iPhone; text is indexed locally.")
             }
 
+            if let ids = library.photoIDs, !ids.isEmpty {
+                Section("Photos") {
+                    ForEach(ids.reversed(), id: \.self) { id in
+                        if let picture = ImageStore.shared.thumbnail(id, size: 160) {
+                            Button {
+                                selectedPhotoID = id
+                                photoQuestion = "What is in this photo?"
+                            } label: {
+                                HStack(spacing: 12) {
+                                    Image(uiImage: picture).resizable().scaledToFill()
+                                        .frame(width: 64, height: 64)
+                                        .clipShape(.rect(cornerRadius: 10))
+                                    Text("Ask Conduit about this photo")
+                                    Spacer()
+                                    Image(systemName: "chevron.right").foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             Section("Try a search") {
                 HStack {
                     TextField("Ask something this library covers", text: $query)
@@ -297,15 +331,16 @@ struct LibraryDetailView: View {
                         guard let data = try await photo.loadTransferable(type: Data.self) else {
                             throw TextExtractor.ExtractError.empty
                         }
-                        let text = try await TextExtractor.imageText(data)
-                        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                        guard let image = ImageStore.shared.addPhoto(data, prompt: "Imported into \(library.name)"),
+                              var updated = store.libraries.first(where: { $0.id == library.id }) else {
                             throw TextExtractor.ExtractError.empty
                         }
-                        try await store.addNote(title: "Photo \(index + 1) · \(Date().formatted(date: .abbreviated, time: .shortened))", text: text, to: library)
-                        if let image = ImageStore.shared.addPhoto(data, prompt: "Imported into \(library.name)"),
-                           var updated = store.libraries.first(where: { $0.id == library.id }), updated.coverPinned != true {
-                            updated.coverImageID = image.id
-                            store.update(updated)
+                        updated.photoIDs = (updated.photoIDs ?? []) + [image.id]
+                        if updated.coverPinned != true { updated.coverImageID = image.id }
+                        store.update(updated)
+                        if let text = try? await TextExtractor.imageText(data),
+                           !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            try await store.addNote(title: "Photo \(index + 1) · \(Date().formatted(date: .abbreviated, time: .shortened))", text: text, to: library)
                         }
                     } catch {
                         failures.append("Photo \(index + 1): \(error.localizedDescription)")
@@ -329,6 +364,20 @@ struct LibraryDetailView: View {
             }
         }
         .navigationBarTitleDisplayMode(.inline)
+        .alert("Ask about this photo", isPresented: Binding(
+            get: { selectedPhotoID != nil },
+            set: { if !$0 { selectedPhotoID = nil } }
+        )) {
+            TextField("Your question", text: $photoQuestion)
+            Button("Ask") {
+                if let id = selectedPhotoID { onAskPhoto(id, photoQuestion) }
+                selectedPhotoID = nil
+                dismiss()
+            }
+            Button("Cancel", role: .cancel) { selectedPhotoID = nil }
+        } message: {
+            Text("Conduit will read this photo with the installed image model, or Apple Vision when none is installed.")
+        }
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 Button("Done") { dismiss() }

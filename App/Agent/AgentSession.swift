@@ -166,13 +166,19 @@ final class AgentSession {
 
     // MARK: - Public entry points
 
-    func submit(_ text: String, imageData: [Data] = [], researchSelection: ResearchSelection? = nil, resume: ResearchRun? = nil) {
+    func submit(_ text: String, imageData: [Data] = [], libraryPhotoID: UUID? = nil,
+                researchSelection: ResearchSelection? = nil, resume: ResearchRun? = nil) {
         var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !imageData.isEmpty, !isWorking else { return }
         pendingResearchSelection = researchSelection
         pendingResearchRun = resume
         if trimmed.isEmpty { trimmed = "What's in this picture?" }
         pendingImageIDs = imageData.compactMap { ImageStore.shared.addPhoto($0, prompt: trimmed)?.id }
+        if pendingImageIDs.isEmpty,
+           let id = libraryPhotoID ?? LibraryStore.shared.photoID(for: trimmed),
+           ImageStore.shared.record(id: id) != nil {
+            pendingImageIDs = [id]
+        }
 
         previousReply = history.last(where: { $0.role == .assistant })?.content ?? ""
         currentRequest = trimmed

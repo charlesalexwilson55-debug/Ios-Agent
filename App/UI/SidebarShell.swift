@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The app's pages, reached from the sidebar.
 enum AppPage: String, CaseIterable, Identifiable {
-    case chat, libraries, images, models
+    case chat, libraries, models
 
     var id: String { rawValue }
 
@@ -10,7 +10,6 @@ enum AppPage: String, CaseIterable, Identifiable {
         switch self {
         case .chat: "Chat"
         case .libraries: "Libraries"
-        case .images: "Images (beta)"
         case .models: "Models"
         }
     }
@@ -19,7 +18,6 @@ enum AppPage: String, CaseIterable, Identifiable {
         switch self {
         case .chat: "bubble.left.and.bubble.right"
         case .libraries: "books.vertical"
-        case .images: "photo.on.rectangle"
         case .models: "cpu"
         }
     }
@@ -36,21 +34,25 @@ enum AppPage: String, CaseIterable, Identifiable {
 struct SidebarOverlay: View {
     @Binding var page: AppPage
     @Binding var isOpen: Bool
+    var isPreviewing = false
     let onSettings: () -> Void
+
+    @Namespace private var selectionAnimation
 
     private static let buttonSize: CGFloat = 44
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            if isOpen {
+            if isOpen || isPreviewing {
                 Color.black.opacity(0.28)
                     .ignoresSafeArea()
                     .contentShape(.rect)
                     .onTapGesture { isOpen = false }
+                    .opacity(isOpen ? 1 : 0)
                     .accessibilityHidden(true)
                     .transition(.opacity)
                 rail
-                    .padding(.top, Self.buttonSize + 12)
+                    .frame(maxHeight: .infinity, alignment: .center)
                     .transition(.move(edge: .leading).combined(with: .opacity))
             } else {
                 edgeSwipeStrip
@@ -58,7 +60,7 @@ struct SidebarOverlay: View {
             menuButton
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .animation(.spring(response: 0.34, dampingFraction: 0.86), value: isOpen)
+        .animation(.spring(response: 0.34, dampingFraction: 0.86), value: isOpen || isPreviewing)
     }
 
     private var menuButton: some View {
@@ -99,8 +101,7 @@ struct SidebarOverlay: View {
 
     private var rail: some View {
         GlassEffectContainer(spacing: 8) {
-            ScrollView(.vertical) {
-              VStack(spacing: 6) {
+            VStack(spacing: 6) {
                 ForEach(AppPage.allCases) { item in
                     railButton(item)
                 }
@@ -115,10 +116,7 @@ struct SidebarOverlay: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Settings")
-              }
             }
-            .scrollIndicators(.hidden)
-            .frame(maxHeight: 570)
             .padding(6)
             .glassEffect(.regular, in: .rect(cornerRadius: 22))
         }
@@ -148,9 +146,11 @@ struct SidebarOverlay: View {
                     if selected {
                         RoundedRectangle(cornerRadius: 14)
                             .fill(Color.conduitAccent.opacity(0.18))
+                            .matchedGeometryEffect(id: "page-selection", in: selectionAnimation)
                     }
                 }
                 .contentShape(.rect)
+                .symbolEffect(.bounce, value: selected)
         }
         .buttonStyle(.plain)
         .foregroundStyle(selected ? Color.conduitAccent : Color.primary)

@@ -11,6 +11,8 @@ struct Library: Identifiable, Codable, Hashable {
     var created = Date()
     /// A locally stored gallery photo used on the grid card.
     var coverImageID: UUID?
+    /// Gallery photos kept for visual questions. Optional for older saved libraries.
+    var photoIDs: [UUID]?
     /// nil on older libraries; true when the user picked a cover explicitly.
     var coverPinned: Bool?
 
@@ -53,6 +55,22 @@ final class LibraryStore {
     /// Collections chats may search.
     var enabledCollections: Set<String> {
         Set(libraries.filter(\.enabled).map(\.collection))
+    }
+
+    /// Attach a library photo only when the request identifies a library or
+    /// explicitly asks about the latest photo. Never guess between libraries.
+    func photoID(for request: String) -> UUID? {
+        let text = request.lowercased()
+        guard ["photo", "picture", "image"].contains(where: { text.contains($0) }) else { return nil }
+        let matches = libraries.filter {
+            !$0.name.isEmpty && text.contains($0.name.lowercased()) && !($0.photoIDs ?? []).isEmpty
+        }
+        if matches.count == 1 { return matches[0].photoIDs?.last }
+        guard matches.isEmpty,
+              ["latest photo", "last photo", "most recent photo", "latest picture", "last picture"]
+                .contains(where: { text.contains($0) }) else { return nil }
+        let photos = libraries.flatMap { $0.photoIDs ?? [] }
+        return ImageStore.shared.images.first(where: { photos.contains($0.id) })?.id
     }
 
     func name(ofCollection collection: String) -> String? {
