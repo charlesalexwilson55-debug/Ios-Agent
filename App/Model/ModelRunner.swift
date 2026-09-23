@@ -70,6 +70,15 @@ actor ModelRunner {
 
     var isLoaded: Bool { container != nil }
 
+    struct Configuration: Sendable {
+        let directory: URL
+        let name: String
+        let adapter: URL?
+    }
+    func configuration() -> Configuration? {
+        lastLoad.map { Configuration(directory: $0.directory, name: $0.name, adapter: $0.adapter) }
+    }
+
     // MARK: - Memory policy
     //
     // The crash on long or difficult answers is iOS terminating the app for

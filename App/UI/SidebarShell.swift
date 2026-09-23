@@ -2,13 +2,14 @@ import SwiftUI
 
 /// The app's pages, reached from the sidebar.
 enum AppPage: String, CaseIterable, Identifiable {
-    case chat, libraries, memory, images, personalities, directions, online, models, capabilities, settings
+    case chat, research, libraries, memory, images, personalities, directions, online, models, capabilities, settings
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .chat: "Chat"
+        case .research: "Research"
         case .libraries: "Libraries"
         case .memory: "Memory"
         case .images: "Images (beta)"
@@ -24,6 +25,7 @@ enum AppPage: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .chat: "bubble.left.and.bubble.right"
+        case .research: "point.3.connected.trianglepath.dotted"
         case .libraries: "books.vertical"
         case .memory: "brain.head.profile"
         case .images: "photo.on.rectangle"
@@ -110,11 +112,15 @@ struct SidebarOverlay: View {
 
     private var rail: some View {
         GlassEffectContainer(spacing: 8) {
-            VStack(spacing: 6) {
+            ScrollView(.vertical) {
+              VStack(spacing: 6) {
                 ForEach(AppPage.allCases) { item in
                     railButton(item)
                 }
+              }
             }
+            .scrollIndicators(.hidden)
+            .frame(maxHeight: 570)
             .padding(6)
             .glassEffect(.regular, in: .rect(cornerRadius: 22))
         }

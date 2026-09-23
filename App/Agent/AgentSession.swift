@@ -101,6 +101,9 @@ final class AgentSession {
     /// Pictures attached to the message being answered.
     private var pendingImageIDs: [UUID] = []
     private var pendingResearchSelection: ResearchSelection?
+    private var pendingResearchRun: ResearchRun?
+    @ObservationIgnored private var researchOriginalModel: ModelRunner.Configuration?
+    @ObservationIgnored private var unavailableResearchModels: Set<String> = []
 
     /// The saved chat this conversation is recorded under. A new one starts
     /// with each new conversation.
@@ -153,10 +156,11 @@ final class AgentSession {
 
     // MARK: - Public entry points
 
-    func submit(_ text: String, imageData: [Data] = [], researchSelection: ResearchSelection? = nil) {
+    func submit(_ text: String, imageData: [Data] = [], researchSelection: ResearchSelection? = nil, resume: ResearchRun? = nil) {
         var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !imageData.isEmpty, !isWorking else { return }
         pendingResearchSelection = researchSelection
+        pendingResearchRun = resume
         if trimmed.isEmpty { trimmed = "What's in this picture?" }
         pendingImageIDs = imageData.compactMap { ImageStore.shared.addPhoto($0, prompt: trimmed)?.id }
 
@@ -184,6 +188,11 @@ final class AgentSession {
                researchSelection: ResearchSelection(request: request, candidate: candidate))
     }
 
+    func resumeResearch(_ run: ResearchRun) {
+        guard run.canResume, !isWorking else { return }
+        submit(run.request, resume: run)
+    }
+
     /// Stops the current turn.
     ///
     /// Note what this can and cannot do: it stops generation and prevents
@@ -193,7 +202,10 @@ final class AgentSession {
     func cancel() {
         task?.cancel()
         task = nil
-        isWorking = false
+        // Research may still be draining GPU work and restoring the chat model.
+        // Keep submit disabled until its task exits so another turn cannot load
+        // weights concurrently with that restoration.
+        if activeReporter == nil { isWorking = false }
         if let index = transcript.indices.last, transcript[index].isStreaming {
             transcript[index].isStreaming = false
             if transcript[index].text.isEmpty {
@@ -297,8 +309,10 @@ final class AgentSession {
         let level = auto?.level ?? workLevel
         let selection = pendingResearchSelection
         pendingResearchSelection = nil
-        if researchEnabled || auto?.research == true || selection != nil {
-            await runResearch(level: level, selection: selection)
+        let resume = pendingResearchRun
+        pendingResearchRun = nil
+        if researchEnabled || auto?.research == true || selection != nil || resume != nil {
+            await runResearch(level: level, selection: selection, resume: resume)
             return
         }
 
@@ -499,8 +513,8 @@ final class AgentSession {
 
     /// Follows the request across the web with `ResearchEngine`, showing its
     /// steps as they happen, then writes up what was found.
-    private func runResearch(level: WorkLevel, selection: ResearchSelection? = nil) async {
-        let request = selection?.request ?? currentRequest
+    private func runResearch(level: WorkLevel, selection: ResearchSelection? = nil, resume: ResearchRun? = nil) async {
+        let request = resume?.request ?? selection?.request ?? currentRequest
         lastTurnUsedPhoneTools = false
         guard onlineEnabled, Connectivity.shared.isOnline else {
             let text = onlineEnabled
@@ -534,6 +548,15 @@ final class AgentSession {
         activeReporter = (entryID, reporter)
         defer { activeReporter = nil }
 
+        let store: ResearchStore
+        do { store = try ResearchStore.open() }
+        catch {
+            transcript.append(TranscriptEntry(kind: .error, text: error.localizedDescription))
+            return
+        }
+        researchOriginalModel = await runner.configuration()
+        unavailableResearchModels = []
+
         let engine = ResearchEngine(
             request: request,
             budget: level.researchBudget,
@@ -542,13 +565,17 @@ final class AgentSession {
                 return try await self.ask(system: system, user: user)
             },
             activity: reporter,
-            selection: selection?.candidate
+            selection: selection?.candidate,
+            extract: { try await WebSearch.extract($0) },
+            store: store,
+            resume: resume
         )
 
         let findings: ResearchEngine.Findings
         do {
             findings = try await engine.run()
         } catch {
+            await restoreResearchModel()
             if Task.isCancelled || error is CancellationError {
                 reporter.finish(reporter.begin("Research stopped"), .stopped)
                 return
@@ -557,6 +584,7 @@ final class AgentSession {
             transcript.append(TranscriptEntry(kind: .error, text: error.localizedDescription))
             return
         }
+        await restoreResearchModel()
         readWebContent = true
         Diagnostics.log("research searches=\(findings.searches) pages=\(findings.pagesChecked) "
             + "matched=\(findings.pagesMatched) facts=\(findings.facts.count)")
@@ -581,63 +609,29 @@ final class AgentSession {
             return
         }
 
-        await waitUntilForeground()
-        if Task.isCancelled { return }
-        let writing = reporter.begin("Writing answer",
-                                     detail: "From \(findings.facts.count) details on \(Set(findings.facts.map { $0.url }).count) sources")
-        let messages: [ModelRunner.Message] = [
-            .system(ResearchEngine.reportPrompt),
-            .user(ResearchEngine.reportInput(request: request, findings: findings)),
-        ]
-        let entryIndex = transcript.count
-        transcript.append(TranscriptEntry(kind: .assistant, text: "", isStreaming: true))
-        var replyText = ""
-        isGenerating = true
-        do {
-            for try await event in runner.stream(messages: messages, tools: [], thinking: false) {
-                if case .text(let chunk) = event {
-                    replyText += chunk
-                    if transcript.indices.contains(entryIndex) {
-                        transcript[entryIndex].text = replyText
-                    }
-                }
-            }
-        } catch {
-            isGenerating = false
-            if Task.isCancelled || error is CancellationError {
-                reporter.finish(writing, .stopped)
-                finishStreaming(at: entryIndex, text: replyText.isEmpty ? "Stopped." : replyText)
-                return
-            }
-            // Generation is optional presentation work: never discard retrieved
-            // evidence because a local model cannot format a summary.
-            replyText = "The local model could not compose the summary. Source excerpts:\n\n"
-                + findings.facts.map { "- \($0.text) [\($0.site)](\($0.url.absoluteString))" }.joined(separator: "\n")
-            reporter.setDetail(writing, "Showing source excerpts; model summary unavailable")
+        let writing = reporter.begin("Writing evidence report", detail: "Keeping each source profile and its quotations separate")
+        var replyText = findings.run?.graph.report() ?? findings.facts.map { "- \($0.text) [\($0.site)](\($0.url.absoluteString))" }.joined(separator: "\n")
+        replyText += "\n\n" + findings.identitySummary + "\n" + findings.stopReason
+        if findings.combinationsSkipped > 0 || findings.pagesSkipped > 0 {
+            replyText += "\nBudget omitted \(findings.combinationsSkipped) queries and \(findings.pagesSkipped) discovered pages."
         }
-        isGenerating = false
-        if Task.isCancelled {
-            reporter.finish(writing, .stopped)
-            if !replyText.isEmpty {
-                finishStreaming(at: entryIndex, text: replyText)
-                history.append(.assistant(replyText))
-            }
-            return
-        }
-        if replyText.isEmpty {
-            // Fall back to the notes themselves rather than an empty bubble.
-            replyText = findings.facts.map { "- \($0.text) [\($0.site)](\($0.url.absoluteString))" }.joined(separator: "\n")
-        }
-        // Always retain the evidence and scope outside the generated prose,
-        // even if a small model omits them from its answer.
-        var seenSources = Set<URL>()
-        let sources = findings.facts.filter { seenSources.insert($0.url).inserted }
-            .map { "[\($0.site)](\($0.url.absoluteString))" }.joined(separator: ", ")
-        replyText += "\n\n" + findings.identitySummary + "\nSources: " + sources
         if !findings.limitations.isEmpty { replyText += "\nSearch limitations: " + findings.limitations.joined(separator: " ") }
+        replyText += "\n\nSources, dates, relationships and search history are saved in Sidebar → Research."
         reporter.finish(writing)
-        finishStreaming(at: entryIndex, text: replyText)
+        transcript.append(TranscriptEntry(kind: .assistant, text: replyText))
         history.append(.assistant(replyText))
+    }
+
+    private func restoreResearchModel() async {
+        guard let original = researchOriginalModel else { return }
+        researchOriginalModel = nil
+        // Finish restoring even if the research task was cancelled. Never leave
+        // catalog selection pointing at a different resident model silently.
+        let restore = Task { @MainActor in
+            do { try await self.runner.load(directory: original.directory, displayName: original.name, adapterDirectory: original.adapter) }
+            catch { self.transcript.append(TranscriptEntry(kind: .error, text: "The chat model could not be restored. Select it in Models. " + error.localizedDescription)) }
+        }
+        await restore.value
     }
 
     // MARK: - Pictures
@@ -913,6 +907,20 @@ final class AgentSession {
         await waitUntilForeground()
         try Task.checkCancellation()
         let runner = self.runner
+        if let original = researchOriginalModel {
+            let role = system == ResearchCoordinator.extractionPrompt ? "extractorModel" : "plannerModel"
+            let path = UserDefaults.standard.string(forKey: "conduit.research." + role) ?? ""
+            let target = path.isEmpty || unavailableResearchModels.contains(path) ? original.directory : URL(fileURLWithPath: path)
+            do {
+                try await runner.load(directory: target, displayName: target == original.directory ? original.name : target.lastPathComponent,
+                                      adapterDirectory: target == original.directory ? original.adapter : nil)
+            } catch {
+                try Task.checkCancellation()
+                unavailableResearchModels.insert(path)
+                transcript.append(TranscriptEntry(kind: .assistant, text: "The optional research model could not be loaded; using the chat model. " + error.localizedDescription))
+                try await runner.load(directory: original.directory, displayName: original.name, adapterDirectory: original.adapter)
+            }
+        }
         let task = Task { @MainActor () throws -> String in
             self.isGenerating = true
             defer { self.isGenerating = false }
@@ -922,7 +930,7 @@ final class AgentSession {
                 messages: [.system(system), .user(user)],
                 tools: [],
                 thinking: false,
-                sampling: .extraction(maxTokens: 320)
+                sampling: .extraction(maxTokens: system == ResearchCoordinator.extractionPrompt ? 640 : 320)
             ) {
                 if case .text(let chunk) = event { text += chunk }
                 if case .reasoning(let chunk) = event { reasoningCharacters += chunk.count }

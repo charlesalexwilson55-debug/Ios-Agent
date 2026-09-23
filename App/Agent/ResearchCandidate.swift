@@ -1,8 +1,8 @@
 import Foundation
 
 /// A source to inspect, never an automatic assertion about a person's identity.
-struct ResearchCandidate: Identifiable, Sendable {
-    enum Status: String, Sendable { case possible, supported, conflicting, unreadable }
+struct ResearchCandidate: Identifiable, Codable, Sendable {
+    enum Status: String, Codable, Sendable { case possible, supported, conflicting, unreadable }
     var id: String { url.absoluteString }
     let title: String
     let url: URL

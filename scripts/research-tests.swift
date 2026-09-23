@@ -1,30 +1,5 @@
 import Foundation
 
-// Platform-only dependencies are replaced; the real research engine, provider,
-// ranking and evidence rules are compiled and exercised below on macOS CI.
-enum SearchKeyStore {
-    static var key: String? = "test-placeholder"
-    static var hasKey: Bool { key != nil }
-}
-@MainActor enum PageReader {
-    struct Page { let text: String }
-    static func read(_ url: URL) async throws -> Page { throw URLError(.cannotLoadFromNetwork) }
-}
-final class SearchFixtureProtocol: URLProtocol {
-    static var status = 200
-    static var payload = "{\"results\":[]}"
-    static var requests: [URLRequest] = []
-    override class func canInit(with request: URLRequest) -> Bool { true }
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-    override func startLoading() {
-        Self.requests.append(request)
-        client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: Self.status, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: Data(Self.payload.utf8))
-        client?.urlProtocolDidFinishLoading(self)
-    }
-    override func stopLoading() {}
-}
-
 @main struct ResearchTests {
     @MainActor static func main() async throws {
         let request = "Research Jane Example, doctor in Melbourne at Harbour Clinic"
@@ -188,6 +163,34 @@ final class SearchFixtureProtocol: URLProtocol {
         let unavailable = ResearchEngine(request: request, budget: .normal, ask: { _, _ in profile }, activity: reporter, search: { _ in throw WebSearch.SearchError.http(429) })
         let failed = try await unavailable.run()
         precondition(!failed.limitations.isEmpty && failed.facts.isEmpty, "Retain provider failure, not person-not-found")
+        var cappedBudget = ResearchEngine.Budget.normal
+        cappedBudget.rounds = 1
+        let capped = ResearchEngine(request: request, budget: cappedBudget, ask: { system, _ in
+            system == ResearchEngine.keywordPrompt ? profile : "SAME: yes\nEVIDENCE: \(sentence)"
+        }, activity: reporter, search: { _ in WebSearch.Response(provider: .tavily, results: [source]) })
+        let cappedFindings = try await capped.run()
+        precondition(cappedFindings.run?.round == 1 && cappedFindings.stopReason.contains("round budget"))
+        precondition(cappedFindings.run?.completed == true)
+
+        var resumeState = ResearchRun(request: request, budget: .normal)
+        resumeState.plan = plan
+        resumeState.stage = .extracting
+        resumeState.searches = 2
+        resumeState.usedQueries = [ResearchPlan.normalized("\"Jane Example\" Melbourne")]
+        resumeState.pendingSources = [.init(title: source.title, url: source.url, summary: sentence, published: nil, text: source.rawContent, provider: "fixture")]
+        var resumeBudget = ResearchEngine.Budget.normal
+        resumeBudget.rounds = 1
+        resumeState.budget = resumeBudget
+        let resumed = ResearchEngine(request: request, budget: .normal, ask: { _, _ in "SAME: yes\nEVIDENCE: \(sentence)" }, activity: reporter,
+            search: { _ in preconditionFailure("An extraction checkpoint must not repeat discovery") }, resume: resumeState)
+        let resumedFindings = try await resumed.run()
+        precondition(resumedFindings.searches == 2 && resumedFindings.facts.count == 1)
+        var tinyBudget = ResearchEngine.Budget.normal
+        tinyBudget.seconds = 0
+        let timed = ResearchEngine(request: request, budget: tinyBudget, ask: { _, _ in preconditionFailure("No model work after deadline") }, activity: reporter,
+            search: { _ in preconditionFailure("No search after deadline") })
+        let timedFindings = try await timed.run()
+        precondition(timedFindings.stopReason.contains("active-time budget"))
         print("Research engine fixture regression tests passed")
     }
 }

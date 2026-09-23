@@ -3,7 +3,7 @@ import Foundation
 /// Deterministic query and evidence rules surrounding the small local model.
 /// Matching is deliberately conservative: a name or a common occupation alone
 /// is a lead, not proof that two profiles describe the same person.
-struct ResearchPlan {
+struct ResearchPlan: Codable, Sendable {
     let subject: String?
     let keywords: [String]
     let request: String

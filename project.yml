@@ -29,6 +29,7 @@ targets:
     sources:
       - path: App
     dependencies:
+      - sdk: libsqlite3.tbd
       - package: MLXLM
         product: MLXLLM
       - package: MLXLM

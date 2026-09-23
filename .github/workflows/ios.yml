@@ -68,11 +68,16 @@ jobs:
           set -o pipefail
           mkdir -p artifacts build
           {
-            xcrun swiftc -swift-version 5 -parse-as-library \
-              App/Agent/ResearchPlan.swift App/Agent/ResearchPlanner.swift App/Agent/ResearchCandidate.swift \
-              App/Agent/ResearchEngine.swift App/Agent/Activity.swift \
-              App/Web/WebSearch.swift scripts/research-tests.swift -o artifacts/research-tests \
-              && artifacts/research-tests
+            sources=(App/Agent/ResearchPlan.swift App/Agent/ResearchPlanner.swift App/Agent/ResearchCandidate.swift
+              App/Agent/ResearchEngine.swift App/Agent/ResearchCoordinator.swift App/Agent/ResearchGraph.swift
+              App/Agent/ResearchRun.swift App/Agent/ResearchStore.swift App/Agent/Activity.swift
+              App/Web/WebSearch.swift scripts/research-test-support.swift)
+            xcrun swiftc -swift-version 5 -parse-as-library "${sources[@]}" scripts/research-tests.swift -o artifacts/research-tests
+            artifacts/research-tests
+            xcrun swiftc -swift-version 5 -parse-as-library "${sources[@]}" scripts/graph-tests.swift -o artifacts/graph-tests
+            artifacts/graph-tests
+            xcrun swiftc -swift-version 5 -parse-as-library App/Web/WebSearch.swift scripts/provider-tests.swift -o artifacts/provider-tests
+            artifacts/provider-tests
           } 2>&1 | tee build/xcodebuild.log
           bash scripts/build-ios.sh
 

@@ -241,6 +241,11 @@ struct RootView: View {
             EmptyView()
         case .libraries:
             LibrariesView()
+        case .research:
+            ResearchArchiveView(isWorking: session?.isWorking ?? false, canResume: isReady) { run in
+                session?.resumeResearch(run)
+                page = .chat
+            }.environment(catalog)
         case .memory:
             MemoryView()
         case .images:
