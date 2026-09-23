@@ -20,6 +20,8 @@ struct OnlineSettingsView: View {
                 }
 
                 Section {
+                    Label(hasKey ? "Full-web research configured" : "Full-web research needs a key",
+                          systemImage: hasKey ? "globe" : "exclamationmark.magnifyingglass")
                     if hasKey {
                         Label("Web search key saved", systemImage: "checkmark.seal.fill")
                             .foregroundStyle(.green)
@@ -60,10 +62,11 @@ struct OnlineSettingsView: View {
                     Text("Web search")
                 } footer: {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Without a key, Conduit searches Wikipedia only, which is fine for "
-                            + "general knowledge but has no news, prices or local results.")
-                        Text("A free Tavily account gives 1,000 full web searches a month with no "
-                            + "card: sign up, copy your API key (it starts with tvly-) and paste it above.")
+                        Text("General questions can use Wikipedia without a key. Research requires "
+                            + "Tavily to search professional directories, clinics, employers and the wider web. "
+                            + "It stops and explains the problem if the key is missing, rejected or out of quota.")
+                        Text("Paste your Tavily API key above. Research uses advanced searches, which "
+                            + "consume more search credits than ordinary questions. Check your provider's allowance.")
                         if let signUp = URL(string: "https://app.tavily.com") {
                             Link("Open tavily.com", destination: signUp)
                         }
@@ -102,7 +105,7 @@ struct OnlineSettingsView: View {
         testResult = nil
         Task {
             do {
-                let response = try await WebSearch.search("weather forecast")
+                let response = try await WebSearch.research("medical practitioner hospital directory")
                 if let limitation = response.limitation {
                     testResult = "Not working: " + limitation
                 } else {

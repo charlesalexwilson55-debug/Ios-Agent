@@ -113,9 +113,11 @@ private struct AssistantText: View {
     let accent: Color
     let onShowDraft: (Int) -> Void
 
+    @AppStorage(Appearance.showReasoningKey) private var showReasoning = true
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if !entry.reasoning.isEmpty {
+            if showReasoning && !entry.reasoning.isEmpty {
                 ReasoningView(reasoning: entry.reasoning,
                               isThinking: entry.isStreaming && entry.text.isEmpty && entry.draftTarget == 0)
             }

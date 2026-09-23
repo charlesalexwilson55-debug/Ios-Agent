@@ -64,7 +64,13 @@ jobs:
 
       - name: Build IPA
         id: build
-        run: bash scripts/build-ios.sh
+        run: |
+          mkdir -p artifacts
+          xcrun swiftc -swift-version 5 -parse-as-library \
+            App/Agent/ResearchPlan.swift App/Agent/ResearchEngine.swift App/Agent/Activity.swift \
+            App/Web/WebSearch.swift scripts/research-tests.swift -o artifacts/research-tests
+          artifacts/research-tests
+          bash scripts/build-ios.sh
 
       - uses: actions/upload-artifact@v4
         with:

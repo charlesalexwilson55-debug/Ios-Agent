@@ -9,6 +9,7 @@ enum Appearance {
     static let accentKey = "conduit.appearance.accent"
     static let backdropKey = "conduit.appearance.backdrop"
     static let textSizeKey = "conduit.appearance.textSize"
+    static let showReasoningKey = "conduit.appearance.showReasoning"
 
     enum Theme: String, CaseIterable, Identifiable {
         case system, light, dark
@@ -127,6 +128,7 @@ struct AppearanceSettingsView: View {
     @AppStorage(Appearance.accentKey) private var accentHex = ""
     @AppStorage(Appearance.backdropKey) private var backdrop = Appearance.Backdrop.aurora.rawValue
     @AppStorage(Appearance.textSizeKey) private var textSize = Appearance.TextSize.standard.rawValue
+    @AppStorage(Appearance.showReasoningKey) private var showReasoning = true
     @AppStorage(VolumeKeys.enabledKey) private var volumeKeys = true
     @Environment(\.colorScheme) private var colorScheme
 
@@ -189,6 +191,15 @@ struct AppearanceSettingsView: View {
             }
 
             Section {
+                Toggle("Show thinking", isOn: $showReasoning)
+            } header: {
+                Text("Reasoning")
+            } footer: {
+                Text("Controls whether thinking appears in the conversation. Models can still think when it "
+                    + "is hidden.")
+            }
+
+            Section {
                 Toggle("Volume buttons open the menu", isOn: $volumeKeys)
                     .onChange(of: volumeKeys) { _, on in
                         if on { VolumeKeys.shared.start() } else { VolumeKeys.shared.stop() }
@@ -207,6 +218,7 @@ struct AppearanceSettingsView: View {
                     accentHex = ""
                     backdrop = Appearance.Backdrop.aurora.rawValue
                     textSize = Appearance.TextSize.standard.rawValue
+                    showReasoning = true
                 }
             }
         }

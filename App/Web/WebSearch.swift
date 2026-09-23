@@ -12,15 +12,16 @@ enum WebSearch {
         case tavily, wikipedia
     }
 
-    struct Result {
+    struct Result: Sendable {
         let title: String
         let url: URL
         let site: String
         let summary: String
         let published: String?
+        var rawContent: String? = nil
     }
 
-    struct Response {
+    struct Response: Sendable {
         let provider: Provider
         let results: [Result]
         var answer: String?
@@ -30,9 +31,13 @@ enum WebSearch {
     enum SearchError: LocalizedError {
         case http(Int)
         case badResponse
+        case researchNeedsKey
 
         var errorDescription: String? {
             switch self {
+            case .researchNeedsKey: "Research needs a working full-web search key. Add your Tavily key in Sidebar → Online. Wikipedia alone cannot perform this research."
+            case .http(401): "The web search key was rejected. Replace it in Sidebar → Online."
+            case .http(429), .http(432), .http(433): "The web search provider's rate or usage limit was reached. Research stopped; this does not mean the person was not found."
             case .http(let status): "the search service answered with error \(status)."
             case .badResponse: "the search service sent something unreadable."
             }
@@ -55,10 +60,18 @@ enum WebSearch {
         do {
             return try await tavily(query, key: key)
         } catch {
+            try Task.checkCancellation()
             var response = try await wikipedia(query)
             response.limitation = tavilyProblem(error)
             return response
         }
+    }
+
+    /// Research must never silently degrade into an encyclopedia-only search.
+    static func research(_ query: String, session: URLSession = .shared) async throws -> Response {
+        try Task.checkCancellation()
+        guard let key = SearchKeyStore.key else { throw SearchError.researchNeedsKey }
+        return try await tavily(query, key: key, research: true, session: session)
     }
 
     private static func tavilyProblem(_ error: Error) -> String {
@@ -79,7 +92,7 @@ enum WebSearch {
 
     // MARK: - Tavily
 
-    private static func tavily(_ query: String, key: String) async throws -> Response {
+    private static func tavily(_ query: String, key: String, research: Bool = false, session: URLSession = .shared) async throws -> Response {
         guard let endpoint = URL(string: "https://api.tavily.com/search") else {
             throw SearchError.badResponse
         }
@@ -89,22 +102,24 @@ enum WebSearch {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let body: [String: Any] = [
             "query": query,
-            "search_depth": "basic",
-            "max_results": 5,
-            "include_answer": true,
+            "search_depth": research ? "advanced" : "basic",
+            "max_results": research ? 8 : 5,
+            "include_answer": !research,
+            "include_raw_content": research,
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let json = try await fetchJSON(request)
-        let items = json["results"] as? [[String: Any]] ?? []
+        let json = try await fetchJSON(request, session: session)
+        guard let items = json["results"] as? [[String: Any]] else { throw SearchError.badResponse }
         let results: [Result] = items.compactMap { item in
             guard let link = item["url"] as? String, let url = URL(string: link) else { return nil }
             return Result(
                 title: HTMLText.plain(item["title"] as? String ?? link),
                 url: url,
                 site: site(of: url),
-                summary: clip(HTMLText.plain(item["content"] as? String ?? "")),
-                published: shortDate(item["published_date"] as? String)
+                summary: research ? String(HTMLText.plain(item["content"] as? String ?? "").prefix(1800)) : clip(HTMLText.plain(item["content"] as? String ?? "")),
+                published: shortDate(item["published_date"] as? String),
+                rawContent: (item["raw_content"] as? String).map { String($0.prefix(60_000)) }
             )
         }
         var response = Response(provider: .tavily, results: results)
@@ -170,8 +185,8 @@ enum WebSearch {
 
     // MARK: - Helpers
 
-    private static func fetchJSON(_ request: URLRequest) async throws -> [String: Any] {
-        let (data, response) = try await URLSession.shared.data(for: request)
+    private static func fetchJSON(_ request: URLRequest, session: URLSession = .shared) async throws -> [String: Any] {
+        let (data, response) = try await session.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else { throw SearchError.http(status) }
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {

@@ -9,10 +9,8 @@ import Foundation
 /// for each page, is this the same subject, what does it add, and what should
 /// be searched next.
 ///
-/// 1. Pick out the request's keywords and search for all of them together,
-///    then every smaller combination, down to each keyword alone.
-/// 2. Check every page those searches return. Each one about the subject
-///    adds its details.
+/// 1. Keep the subject's name in searches and prioritize professional sources.
+/// 2. Check readable pages for quoted identity evidence before adding details.
 /// 3. The new details become two new searches. Each reads results until one
 ///    matches, or gives up after a few.
 /// 4. Both searches matched: their details become the next two searches.
@@ -25,6 +23,8 @@ final class ResearchEngine {
     struct Fact {
         let text: String
         let site: String
+        let url: URL
+        let evidence: String
     }
 
     struct Findings {
@@ -41,6 +41,8 @@ final class ResearchEngine {
         let disagreements: [String]
         /// Why the search stopped, in words for the report.
         let stopReason: String
+        let limitations: [String]
+        let identitySummary: String
     }
 
     /// How much one run may do. Each search uses one of Tavily's 1,000 free
@@ -59,6 +61,7 @@ final class ResearchEngine {
     /// Runs one short, tool-free generation. Supplied by `AgentSession`,
     /// which owns the foreground and memory rules around the model.
     typealias Ask = @MainActor (_ system: String, _ user: String) async throws -> String
+    typealias Search = @Sendable (String) async throws -> WebSearch.Response
 
     enum Limits {
         static let maxKeywords = 5
@@ -86,6 +89,8 @@ final class ResearchEngine {
         var same = false
         var facts: [String] = []
         var searches: [String] = []
+        var evidence: [String] = []
+        var contradiction: String?
     }
 
     struct Conflict {
@@ -93,10 +98,18 @@ final class ResearchEngine {
         var search: String?
     }
 
+    enum PlanningError: LocalizedError {
+        case unclearSubject
+        var errorDescription: String? {
+            "I couldn't reliably identify the research subject. Include the full name and a distinguishing city or employer. No identity match has been made."
+        }
+    }
+
     private let request: String
     private let budget: Budget
     private let ask: Ask
     private let activity: ActivityReporter
+    private let search: Search
 
     private var facts: [Fact] = []
     private var factKeys: Set<String> = []
@@ -109,15 +122,24 @@ final class ResearchEngine {
     private var pagesMatched = 0
     private var combinationsSkipped = 0
     private var pagesSkipped = 0
+    private var plan: ResearchPlan?
+    private var limitations: [String] = []
+    private var possibleMatches = 0
+    private var matchedHosts: Set<String> = []
+    private var matchedClues: Set<String> = []
+    private var searchUnavailable = false
 
-    init(request: String, budget: Budget, ask: @escaping Ask, activity: ActivityReporter) {
+    init(request: String, budget: Budget, ask: @escaping Ask, activity: ActivityReporter,
+         search: @escaping Search = { try await WebSearch.research($0) }) {
         self.request = request
         self.budget = budget
         self.ask = ask
         self.activity = activity
+        self.search = search
     }
 
     func run() async throws -> Findings {
+        guard SearchKeyStore.hasKey else { throw WebSearch.SearchError.researchNeedsKey }
         let leads = try await firstStep()
         guard !leads.isEmpty else {
             return findings(pagesChecked == 0
@@ -140,17 +162,16 @@ final class ResearchEngine {
 
     // MARK: - The first step
 
-    /// Searches every combination of the keywords and checks every page that
-    /// comes back. Returns the pages that were about the subject.
+    /// Executes focused discovery, then reads the highest relevance pages.
     private func firstStep() async throws -> [Match] {
-        let plan = activity.begin("Planning", detail: "Picking out keywords")
+        let planningStep = activity.begin("Planning", detail: "Identifying the subject and relevant sources")
         keywords = try await pickKeywords()
-        let combinations = Self.combinations(of: keywords)
+        let combinations = plan?.queries ?? Self.combinations(of: keywords)
         let queries = Array(combinations.prefix(budget.firstStepSearches))
         combinationsSkipped = combinations.count - queries.count
         var planned = "Keywords: \(keywords.joined(separator: ", ")) \u{00B7} \(queries.count) searches"
         if combinationsSkipped > 0 { planned += ", \(combinationsSkipped) combinations left out" }
-        activity.finish(plan, detail: planned)
+        activity.finish(planningStep, detail: planned)
         try Task.checkCancellation()
 
         let searchStep = activity.begin(
@@ -174,6 +195,7 @@ final class ResearchEngine {
                 }
             }
         }
+        queue = ranked(queue)
         let pages = Array(queue.prefix(budget.firstStepPages))
         pagesSkipped = queue.count - pages.count
         guard !pages.isEmpty else { return [] }
@@ -222,58 +244,82 @@ final class ResearchEngine {
     /// The request's keywords, from the model, checked against the request.
     /// Falls back to picking them out in code.
     private func pickKeywords() async throws -> [String] {
-        var reply = ""
-        do {
-            reply = try await ask(Self.keywordPrompt, request)
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch {
-            reply = ""
-        }
+        let reply = try await ask(Self.keywordPrompt, request)
         let picked = Self.parseKeywords(reply, request: request)
-        return picked.isEmpty ? Self.fallbackKeywords(from: request) : picked
+        let chosen = picked.isEmpty ? Self.fallbackKeywords(from: request) : picked
+        let lines = reply.components(separatedBy: .newlines).map(Self.cleaned)
+        let subject = lines.first {
+            $0.uppercased().hasPrefix("NAME:")
+        }.map { String($0.dropFirst(5)).trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "\"'"))) }
+        guard let subject, !subject.isEmpty else { throw PlanningError.unclearSubject }
+        let clues = lines.compactMap { line -> String? in
+            guard let colon = line.firstIndex(of: ":") else { return nil }
+            let label = line[..<colon].trimmingCharacters(in: .whitespaces).uppercased()
+            guard ["LOCATION", "ORGANISATION"].contains(label) else { return nil }
+            return String(line[line.index(after: colon)...]).trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "\"'")))
+        }
+        let proposed = ResearchPlan(request: request, subject: subject, keywords: chosen, identityClues: clues)
+        guard subject.lowercased() == "none" || proposed.subject != nil else { throw PlanningError.unclearSubject }
+        plan = proposed
+        return chosen
     }
 
     /// Runs the searches a few at a time and returns their results in the
     /// order of `queries`. A failed search counts as no results.
     private func searchAll(_ queries: [String], step: UUID) async -> [[WebSearch.Result]] {
-        searches += queries.count
-        for query in queries { usedQueries.insert(Self.key(query)) }
         let items = queries.map { activity.addItem(step, $0, subtitle: "Waiting") }
         let width = Limits.parallelSearches
+        let search = self.search
         // The group's body is not on the main actor, so progress goes through
         // the small helpers below.
-        return await withTaskGroup(of: (Int, [WebSearch.Result]).self) { group in
+        return await withTaskGroup(of: (Int, [WebSearch.Result], String?).self) { group in
             var lists = Array(repeating: [WebSearch.Result](), count: queries.count)
             for (index, query) in queries.enumerated() {
                 if await self.searchStopped(step) { break }
                 if index >= width, let done = await group.next() {
                     lists[done.0] = done.1
-                    await self.markSearched(items[done.0], results: done.1.count)
+                    await self.markSearched(items[done.0], results: done.1.count, failure: done.2)
                 }
+                if await self.searchStopped(step) { break }
+                await self.countSearch(query)
                 await self.markSearching(items[index])
                 group.addTask {
-                    let results = (try? await WebSearch.search(query))?.results ?? []
-                    return (index, results)
+                    do {
+                        let response = try await search(query)
+                        return (index, response.results, nil)
+                    } catch {
+                        return (index, [], error.localizedDescription)
+                    }
                 }
             }
             for await done in group {
                 lists[done.0] = done.1
-                await self.markSearched(items[done.0], results: done.1.count)
+                await self.markSearched(items[done.0], results: done.1.count, failure: done.2)
             }
             return lists
         }
     }
 
     private func searchStopped(_ step: UUID) -> Bool {
-        activity.isStopped(step)
+        activity.isStopped(step) || searchUnavailable || Task.isCancelled
+    }
+
+    private func countSearch(_ query: String) {
+        searches += 1
+        usedQueries.insert(Self.key(query))
     }
 
     private func markSearching(_ item: UUID) {
         activity.updateItem(item, subtitle: "Searching\u{2026}")
     }
 
-    private func markSearched(_ item: UUID, results: Int) {
+    private func markSearched(_ item: UUID, results: Int, failure: String?) {
+        if let failure {
+            if !limitations.contains(failure) { limitations.append(failure) }
+            searchUnavailable = true
+            activity.updateItem(item, subtitle: failure, status: .failed)
+            return
+        }
         activity.updateItem(item, subtitle: results == 1 ? "1 result" : "\(results) results",
                             status: results == 0 ? .skipped : .done)
     }
@@ -281,7 +327,7 @@ final class ResearchEngine {
     // MARK: - Following leads
 
     private var outOfBudget: Bool {
-        searches >= budget.searches || pagesChecked >= budget.pages || facts.count >= Limits.facts
+        searchUnavailable || searches >= budget.searches || pagesChecked >= budget.pages || facts.count >= Limits.facts
     }
 
     /// Two searches at a time from what the matching pages said, until a
@@ -336,7 +382,8 @@ final class ResearchEngine {
         var picked: [String] = []
         func take(_ candidates: [String], limit: Int) {
             var taken = 0
-            for query in candidates where taken < limit && picked.count < 2 {
+            for candidate in candidates where taken < limit && picked.count < 2 {
+                let query = plan?.anchor(candidate) ?? candidate
                 let key = Self.key(query)
                 guard !key.isEmpty, !usedQueries.contains(key),
                       !picked.contains(where: { Self.key($0) == key })
@@ -364,16 +411,19 @@ final class ResearchEngine {
 
         let response: WebSearch.Response
         do {
-            response = try await WebSearch.search(query)
+            response = try await search(plan?.anchor(query) ?? query)
         } catch {
             try Task.checkCancellation()
-            activity.updateItem(searchItem, subtitle: "The search failed", status: .failed)
+            let failure = error.localizedDescription
+            if !limitations.contains(failure) { limitations.append(failure) }
+            searchUnavailable = true
+            activity.updateItem(searchItem, subtitle: failure, status: .failed)
             return nil
         }
         activity.updateItem(searchItem, subtitle: "\(response.results.count) results", status: .done)
 
         var tried = 0
-        for result in response.results where tried < Limits.triesPerSearch {
+        for result in ranked(response.results) where tried < Limits.triesPerSearch {
             guard ignoreBudget || pagesChecked < budget.pages, !activity.isStopped(step) else { return nil }
             let address = result.url.absoluteString
             guard !visitedURLs.contains(address) else { continue }
@@ -407,23 +457,43 @@ final class ResearchEngine {
             activity.updateItem(item, subtitle: "Could not read this page", status: .failed)
             return nil
         }
+        if let plan, !plan.hasSubject(in: text) {
+            activity.updateItem(item, subtitle: "The page does not contain the subject's name", status: .skipped)
+            return nil
+        }
         try Task.checkCancellation()
         activity.updateItem(item, subtitle: "Checking \u{201C}\(result.title)\u{201D}")
         let reply = try await ask(checkPrompt(), "Page: \(result.title) (\(result.site))\n\n\(text)")
         let verdict = Self.parse(reply)
-        guard verdict.same else {
-            activity.updateItem(item, subtitle: "Not about the subject", status: .skipped)
+        if let contradiction = verdict.contradiction,
+           ResearchPlan.contains(contradiction, in: text) {
+            activity.updateItem(item, subtitle: "Conflicting identity details — kept separate", status: .skipped)
+            disagreements.append("Possible different person at \(result.url.absoluteString): \(contradiction)")
+            return nil
+        }
+        guard verdict.same, plan?.accepts(evidence: verdict.evidence, text: text) == true else {
+            possibleMatches += 1
+            activity.updateItem(item, subtitle: "Possible match only — insufficient identity evidence", status: .skipped)
             return nil
         }
 
         pagesMatched += 1
-        let added = record(verdict.facts, site: result.site)
+        matchedHosts.insert(result.url.host?.lowercased().replacingOccurrences(of: "www.", with: "") ?? result.site)
+        let grounded = verdict.evidence.filter { plan?.accepts(evidence: [$0], text: text) == true }
+        for clue in plan?.matchedClues(in: grounded.joined(separator: " ")) ?? [] { matchedClues.insert(clue) }
+        // Keep verbatim source evidence as the facts. A small model's unsupported
+        // paraphrase must never become a seed for the next research round.
+        let added = record(grounded, result: result)
         activity.updateItem(
             item,
             subtitle: added == 1 ? "About the subject \u{00B7} 1 new detail"
                 : "About the subject \u{00B7} \(added) new details",
             status: .done)
-        return Match(site: result.site, addedFacts: added, searches: verdict.searches)
+        let supportedSearches = verdict.searches.filter { query in
+            ResearchPlan.words(query).allSatisfy { ResearchPlan.words(request + " " + grounded.joined(separator: " ")).contains($0) }
+        }.map { plan?.anchor($0) ?? $0 }
+        let fallbackLeads = (plan?.matchedClues(in: text) ?? []).map { plan?.anchor($0) ?? $0 }
+        return Match(site: result.site, addedFacts: added, searches: supportedSearches + fallbackLeads)
     }
 
     // MARK: - Cross-checking
@@ -447,13 +517,13 @@ final class ResearchEngine {
 
         let conflicts = Self.parseConflicts(reply)
         guard !conflicts.isEmpty else {
-            activity.finish(step, detail: "The sources agree")
+            activity.finish(step, detail: "No disagreement detected; this is not proof of identity")
             return
         }
         for conflict in conflicts {
             activity.addItem(step, "Found disagreement", subtitle: conflict.claim, status: .failed)
         }
-        disagreements = conflicts.map(\.claim)
+        disagreements += conflicts.map(\.claim)
         activity.finish(step, detail: conflicts.count == 1
             ? "Found 1 disagreement" : "Found \(conflicts.count) disagreements")
 
@@ -467,12 +537,12 @@ final class ResearchEngine {
             cancellable: true)
         var settled = 0
         for query in settling where !activity.isStopped(extra) {
-            if try await findMatch(for: query, step: extra, ignoreBudget: true) != nil {
+            if try await findMatch(for: plan?.anchor(query) ?? query, step: extra) != nil {
                 settled += 1
             }
         }
         activity.finish(extra, detail: settled == 0
-            ? "No page settled it" : "\(settled) page\(settled == 1 ? "" : "s") added detail")
+            ? "No further evidence found; disagreements remain unresolved" : "\(settled) pages added evidence; disagreements still need review")
     }
 
     static let crossCheckPrompt = """
@@ -509,15 +579,25 @@ final class ResearchEngine {
     /// The page's main text, or the search summary if the page cannot be
     /// read (a login wall, or a site that blocks automated reading).
     private func pageText(for result: WebSearch.Result) async -> String? {
-        if let page = try? await PageReader.read(result.url) {
-            return String(page.text.prefix(Limits.pageCharacters))
+        if let raw = result.rawContent, raw.count >= 200 {
+            return plan?.excerpt(raw, limit: Limits.pageCharacters) ?? String(raw.prefix(Limits.pageCharacters))
         }
-        let summary = result.summary.trimmingCharacters(in: .whitespacesAndNewlines)
-        return summary.count >= 80 ? summary : nil
+        if let page = try? await PageReader.read(result.url) {
+            return plan?.excerpt(page.text, limit: Limits.pageCharacters) ?? String(page.text.prefix(Limits.pageCharacters))
+        }
+        // Snippets can guide discovery but cannot verify a person's identity.
+        return nil
+    }
+
+    private func ranked(_ results: [WebSearch.Result]) -> [WebSearch.Result] {
+        results.enumerated().map { ($0.offset, $0.element, plan?.score(title: $0.element.title, summary: $0.element.summary, url: $0.element.url) ?? 0) }
+            .filter { $0.2 >= 0 }
+            .sorted { $0.2 == $1.2 ? $0.0 < $1.0 : $0.2 > $1.2 }
+            .map { $0.1 }
     }
 
     /// Adds new facts and returns how many were new.
-    private func record(_ candidates: [String], site: String) -> Int {
+    private func record(_ candidates: [String], result: WebSearch.Result) -> Int {
         var added = 0
         for candidate in candidates {
             guard facts.count < Limits.facts else { break }
@@ -525,7 +605,7 @@ final class ResearchEngine {
             let key = Self.key(text)
             guard key.count >= 8, !factKeys.contains(key), !PrivateDetail.appears(in: text) else { continue }
             factKeys.insert(key)
-            facts.append(Fact(text: text, site: site))
+            facts.append(Fact(text: text, site: result.site, url: result.url, evidence: candidate))
             added += 1
         }
         return added
@@ -534,17 +614,31 @@ final class ResearchEngine {
     private func findings(_ stopReason: String) -> Findings {
         Findings(facts: facts, keywords: keywords, searches: searches, pagesChecked: pagesChecked,
                  pagesMatched: pagesMatched, combinationsSkipped: combinationsSkipped,
-                 pagesSkipped: pagesSkipped, disagreements: disagreements, stopReason: stopReason)
+                 pagesSkipped: pagesSkipped, disagreements: disagreements, stopReason: stopReason,
+                 limitations: limitations, identitySummary: identitySummary)
+    }
+
+    private var identitySummary: String {
+        guard plan?.subject != nil else { return "These findings are source reports, not independently verified facts." }
+        let missing = (plan?.clues ?? []).filter { !matchedClues.contains($0) }
+        let coverage = "\(pagesMatched) supporting pages across \(matchedHosts.count) websites; \(possibleMatches) possible matches were kept out."
+        return coverage + " Identity remains provisional; matching sources are not a guarantee and may copy each other."
+            + (missing.isEmpty ? "" : " Unverified supplied clues: " + missing.joined(separator: ", ") + ".")
+            + (disagreements.isEmpty ? "" : " Conflicting details remain unresolved.")
     }
 
     // MARK: - Keywords
 
     static let keywordPrompt = """
     Pick out the search keywords from the user's research request.
+    If this is a person, start with NAME: their full name copied exactly from the request.
+    Otherwise start with NAME: none. Never invent or change a name.
+    Copy any supplied city/region on a LOCATION: line, and employer/institution on an ORGANISATION: line.
+    These must be copied from the request. An occupation such as doctor or software engineer is NOT a location or organisation.
     - Keep a person's full name, a company name or any other name together as one keyword.
     - Leave out instruction words such as research, find, look up, tell me, about, who and what.
     - At most 5 keywords, the most important first.
-    Reply with one keyword per line and nothing else.
+    After NAME, write KEYWORD: before each keyword. Include the name, occupation, city and employer when supplied.
     """
 
     private static let instructionWords: Set<String> = [
@@ -565,6 +659,7 @@ final class ResearchEngine {
         let requestWords = Set(words(in: request))
         var lines: [String] = []
         for rawLine in reply.components(separatedBy: .newlines) {
+            if rawLine.trimmingCharacters(in: .whitespaces).uppercased().hasPrefix("NAME:") { continue }
             var line = cleaned(rawLine)
             if let colon = line.firstIndex(of: ":") {
                 line = String(line[line.index(after: colon)...])
@@ -666,6 +761,8 @@ final class ResearchEngine {
 
         Reply in exactly this format, with no other text:
         SAME: yes or no
+        EVIDENCE: an exact quote from the page linking the subject's full name to a supplied city, employer or other distinguishing clue
+        CONTRADICTION: an exact quote contradicting the user's identity clues, or NONE
         FACT: a new fact from the page
         FACT: another new fact
         SEARCH: a web search that would find more about the subject
@@ -675,6 +772,9 @@ final class ResearchEngine {
         - SAME is yes only if the page is clearly about this subject. For a person it must be \
         the same person, not someone else with the same name, so check it fits what is \
         already known. If SAME is no, write nothing after it.
+        - A common name plus a common job title is NOT enough. Missing details are unknown, not matches.
+        - Write up to 4 EVIDENCE lines, copied verbatim. Keep the name and its distinguishing detail together.
+        - Do not combine facts about different people. A conflicting employer or location needs explanation, not a silent merge.
         - Up to 6 FACT lines. Each is one short sentence that makes sense on its own, states \
         something the page says, and is not already known.
         - Each SEARCH joins the subject's name with something new from this page, such as an \
@@ -692,9 +792,10 @@ final class ResearchEngine {
     Write up what was found about the subject of the user's request, using only the notes \
     you are given.
 
-    - Start with one sentence saying who or what the subject is.
+    - Start with the match status, then say what the sources report about the subject.
+    - Never claim 100% certainty, a verified identity, that every site was searched, or that all information was found.
     - Then give the details as short bullet points grouped by topic. End each point with \
-    the site it came from in brackets, for example (abc.net.au).
+    a Markdown link to the exact source URL provided with that note.
     - If the notes are thin, say so plainly. Add nothing that is not in the notes and do \
     not guess.
     - Leave out home addresses, phone numbers, personal email addresses and anything about \
@@ -706,7 +807,7 @@ final class ResearchEngine {
     """
 
     static func reportInput(request: String, findings: Findings) -> String {
-        let notes = findings.facts.map { "- \($0.text) (\($0.site))" }.joined(separator: "\n")
+        let notes = findings.facts.map { "- \($0.evidence) [\($0.site)](\($0.url.absoluteString))" }.joined(separator: "\n")
         var skipped: [String] = []
         if findings.combinationsSkipped > 0 {
             skipped.append("\(findings.combinationsSkipped) keyword combinations")
@@ -723,6 +824,8 @@ final class ResearchEngine {
         Skipped to stay within the budget: \(skippedText)
         Disagreements between sources: \(findings.disagreements.isEmpty ? "none found" : findings.disagreements.joined(separator: " | "))
         Stopped because: \(findings.stopReason)
+        Match status: \(findings.identitySummary)
+        Search limitations: \(findings.limitations.joined(separator: " "))
 
         Notes:
         \(notes)
@@ -743,6 +846,10 @@ final class ResearchEngine {
             let value = cleaned(String(line[line.index(after: colon)...]))
             guard !value.isEmpty else { continue }
             switch label {
+            case "EVIDENCE":
+                if verdict.evidence.count < 4 { verdict.evidence.append(value.trimmingCharacters(in: CharacterSet(charactersIn: "\"\u{201C}\u{201D}"))) }
+            case "CONTRADICTION":
+                if value.uppercased() != "NONE" { verdict.contradiction = value }
             case "SAME":
                 if !sawSame {
                     sawSame = true

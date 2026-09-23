@@ -1,36 +1,8 @@
 import SwiftUI
 
-/// A short white pipe with flanged ends: the app's namesake.
-struct ConduitTube: View {
-    var length: CGFloat = 44
-    var thickness: CGFloat = 14
-    var color: Color = .white
-
-    var body: some View {
-        ZStack {
-            Capsule()
-                .fill(color)
-                .frame(width: length - thickness * 0.3, height: thickness)
-            HStack {
-                flange
-                Spacer(minLength: 0)
-                flange
-            }
-            .frame(width: length)
-        }
-        .frame(width: length, height: thickness * 1.35)
-    }
-
-    private var flange: some View {
-        RoundedRectangle(cornerRadius: thickness * 0.18, style: .continuous)
-            .fill(color)
-            .frame(width: thickness * 0.34, height: thickness * 1.35)
-    }
-}
-
 /// Shown while the model is working: a ball rolls from one end of the
-/// conduit to the other, resting at each end for longer than it takes to
-/// cross.
+/// hollow conduit to the other, resting at each end for longer than it takes
+/// to cross.
 struct ConduitLoader: View {
     var color: Color
     var status: String?
@@ -38,6 +10,7 @@ struct ConduitLoader: View {
     private static let length: CGFloat = 46
     private static let thickness: CGFloat = 16
     private static let ball: CGFloat = 9
+    private static let stroke: CGFloat = 1.5
     /// Seconds resting at each end, and seconds crossing.
     private static let rest = 0.6
     private static let travel = 0.34
@@ -51,14 +24,16 @@ struct ConduitLoader: View {
                 let inset = Self.thickness * 0.5
                 let span = Self.length - inset * 2
                 ZStack(alignment: .leading) {
-                    ConduitTube(length: Self.length, thickness: Self.thickness)
-                        .shadow(color: .black.opacity(0.18), radius: 2, y: 1)
+                    Capsule()
+                        .strokeBorder(Color.white.opacity(0.9), lineWidth: Self.stroke)
+                        .shadow(color: .black.opacity(0.2), radius: 1)
+                        .frame(width: Self.length, height: Self.thickness)
                     Circle()
                         .fill(color)
                         .frame(width: Self.ball, height: Self.ball)
                         .offset(x: inset - Self.ball / 2 + span * position)
                 }
-                .frame(width: Self.length, height: Self.thickness * 1.35, alignment: .leading)
+                .frame(width: Self.length, height: Self.thickness, alignment: .leading)
             }
             if let status {
                 Text(status)
@@ -88,41 +63,5 @@ struct ConduitLoader: View {
         default:
             return 1 - eased((phase - 2 * rest - travel) / travel)
         }
-    }
-}
-
-/// The Settings icon: conduits crossed into a star, each with its ball at a
-/// different point along it.
-struct ConduitStarIcon: View {
-    var size: CGFloat = 24
-    var color: Color = .primary
-
-    private static let arms: [(angle: Double, ball: CGFloat, tint: Color)] = [
-        (0, 0.12, .orange),
-        (45, 0.8, .pink),
-        (90, 0.35, .green),
-        (135, 0.6, .blue),
-    ]
-
-    var body: some View {
-        ZStack {
-            ForEach(Self.arms.indices, id: \.self) { index in
-                let arm = Self.arms[index]
-                let length = size
-                let thickness = size * 0.2
-                let inset = thickness * 0.5
-                ZStack(alignment: .leading) {
-                    ConduitTube(length: length, thickness: thickness, color: color)
-                    Circle()
-                        .fill(arm.tint)
-                        .frame(width: thickness * 0.62, height: thickness * 0.62)
-                        .offset(x: inset - thickness * 0.31 + (length - inset * 2) * arm.ball)
-                }
-                .frame(width: length, height: thickness * 1.35, alignment: .leading)
-                .rotationEffect(.degrees(arm.angle))
-            }
-        }
-        .frame(width: size, height: size)
-        .accessibilityHidden(true)
     }
 }

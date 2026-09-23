@@ -535,6 +535,7 @@ final class AgentSession {
                 return
             }
             reporter.finish(reporter.begin("Research failed", detail: error.localizedDescription), .failed)
+            transcript.append(TranscriptEntry(kind: .error, text: error.localizedDescription))
             return
         }
         readWebContent = true
@@ -542,8 +543,10 @@ final class AgentSession {
             + "matched=\(findings.pagesMatched) facts=\(findings.facts.count)")
 
         guard !findings.facts.isEmpty else {
-            let reply = "I couldn't find pages that were clearly about this. Try adding something "
-                + "that narrows it down, such as a job, a company, a school or a town."
+            let reply = findings.limitations.isEmpty
+                ? "I couldn't establish a reliable match from the pages I could read. "
+                    + findings.identitySummary + " This does not mean the person has no web presence."
+                : "Research was incomplete: " + findings.limitations.joined(separator: " ")
             transcript.append(TranscriptEntry(kind: .assistant, text: reply))
             history.append(.assistant(reply))
             return
@@ -588,8 +591,15 @@ final class AgentSession {
         }
         if replyText.isEmpty {
             // Fall back to the notes themselves rather than an empty bubble.
-            replyText = findings.facts.map { "- \($0.text) (\($0.site))" }.joined(separator: "\n")
+            replyText = findings.facts.map { "- \($0.text) [\($0.site)](\($0.url.absoluteString))" }.joined(separator: "\n")
         }
+        // Always retain the evidence and scope outside the generated prose,
+        // even if a small model omits them from its answer.
+        var seenSources = Set<URL>()
+        let sources = findings.facts.filter { seenSources.insert($0.url).inserted }
+            .map { "[\($0.site)](\($0.url.absoluteString))" }.joined(separator: ", ")
+        replyText += "\n\n" + findings.identitySummary + "\nSources: " + sources
+        if !findings.limitations.isEmpty { replyText += "\nSearch limitations: " + findings.limitations.joined(separator: " ") }
         reporter.finish(writing)
         finishStreaming(at: entryIndex, text: replyText)
         history.append(.assistant(replyText))

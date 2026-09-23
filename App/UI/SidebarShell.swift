@@ -32,7 +32,6 @@ enum AppPage: String, CaseIterable, Identifiable {
         case .online: "globe"
         case .models: "cpu"
         case .capabilities: "checklist"
-        // Drawn by ConduitStarIcon instead.
         case .settings: "gearshape"
         }
     }
@@ -128,14 +127,9 @@ struct SidebarOverlay: View {
         )
     }
 
-    @ViewBuilder
-    private func icon(for item: AppPage, selected: Bool) -> some View {
-        if item == .settings {
-            ConduitStarIcon(size: 24, color: selected ? Color.conduitAccent : Color.primary)
-        } else {
-            Image(systemName: item.symbol)
-                .font(.system(size: 19, weight: .medium))
-        }
+    private func icon(for item: AppPage) -> some View {
+        Image(systemName: item.symbol)
+            .font(.system(size: 19, weight: .medium))
     }
 
     private func railButton(_ item: AppPage) -> some View {
@@ -144,7 +138,7 @@ struct SidebarOverlay: View {
             page = item
             isOpen = false
         } label: {
-            icon(for: item, selected: selected)
+            icon(for: item)
                 .frame(width: 48, height: 48)
                 .background {
                     if selected {
