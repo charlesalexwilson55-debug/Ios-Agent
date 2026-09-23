@@ -16,6 +16,8 @@ struct TranscriptView: View {
     var onShowDraft: (Int, UUID) -> Void = { _, _ in }
     /// Stops a step or skips an item of an activity: its id and the entry.
     var onCancelActivity: (UUID, UUID) -> Void = { _, _ in }
+    var isWorking: Bool = false
+    var onSelectResearchCandidate: (String, UUID) -> Void = { _, _ in }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -60,8 +62,15 @@ struct TranscriptView: View {
         case .user:
             UserBubble(text: entry.text, imageIDs: entry.imageIDs)
         case .assistant:
-            AssistantText(entry: entry, accent: accent) { index in
-                onShowDraft(index, entry.id)
+            VStack(alignment: .leading, spacing: 10) {
+                AssistantText(entry: entry, accent: accent) { index in
+                    onShowDraft(index, entry.id)
+                }
+                if !entry.researchCandidates.isEmpty {
+                    ResearchCandidatesView(candidates: entry.researchCandidates, isWorking: isWorking) { candidate in
+                        onSelectResearchCandidate(candidate.id, entry.id)
+                    }
+                }
             }
         case .tool:
             ToolChip(text: entry.text, outcome: entry.toolOutcome)

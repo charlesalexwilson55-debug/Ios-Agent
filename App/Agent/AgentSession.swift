@@ -41,6 +41,9 @@ struct TranscriptEntry: Identifiable {
     var activity: ActivityLog?
     /// Pictures shown with the entry, from `ImageStore`.
     var imageIDs: [UUID] = []
+    /// Source choices are kept out of the model's history until selected.
+    var researchCandidates: [ResearchCandidate] = []
+    var researchRequest: String?
 
     enum Outcome {
         case done
@@ -97,6 +100,7 @@ final class AgentSession {
     var visionModelDirectory: URL?
     /// Pictures attached to the message being answered.
     private var pendingImageIDs: [UUID] = []
+    private var pendingResearchSelection: ResearchSelection?
 
     /// The saved chat this conversation is recorded under. A new one starts
     /// with each new conversation.
@@ -149,9 +153,10 @@ final class AgentSession {
 
     // MARK: - Public entry points
 
-    func submit(_ text: String, imageData: [Data] = []) {
+    func submit(_ text: String, imageData: [Data] = [], researchSelection: ResearchSelection? = nil) {
         var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !imageData.isEmpty, !isWorking else { return }
+        pendingResearchSelection = researchSelection
         if trimmed.isEmpty { trimmed = "What's in this picture?" }
         pendingImageIDs = imageData.compactMap { ImageStore.shared.addPhoto($0, prompt: trimmed)?.id }
 
@@ -168,6 +173,15 @@ final class AgentSession {
             self?.recordTurn(after: userEntry.id, request: trimmed)
             self?.isWorking = false
         }
+    }
+
+    func selectResearchCandidate(_ candidateID: String, in entryID: UUID) {
+        guard !isWorking,
+              let entry = transcript.first(where: { $0.id == entryID }),
+              let request = entry.researchRequest,
+              let candidate = entry.researchCandidates.first(where: { $0.id == candidateID }) else { return }
+        submit("Research this profile: \(candidate.url.absoluteString)",
+               researchSelection: ResearchSelection(request: request, candidate: candidate))
     }
 
     /// Stops the current turn.
@@ -232,6 +246,7 @@ final class AgentSession {
         lastThroughput = nil
         lastTurnUsedPhoneTools = false
         readWebContent = false
+        pendingResearchSelection = nil
         chatID = UUID()
     }
 
@@ -280,8 +295,10 @@ final class AgentSession {
         let phoneTask = TaskRouter.looksLikePhoneTask(currentRequest)
         let auto = autoLevel ? AutoConfig.choose(for: currentRequest, isPhoneTask: phoneTask) : nil
         let level = auto?.level ?? workLevel
-        if researchEnabled || auto?.research == true {
-            await runResearch(level: level)
+        let selection = pendingResearchSelection
+        pendingResearchSelection = nil
+        if researchEnabled || auto?.research == true || selection != nil {
+            await runResearch(level: level, selection: selection)
             return
         }
 
@@ -482,7 +499,8 @@ final class AgentSession {
 
     /// Follows the request across the web with `ResearchEngine`, showing its
     /// steps as they happen, then writes up what was found.
-    private func runResearch(level: WorkLevel) async {
+    private func runResearch(level: WorkLevel, selection: ResearchSelection? = nil) async {
+        let request = selection?.request ?? currentRequest
         lastTurnUsedPhoneTools = false
         guard onlineEnabled, Connectivity.shared.isOnline else {
             let text = onlineEnabled
@@ -499,7 +517,7 @@ final class AgentSession {
 
         let entry = TranscriptEntry(
             kind: .activity, text: "",
-            activity: ActivityLog(title: "Research: " + ResearchEngine.searchQuery(from: currentRequest))
+            activity: ActivityLog(title: "Research: " + ResearchEngine.searchQuery(from: request))
         )
         transcript.append(entry)
         let entryID = entry.id
@@ -517,13 +535,14 @@ final class AgentSession {
         defer { activeReporter = nil }
 
         let engine = ResearchEngine(
-            request: currentRequest,
+            request: request,
             budget: level.researchBudget,
             ask: { [weak self] system, user in
                 guard let self else { throw CancellationError() }
                 return try await self.ask(system: system, user: user)
             },
-            activity: reporter
+            activity: reporter,
+            selection: selection?.candidate
         )
 
         let findings: ResearchEngine.Findings
@@ -541,11 +560,21 @@ final class AgentSession {
         readWebContent = true
         Diagnostics.log("research searches=\(findings.searches) pages=\(findings.pagesChecked) "
             + "matched=\(findings.pagesMatched) facts=\(findings.facts.count)")
+        if !findings.candidates.isEmpty {
+            var choices = TranscriptEntry(kind: .assistant, text: "Sources to inspect")
+            choices.researchCandidates = findings.candidates
+            choices.researchRequest = request
+            transcript.append(choices)
+        }
 
         guard !findings.facts.isEmpty else {
             let reply = findings.limitations.isEmpty
-                ? "I couldn't establish a reliable match from the pages I could read. "
-                    + findings.identitySummary + " This does not mean the person has no web presence."
+                ? (selection != nil
+                    ? "No reliable extract was available from the selected profile. Its source link is above so you can inspect the page. "
+                    : findings.candidates.isEmpty
+                    ? "The searches returned no readable, relevant profiles. "
+                    : "I found potential sources above. Choose ‘Research this profile’ to narrow the search. ")
+                    + findings.identitySummary
                 : "Research was incomplete: " + findings.limitations.joined(separator: " ")
             transcript.append(TranscriptEntry(kind: .assistant, text: reply))
             history.append(.assistant(reply))
@@ -555,10 +584,10 @@ final class AgentSession {
         await waitUntilForeground()
         if Task.isCancelled { return }
         let writing = reporter.begin("Writing answer",
-                                     detail: "From \(findings.facts.count) details on \(findings.pagesMatched) pages")
+                                     detail: "From \(findings.facts.count) details on \(Set(findings.facts.map { $0.url }).count) sources")
         let messages: [ModelRunner.Message] = [
             .system(ResearchEngine.reportPrompt),
-            .user(ResearchEngine.reportInput(request: currentRequest, findings: findings)),
+            .user(ResearchEngine.reportInput(request: request, findings: findings)),
         ]
         let entryIndex = transcript.count
         transcript.append(TranscriptEntry(kind: .assistant, text: "", isStreaming: true))
@@ -575,10 +604,16 @@ final class AgentSession {
             }
         } catch {
             isGenerating = false
-            reporter.finish(writing, .failed, detail: error.localizedDescription)
-            finishStreaming(at: entryIndex, text: replyText)
-            transcript.append(TranscriptEntry(kind: .error, text: error.localizedDescription))
-            return
+            if Task.isCancelled || error is CancellationError {
+                reporter.finish(writing, .stopped)
+                finishStreaming(at: entryIndex, text: replyText.isEmpty ? "Stopped." : replyText)
+                return
+            }
+            // Generation is optional presentation work: never discard retrieved
+            // evidence because a local model cannot format a summary.
+            replyText = "The local model could not compose the summary. Source excerpts:\n\n"
+                + findings.facts.map { "- \($0.text) [\($0.site)](\($0.url.absoluteString))" }.joined(separator: "\n")
+            reporter.setDetail(writing, "Showing source excerpts; model summary unavailable")
         }
         isGenerating = false
         if Task.isCancelled {
@@ -882,6 +917,7 @@ final class AgentSession {
             self.isGenerating = true
             defer { self.isGenerating = false }
             var text = ""
+            var reasoningCharacters = 0
             for try await event in runner.stream(
                 messages: [.system(system), .user(user)],
                 tools: [],
@@ -889,7 +925,9 @@ final class AgentSession {
                 sampling: .extraction(maxTokens: 320)
             ) {
                 if case .text(let chunk) = event { text += chunk }
+                if case .reasoning(let chunk) = event { reasoningCharacters += chunk.count }
             }
+            Diagnostics.log("research.check textChars=\(text.count) reasoningChars=\(reasoningCharacters)")
             try Task.checkCancellation()
             return text
         }

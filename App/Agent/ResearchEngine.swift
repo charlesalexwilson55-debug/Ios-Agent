@@ -43,6 +43,7 @@ final class ResearchEngine {
         let stopReason: String
         let limitations: [String]
         let identitySummary: String
+        let candidates: [ResearchCandidate]
     }
 
     /// How much one run may do. Each search uses one of Tavily's 1,000 free
@@ -98,18 +99,14 @@ final class ResearchEngine {
         var search: String?
     }
 
-    enum PlanningError: LocalizedError {
-        case unclearSubject
-        var errorDescription: String? {
-            "I couldn't reliably identify the research subject. Include the full name and a distinguishing city or employer. No identity match has been made."
-        }
-    }
-
     private let request: String
     private let budget: Budget
     private let ask: Ask
     private let activity: ActivityReporter
     private let search: Search
+    private let selection: ResearchCandidate?
+    typealias Read = @MainActor (URL) async throws -> String
+    private let read: Read
 
     private var facts: [Fact] = []
     private var factKeys: Set<String> = []
@@ -128,14 +125,19 @@ final class ResearchEngine {
     private var matchedHosts: Set<String> = []
     private var matchedClues: Set<String> = []
     private var searchUnavailable = false
+    private var candidates: [ResearchCandidate] = []
 
     init(request: String, budget: Budget, ask: @escaping Ask, activity: ActivityReporter,
-         search: @escaping Search = { try await WebSearch.research($0) }) {
+         search: @escaping Search = { try await WebSearch.research($0) },
+         selection: ResearchCandidate? = nil,
+         read: @escaping Read = { try await PageReader.read($0).text }) {
         self.request = request
         self.budget = budget
         self.ask = ask
         self.activity = activity
         self.search = search
+        self.selection = selection
+        self.read = read
     }
 
     func run() async throws -> Findings {
@@ -154,7 +156,11 @@ final class ResearchEngine {
         } else {
             stopReason = try await followLeads(from: roundLeads)
         }
-        try await crossCheck()
+        do { try await crossCheck() }
+        catch {
+            try Task.checkCancellation()
+            limitations.append("The local model could not complete cross-checking. The sources remain available for inspection.")
+        }
         return findings(stopReason)
     }
 
@@ -166,7 +172,27 @@ final class ResearchEngine {
     private func firstStep() async throws -> [Match] {
         let planningStep = activity.begin("Planning", detail: "Identifying the subject and relevant sources")
         keywords = try await pickKeywords()
-        let combinations = plan?.queries ?? Self.combinations(of: keywords)
+        var matches: [Match] = []
+        if let selection {
+            let selectedStep = activity.begin("Reading selected profile", detail: "Your selection narrows the source, not proof of identity", cancellable: true)
+            let result = WebSearch.Result(title: selection.title, url: selection.url,
+                                          site: selection.url.host ?? "Selected source", summary: selection.snippet,
+                                          published: nil, rawContent: selection.sourceText)
+            let item = activity.addItem(selectedStep, selection.title, url: selection.url, cancellable: true)
+            let outcome = try await activity.run(item) { () -> Match? in
+                let text = await self.pageText(for: result)
+                return try await self.check(result, text: text, item: item)
+            }
+            visitedURLs.insert(result.url.absoluteString)
+            pagesChecked += 1
+            if case .some(.some(let match)) = outcome { matches.append(match) }
+            activity.finish(selectedStep)
+        }
+        var combinations = plan?.queries ?? [request]
+        if let selection, let host = selection.url.host {
+            let focused = plan?.subject == nil ? (request + " site:\(host)") : (plan?.anchor("site:\(host)") ?? request)
+            combinations.insert(focused, at: 0)
+        }
         let queries = Array(combinations.prefix(budget.firstStepSearches))
         combinationsSkipped = combinations.count - queries.count
         var planned = "Keywords: \(keywords.joined(separator: ", ")) \u{00B7} \(queries.count) searches"
@@ -190,7 +216,7 @@ final class ResearchEngine {
         for rank in 0..<deepest {
             for list in resultLists where rank < list.count {
                 let result = list[rank]
-                if queued.insert(result.url.absoluteString).inserted {
+                if !visitedURLs.contains(result.url.absoluteString), queued.insert(result.url.absoluteString).inserted {
                     queue.append(result)
                 }
             }
@@ -198,11 +224,10 @@ final class ResearchEngine {
         queue = ranked(queue)
         let pages = Array(queue.prefix(budget.firstStepPages))
         pagesSkipped = queue.count - pages.count
-        guard !pages.isEmpty else { return [] }
+        guard !pages.isEmpty else { return matches }
 
         let readStep = activity.begin(
             pages.count == 1 ? "Reading 1 source" : "Reading \(pages.count) sources", cancellable: true)
-        var matches: [Match] = []
         // The next page loads while the model checks the current one.
         var preload: Task<String?, Never>?
         defer { preload?.cancel() }
@@ -244,24 +269,15 @@ final class ResearchEngine {
     /// The request's keywords, from the model, checked against the request.
     /// Falls back to picking them out in code.
     private func pickKeywords() async throws -> [String] {
-        let reply = try await ask(Self.keywordPrompt, request)
-        let picked = Self.parseKeywords(reply, request: request)
-        let chosen = picked.isEmpty ? Self.fallbackKeywords(from: request) : picked
-        let lines = reply.components(separatedBy: .newlines).map(Self.cleaned)
-        let subject = lines.first {
-            $0.uppercased().hasPrefix("NAME:")
-        }.map { String($0.dropFirst(5)).trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "\"'"))) }
-        guard let subject, !subject.isEmpty else { throw PlanningError.unclearSubject }
-        let clues = lines.compactMap { line -> String? in
-            guard let colon = line.firstIndex(of: ":") else { return nil }
-            let label = line[..<colon].trimmingCharacters(in: .whitespaces).uppercased()
-            guard ["LOCATION", "ORGANISATION"].contains(label) else { return nil }
-            return String(line[line.index(after: colon)...]).trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "\"'")))
+        var reply = ""
+        do { reply = try await ask(Self.keywordPrompt, request) }
+        catch {
+            try Task.checkCancellation()
+            limitations.append("The local model could not plan this search; your original request was used for discovery.")
         }
-        let proposed = ResearchPlan(request: request, subject: subject, keywords: chosen, identityClues: clues)
-        guard subject.lowercased() == "none" || proposed.subject != nil else { throw PlanningError.unclearSubject }
+        let proposed = ResearchPlanner.make(request: request, reply: reply)
         plan = proposed
-        return chosen
+        return proposed.keywords.isEmpty ? [request] : proposed.keywords
     }
 
     /// Runs the searches a few at a time and returns their results in the
@@ -455,25 +471,57 @@ final class ResearchEngine {
     private func check(_ result: WebSearch.Result, text: String?, item: UUID) async throws -> Match? {
         guard let text else {
             activity.updateItem(item, subtitle: "Could not read this page", status: .failed)
+            rememberCandidate(result, text: result.summary, status: .unreadable,
+                              reason: "Search result only. The page could not be read or verified.")
+            return nil
+        }
+        if result.url == selection?.url {
+            // Selection chooses a source to investigate, not an identity to certify.
+            // This path also works when the local model produces no usable format.
+            let statements = plan?.selectedStatements(text) ?? []
+            let added = record(statements, result: result)
+            rememberCandidate(result, text: text, status: .possible,
+                              reason: "You selected this source. Its claims are reported separately; identity is unverified.")
+            activity.updateItem(item, subtitle: "Selected source read · \(added) quoted statements", status: .done)
+            return Match(site: result.site, addedFacts: added, searches: [])
+        }
+        if selection != nil {
+            rememberCandidate(result, text: text, status: .possible,
+                              reason: "Related result, kept separate from your selected profile. Select it to inspect its claims.")
+            activity.updateItem(item, subtitle: "Related profile kept separate", status: .done)
             return nil
         }
         if let plan, !plan.hasSubject(in: text) {
             activity.updateItem(item, subtitle: "The page does not contain the subject's name", status: .skipped)
+            rememberCandidate(result, text: text, status: .conflicting,
+                              reason: "The readable page does not contain the supplied name.")
             return nil
         }
         try Task.checkCancellation()
         activity.updateItem(item, subtitle: "Checking \u{201C}\(result.title)\u{201D}")
-        let reply = try await ask(checkPrompt(), "Page: \(result.title) (\(result.site))\n\n\(text)")
+        let reply: String
+        do { reply = try await ask(checkPrompt(), "Page: \(result.title) (\(result.site))\n\n\(text)") }
+        catch {
+            try Task.checkCancellation()
+            rememberCandidate(result, text: text, status: .possible,
+                              reason: "The page was read, but the local model could not check it. You can inspect or select this source.")
+            activity.updateItem(item, subtitle: "Kept as a candidate; model check unavailable", status: .skipped)
+            return nil
+        }
         let verdict = Self.parse(reply)
         if let contradiction = verdict.contradiction,
            ResearchPlan.contains(contradiction, in: text) {
             activity.updateItem(item, subtitle: "Conflicting identity details — kept separate", status: .skipped)
             disagreements.append("Possible different person at \(result.url.absoluteString): \(contradiction)")
+            rememberCandidate(result, text: text, status: .conflicting,
+                              reason: "The page has conflicting details. Kept separate from other profiles.")
             return nil
         }
         guard verdict.same, plan?.accepts(evidence: verdict.evidence, text: text) == true else {
             possibleMatches += 1
             activity.updateItem(item, subtitle: "Possible match only — insufficient identity evidence", status: .skipped)
+            rememberCandidate(result, text: text, status: .possible,
+                              reason: "Potentially relevant, but the identity evidence is incomplete. Select to research this profile separately.")
             return nil
         }
 
@@ -484,6 +532,8 @@ final class ResearchEngine {
         // Keep verbatim source evidence as the facts. A small model's unsupported
         // paraphrase must never become a seed for the next research round.
         let added = record(grounded, result: result)
+        rememberCandidate(result, text: text, status: .supported,
+                          reason: "The page links the name with supplied details. Identity remains provisional.")
         activity.updateItem(
             item,
             subtitle: added == 1 ? "About the subject \u{00B7} 1 new detail"
@@ -579,14 +629,26 @@ final class ResearchEngine {
     /// The page's main text, or the search summary if the page cannot be
     /// read (a login wall, or a site that blocks automated reading).
     private func pageText(for result: WebSearch.Result) async -> String? {
-        if let raw = result.rawContent, raw.count >= 200 {
+        if let raw = result.rawContent, raw.count >= 40 {
             return plan?.excerpt(raw, limit: Limits.pageCharacters) ?? String(raw.prefix(Limits.pageCharacters))
         }
-        if let page = try? await PageReader.read(result.url) {
-            return plan?.excerpt(page.text, limit: Limits.pageCharacters) ?? String(page.text.prefix(Limits.pageCharacters))
+        if let text = try? await read(result.url) {
+            return plan?.excerpt(text, limit: Limits.pageCharacters) ?? String(text.prefix(Limits.pageCharacters))
         }
         // Snippets can guide discovery but cannot verify a person's identity.
         return nil
+    }
+
+    private func rememberCandidate(_ result: WebSearch.Result, text: String,
+                                   status: ResearchCandidate.Status, reason: String) {
+        let excerpt = plan?.excerpt(text, limit: 480) ?? String(text.prefix(480))
+        let snippet = PrivateDetail.appears(in: excerpt) ? "Open the source to inspect its details." : excerpt
+        let candidate = ResearchCandidate(title: result.title, url: result.url, snippet: snippet,
+                                          status: status, reason: reason,
+                                          matchedClues: plan?.matchedClues(in: text) ?? [],
+                                          sourceText: status == .unreadable ? nil : String(text.prefix(6000)))
+        if let index = candidates.firstIndex(where: { $0.id == candidate.id }) { candidates[index] = candidate }
+        else if candidates.count < 8 { candidates.append(candidate) }
     }
 
     private func ranked(_ results: [WebSearch.Result]) -> [WebSearch.Result] {
@@ -621,10 +683,16 @@ final class ResearchEngine {
         Findings(facts: facts, keywords: keywords, searches: searches, pagesChecked: pagesChecked,
                  pagesMatched: pagesMatched, combinationsSkipped: combinationsSkipped,
                  pagesSkipped: pagesSkipped, disagreements: disagreements, stopReason: stopReason,
-                 limitations: limitations, identitySummary: identitySummary)
+                 limitations: limitations, identitySummary: identitySummary, candidates: candidates)
     }
 
     private var identitySummary: String {
+        if let selection {
+            return "You selected \(selection.url.host ?? "this source") for investigation. Its quoted claims are not a verified identity match; other profiles remain separate."
+        }
+        if plan?.subject == nil, plan?.isTopic != true {
+            return "Search used your supplied wording. Profiles are shown separately because identity details could not be reliably extracted."
+        }
         guard plan?.subject != nil else { return "These findings are source reports, not independently verified facts." }
         let missing = (plan?.clues ?? []).filter { !matchedClues.contains($0) }
         let coverage = "\(pagesMatched) supporting pages across \(matchedHosts.count) websites; \(possibleMatches) possible matches were kept out."

@@ -83,6 +83,37 @@ final class SearchFixtureProtocol: URLProtocol {
         precondition(empty.results.isEmpty)
         print("Search provider failure regression tests passed")
 
+        let variants = [
+            "",
+            "I will search for Jane Example, a doctor in Melbourne at Harbour Clinic.",
+            "```json\n{\"name\":\"Jane Example\",\"city\":\"Melbourne\",\"employer\":\"Harbour Clinic\"}\n```",
+            "1. **Full name:** Jane Example\n- City: Melbourne\n- Employer = Harbour Clinic",
+            "NAME: John Invented\nLOCATION: Wrongtown",
+            "NAME: none"
+        ]
+        for output in variants {
+            let recovered = ResearchPlanner.make(request: request, reply: output)
+            precondition(recovered.subject == "Jane Example", "Recover name from supplied request: \(output)")
+            precondition(recovered.clues.contains("Melbourne") && recovered.clues.contains("Harbour Clinic"))
+            precondition(recovered.queries.allSatisfy { $0.contains("\"Jane Example\"") })
+            precondition(!recovered.queries.contains { $0.contains("Invented") || $0.contains("Wrongtown") })
+        }
+        let lowercase = ResearchPlanner.make(request: "find jane example, a doctor in melbourne at harbour clinic", reply: "")
+        precondition(lowercase.subject == "jane example")
+        let lowerNone = ResearchPlanner.make(request: "research jane example in melbourne", reply: "NAME: none")
+        precondition(lowerNone.subject == "jane example" && !lowerNone.isTopic)
+        precondition(!lowerNone.accepts(evidence: ["John Other works in Melbourne."], text: "John Other works in Melbourne."))
+        let titled = ResearchPlanner.make(request: "Research Dr. Jane Example in Melbourne", reply: "NAME: Dr. Jane Example\nLOCATION: Melbourne")
+        precondition(titled.subject == "Jane Example", "Honorifics are not required parts of a person's name")
+        let unresolvedRequest = "Find information about the person I described earlier"
+        let unresolved = ResearchPlanner.make(request: unresolvedRequest, reply: "not structured")
+        precondition(unresolved.subject == nil && unresolved.queries == [unresolvedRequest])
+        precondition(!unresolved.accepts(evidence: ["John Other works in Melbourne."], text: "John Other works in Melbourne."))
+        let topic = ResearchPlanner.make(request: "research the best local AI models for iPhone", reply: "NAME: none\nKEYWORD: models")
+        precondition(topic.isTopic && topic.subject == nil)
+        precondition(topic.accepts(evidence: ["The model uses four-bit weights."], text: "The model uses four-bit weights."), "Explicit topic research must still produce source evidence")
+        print("Research planning recovery regression tests passed")
+
         let profile = "  **NAME:** Jane Example\nLOCATION: Melbourne\nORGANISATION: Harbour Clinic\nKEYWORD: Jane Example\nKEYWORD: doctor\nKEYWORD: Melbourne\nKEYWORD: Harbour Clinic"
         let sentence = "Jane Example is a doctor at Harbour Clinic in Melbourne."
         let source = WebSearch.Result(title: "Jane Example doctor", url: URL(string: "https://harbour-clinic.example/team/jane")!, site: "harbour-clinic.example", summary: sentence, published: nil, rawContent: sentence + String(repeating: " Practice information.", count: 15))
@@ -113,13 +144,47 @@ final class SearchFixtureProtocol: URLProtocol {
         let attributed = try await mixed.run()
         precondition(attributed.facts.count == 1 && !attributed.facts[0].text.contains("John Other"))
         precondition(attributed.identitySummary.contains("Unverified supplied clues: Melbourne"), "Invented quotes cannot confirm missing clues")
-        let noName = ResearchEngine(request: request, budget: .normal, ask: { _, _ in "KEYWORD: doctor" }, activity: reporter, search: { _ in
-            preconditionFailure("Failed subject extraction must not launch a broad search")
+        let noName = ResearchEngine(request: request, budget: .normal, ask: { _, _ in "KEYWORD: doctor" }, activity: reporter, search: { query in
+            precondition(query.contains("\"Jane Example\""), "Fallback searches must preserve the name")
+            return WebSearch.Response(provider: .tavily, results: [source])
         })
-        do {
-            _ = try await noName.run()
-            preconditionFailure("Missing name must fail closed")
-        } catch ResearchEngine.PlanningError.unclearSubject {}
+        let recovered = try await noName.run()
+        precondition(recovered.searches > 0 && recovered.facts.isEmpty)
+        precondition(recovered.candidates.count == 1 && recovered.candidates[0].status == .possible, "Uncertain source must remain selectable")
+        let modelFailure = ResearchEngine(request: request, budget: .normal, ask: { _, _ in throw URLError(.cannotDecodeContentData) }, activity: reporter, search: { _ in WebSearch.Response(provider: .tavily, results: [source]) })
+        let modelFailed = try await modelFailure.run()
+        precondition(!modelFailed.candidates.isEmpty && modelFailed.searches > 0, "Model failure must not prevent source discovery")
+        let cancelled = Task { @MainActor in
+            let cancelledEngine = ResearchEngine(request: request, budget: .normal, ask: { _, _ in
+                try Task.checkCancellation()
+                return ""
+            }, activity: reporter, search: { _ in preconditionFailure("A cancelled run must not start searches") })
+            return try await cancelledEngine.run()
+        }
+        cancelled.cancel()
+        do { _ = try await cancelled.value; preconditionFailure("Cancellation must still propagate") }
+        catch is CancellationError {}
+        let selected = ResearchEngine(request: request, budget: .normal, ask: { _, _ in "" }, activity: reporter, search: { _ in WebSearch.Response(provider: .tavily, results: [team]) }, selection: recovered.candidates[0], read: { _ in sentence })
+        let focused = try await selected.run()
+        precondition(focused.facts.count == 1 && focused.facts[0].url == source.url)
+        precondition(focused.identitySummary.contains("not a verified identity match"))
+        let otherSource = WebSearch.Result(title: "Jane Example doctor", url: URL(string: "https://different-clinic.example/jane")!, site: "different-clinic.example", summary: "Jane Example in Melbourne", published: nil, rawContent: "Jane Example is a doctor in Melbourne at Different Clinic." + String(repeating: " Clinic info.", count: 20))
+        let selectionWithOther = ResearchEngine(request: request, budget: .normal, ask: { _, _ in "" }, activity: reporter, search: { _ in WebSearch.Response(provider: .tavily, results: [otherSource]) }, selection: recovered.candidates[0], read: { _ in sentence })
+        let separated = try await selectionWithOther.run()
+        precondition(separated.facts.allSatisfy { $0.url == source.url }, "Selection must not merge a different same-name profile")
+        precondition(separated.candidates.contains { $0.url == otherSource.url && $0.status == .possible })
+        let bio = "Jane Example\nShe works at Harbour Clinic in Melbourne.\nJohn Other\nHe won an award."
+        let profileStatements = plan.selectedStatements(bio)
+        precondition(profileStatements.count == 1 && profileStatements[0].contains("She works"))
+        precondition(!profileStatements[0].contains("John Other"))
+        let cached = ResearchCandidate(title: source.title, url: source.url, snippet: "", status: .possible, reason: "", matchedClues: [], sourceText: bio)
+        let cachedEngine = ResearchEngine(request: request, budget: .normal, ask: { _, _ in "" }, activity: reporter, search: { _ in WebSearch.Response(provider: .tavily, results: []) }, selection: cached, read: { _ in preconditionFailure("Cached provider text should survive a failed direct reader") })
+        let cachedFindings = try await cachedEngine.run()
+        precondition(cachedFindings.facts.count == 1 && cachedFindings.facts[0].text.contains("She works"))
+        let several = ResearchCandidate(title: source.title, url: source.url, snippet: "", status: .possible, reason: "", matchedClues: [], sourceText: "Jane Example works at Harbour Clinic. Jane Example teaches in Melbourne. Jane Example studies clinical medicine.")
+        let brokenCrosscheck = ResearchEngine(request: request, budget: .normal, ask: { _, _ in throw URLError(.cannotDecodeContentData) }, activity: reporter, search: { _ in WebSearch.Response(provider: .tavily, results: []) }, selection: several)
+        let retained = try await brokenCrosscheck.run()
+        precondition(retained.facts.count == 3 && retained.limitations.contains { $0.contains("cross-checking") })
         let unavailable = ResearchEngine(request: request, budget: .normal, ask: { _, _ in profile }, activity: reporter, search: { _ in throw WebSearch.SearchError.http(429) })
         let failed = try await unavailable.run()
         precondition(!failed.limitations.isEmpty && failed.facts.isEmpty, "Retain provider failure, not person-not-found")

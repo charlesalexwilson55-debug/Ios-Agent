@@ -7,10 +7,12 @@ struct ResearchPlan {
     let subject: String?
     let keywords: [String]
     let request: String
+    let isTopic: Bool
     private let identityClues: [String]
 
-    init(request: String, subject: String?, keywords: [String], identityClues: [String] = []) {
+    init(request: String, subject: String?, keywords: [String], identityClues: [String] = [], isTopic: Bool = false) {
         self.request = request
+        self.isTopic = isTopic
         let candidate = subject?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         self.subject = Self.words(candidate).count >= 2 && Self.contains(candidate, in: request)
             ? candidate : nil
@@ -30,10 +32,12 @@ struct ResearchPlan {
     }
 
     var queries: [String] {
-        guard let subject else { return [keywords.joined(separator: " ")] }
+        // A failed extraction must not drop the name, age or context the user
+        // already supplied. Search their wording and keep results as candidates.
+        guard let subject else { return [request] }
         let name = "\"\(subject)\""
         let context = keywords.filter { !Self.contains($0, in: subject) }.joined(separator: " ")
-        var result = ["\(name) \(context)"]
+        var result = ["\(name) \(request)", "\(name) \(context)"]
         if isMedical {
             // Profession terms guide discovery without guessing the person's country
             // or excluding small practices on ordinary commercial domains.
@@ -82,13 +86,47 @@ struct ResearchPlan {
     /// Each retained statement must itself link the name and distinguishing clue.
     func attributedEvidence(_ quote: String, text: String) -> [String] {
         guard quote.count >= 15, Self.contains(quote, in: text) else { return [] }
-        guard subject != nil else { return [quote] }
+        guard subject != nil else { return isTopic ? [quote] : [] }
         let separated = quote.replacingOccurrences(
             of: #"(?<=[.!?;])\s+|\n+|\s+(?:while|whereas|but|and)\s+"#,
             with: "\n", options: [.regularExpression, .caseInsensitive])
         return separated.components(separatedBy: .newlines).filter {
             hasSubject(in: $0) && !matchedClues(in: $0).isEmpty
         }
+    }
+
+    /// A user-selected page can be described without asserting it belongs to
+    /// the requested person. Retain short literal statements, never model guesses.
+    func selectedStatements(_ text: String) -> [String] {
+        let separated = text.replacingOccurrences(
+            of: #"(?<=[.!?;])\s+|\n+|\s+(?:while|whereas|but|and)\s+"#,
+            with: "\n", options: [.regularExpression, .caseInsensitive])
+        var statements = Array(separated.components(separatedBy: .newlines).filter {
+            $0.count >= 20 && $0.count <= 600 && (subject == nil || hasSubject(in: $0))
+        }.prefix(4))
+        // Many profiles place the name in a heading and use "she/he/they" in
+        // the bio. Keep the heading with its immediate paragraph, stopping at
+        // another heading rather than collecting a neighbouring person's bio.
+        if subject != nil, statements.isEmpty {
+            let lines = text.components(separatedBy: .newlines)
+            if let heading = lines.firstIndex(where: { $0.count <= 120 && hasSubject(in: $0) }) {
+                var context = [lines[heading]]
+                for line in lines.dropFirst(heading + 1).prefix(5) {
+                    let trimmed = line.trimmingCharacters(in: .whitespaces)
+                    if trimmed.isEmpty { continue }
+                    let tokens = trimmed.split(separator: " ")
+                    let otherHeading = (2...5).contains(tokens.count)
+                        && tokens.allSatisfy { $0.first?.isUppercase == true }
+                        && !hasSubject(in: trimmed) && matchedClues(in: trimmed).isEmpty
+                    if trimmed.hasPrefix("#") || otherHeading { break }
+                    context.append(line)
+                    if trimmed.count >= 20 { break }
+                }
+                let excerpt = context.joined(separator: "\n")
+                if context.count > 1, excerpt.count <= 800 { statements.append(excerpt) }
+            }
+        }
+        return statements
     }
 
     func score(title: String, summary: String, url: URL) -> Int {

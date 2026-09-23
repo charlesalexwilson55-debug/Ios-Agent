@@ -69,7 +69,8 @@ jobs:
           mkdir -p artifacts build
           {
             xcrun swiftc -swift-version 5 -parse-as-library \
-              App/Agent/ResearchPlan.swift App/Agent/ResearchEngine.swift App/Agent/Activity.swift \
+              App/Agent/ResearchPlan.swift App/Agent/ResearchPlanner.swift App/Agent/ResearchCandidate.swift \
+              App/Agent/ResearchEngine.swift App/Agent/Activity.swift \
               App/Web/WebSearch.swift scripts/research-tests.swift -o artifacts/research-tests \
               && artifacts/research-tests
           } 2>&1 | tee build/xcodebuild.log

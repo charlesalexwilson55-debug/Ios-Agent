@@ -159,7 +159,9 @@ struct RootView: View {
                 entries: session?.transcript ?? [],
                 accent: personas.selected?.color ?? Color.conduitAccent,
                 onShowDraft: { index, id in session?.showDraft(index, of: id) },
-                onCancelActivity: { id, entryID in session?.cancelActivity(id, in: entryID) }
+                onCancelActivity: { id, entryID in session?.cancelActivity(id, in: entryID) },
+                isWorking: session?.isWorking ?? false,
+                onSelectResearchCandidate: { id, entryID in session?.selectResearchCandidate(id, in: entryID) }
             )
             // A tap anywhere above the bar closes the plus menu.
             .overlay {

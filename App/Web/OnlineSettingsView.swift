@@ -8,7 +8,40 @@ struct OnlineSettingsView: View {
     @State private var hasKey = SearchKeyStore.hasKey
     @State private var keyDraft = ""
     @State private var testing = false
-    @State private var testResult: String?
+    @State private var testResult: TestResult?
+
+    private enum TestResult {
+        case working(Int)
+        case noResults
+        case failed(String)
+
+        var message: String {
+            switch self {
+            case .working(let count):
+                "Working: Tavily returned \(count) results."
+            case .noResults:
+                "Connected to Tavily, but this test returned no results. The key works; try again before relying on research."
+            case .failed(let message):
+                "Not working: \(message)"
+            }
+        }
+
+        var color: Color {
+            switch self {
+            case .working: .green
+            case .noResults: .orange
+            case .failed: .red
+            }
+        }
+
+        var symbol: String {
+            switch self {
+            case .working: "checkmark.circle.fill"
+            case .noResults: "exclamationmark.circle.fill"
+            case .failed: "xmark.circle.fill"
+            }
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -54,21 +87,21 @@ struct OnlineSettingsView: View {
                         .disabled(keyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                     if let testResult {
-                        Text(testResult)
+                        Label(testResult.message, systemImage: testResult.symbol)
                             .font(.footnote)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(testResult.color)
                     }
                 } header: {
                     Text("Web search")
                 } footer: {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("General questions can use Wikipedia without a key. Research requires "
-                            + "Tavily to search professional directories, clinics, employers and the wider web. "
-                            + "It stops and explains the problem if the key is missing, rejected or out of quota.")
-                        Text("Paste your Tavily API key above. Research uses advanced searches, which "
-                            + "consume more search credits than ordinary questions. Check your provider's allowance.")
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Conduit's text model runs on this phone. Tavily is a separate search provider that finds current web pages for the model to read.")
+                        setupStep(1, "Open Tavily and create or sign in to your account.")
+                        setupStep(2, "Create an API key in your Tavily dashboard, then paste it above and tap Save key.")
+                        setupStep(3, "Tap Test web search. A working key can then search directories, employers and the wider web.")
+                        Text("Research uses advanced searches and may consume more Tavily credits than an ordinary question.")
                         if let signUp = URL(string: "https://app.tavily.com") {
-                            Link("Open tavily.com", destination: signUp)
+                            Link("Open Tavily setup", destination: signUp)
                         }
                     }
                 }
@@ -107,14 +140,27 @@ struct OnlineSettingsView: View {
             do {
                 let response = try await WebSearch.research("medical practitioner hospital directory")
                 if let limitation = response.limitation {
-                    testResult = "Not working: " + limitation
+                    testResult = .failed(limitation)
+                } else if response.results.isEmpty {
+                    testResult = .noResults
                 } else {
-                    testResult = "Working: \(response.results.count) results from Tavily."
+                    testResult = .working(response.results.count)
                 }
             } catch {
-                testResult = "The search failed: \(error.localizedDescription)"
+                testResult = .failed(error.localizedDescription)
             }
             testing = false
+        }
+    }
+
+    private func setupStep(_ number: Int, _ text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 7) {
+            Text("\(number)")
+                .font(.caption2.bold())
+                .foregroundStyle(.white)
+                .frame(width: 18, height: 18)
+                .background(Color.conduitAccent, in: .circle)
+            Text(text)
         }
     }
 }
