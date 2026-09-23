@@ -165,10 +165,15 @@ import Foundation
         }
         state.skippedQueries += state.pendingQueries.count
         state.pendingQueries = []
+        // Copy comparator inputs before mutating another field of the same
+        // value. Reading state inside sort violates Swift's exclusive access.
+        let selectedURL = state.selection?.url
+        let rankingPlan = state.plan
         state.pendingSources.sort { a, b in
-            if a.url == state.selection?.url { return true }
-            if b.url == state.selection?.url { return false }
-            return (state.plan?.score(title: a.title, summary: a.summary, url: a.url) ?? 0) > (state.plan?.score(title: b.title, summary: b.summary, url: b.url) ?? 0)
+            if a.url == b.url { return false }
+            if a.url == selectedURL { return true }
+            if b.url == selectedURL { return false }
+            return (rankingPlan?.score(title: a.title, summary: a.summary, url: a.url) ?? 0) > (rankingPlan?.score(title: b.title, summary: b.summary, url: b.url) ?? 0)
         }
         let count = min(state.budget.pages - state.pages, state.round == 0 ? state.budget.firstStepPages : 6)
         state.skippedPages += max(0, state.pendingSources.count - count)
