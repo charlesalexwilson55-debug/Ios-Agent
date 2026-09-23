@@ -207,6 +207,15 @@ import Foundation
                 }
                 try Task.checkCancellation()
                 if let outer = result, let text = outer, let plan = state.plan {
+                    // Provider snippets and domain reputation cannot replace
+                    // the full requested name in actual page content.
+                    if plan.subject != nil && !plan.hasSubject(in: text) {
+                        state.visitedURLs.append(page.url.absoluteString)
+                        state.pages += 1; state.pendingSources.removeFirst()
+                        activity.updateItem(item, subtitle: "Different subject: full name absent from page", status: .skipped)
+                        try checkpoint()
+                        continue
+                    }
                     if ResearchSourcePolicy.isMinorProfile(text, plan: plan) {
                         state.limitations.append("A profile identified the subject as a minor and was excluded.")
                         state.visitedURLs.append(page.url.absoluteString)
@@ -303,6 +312,7 @@ import Foundation
     private func findings() -> ResearchEngine.Findings {
         if let plan = state.plan { state.graph.resolve(plan: plan) }
         let graph = state.graph
+        let displayGroups = graph.displayGroups()
         let facts: [ResearchEngine.Fact] = graph.claims.compactMap { claim in
             guard let ev = graph.evidence.first(where: { claim.evidenceIDs.contains($0.id) }),
                   let source = graph.sources.first(where: { $0.id == ev.sourceID }) else { return nil }
@@ -314,7 +324,9 @@ import Foundation
             return ResearchCandidate(title: source.title, url: source.url, snippet: String(source.text.prefix(400)),
                 status: hasConflict ? .conflicting : candidate.anchors.isEmpty ? .possible : .supported,
                 reason: candidate.reason + ". Match score \(candidate.score)/100 (rule coverage, not probability).",
-                matchedClues: candidate.anchors, sourceText: source.text)
+                matchedClues: candidate.anchors, sourceText: source.text,
+                displayGroupID: displayGroups.first(where: { $0.sourceIDs.contains(source.id) })?.id,
+                sharedAttributes: displayGroups.first(where: { $0.sourceIDs.contains(source.id) })?.attributes)
         }
         let missing = (state.plan?.clues ?? []).filter { clue in !graph.candidates.contains { $0.anchors.contains(clue) } }
         let summary = state.selection != nil

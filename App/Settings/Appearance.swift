@@ -144,7 +144,7 @@ struct AppearanceSettingsView: View {
             Section {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 6), spacing: 12) {
                     swatch(hex: "", color: .accentColor, name: "Default")
-                    ForEach(Persona.palette) { item in
+                    ForEach(AccentPalette.palette) { item in
                         swatch(hex: item.hex, color: Color(hex: item.hex) ?? .accentColor, name: item.name)
                     }
                 }
@@ -152,8 +152,7 @@ struct AppearanceSettingsView: View {
             } header: {
                 Text("Highlight colour")
             } footer: {
-                Text("Used for buttons and switches. A personality's own colour still shows on the plus "
-                    + "button and the waiting animation.")
+                Text("Used for buttons, switches and the loading animation.")
             }
 
             Section("Background") {

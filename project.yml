@@ -8,6 +8,9 @@ options:
     iOS: "26.0"
 
 packages:
+  ZIPFoundation:
+    url: https://github.com/weichsel/ZIPFoundation
+    exactVersion: 0.9.19
   MLXLM:
     url: https://github.com/ml-explore/mlx-swift-lm
     from: 3.31.3
@@ -29,6 +32,7 @@ targets:
     sources:
       - path: App
     dependencies:
+      - package: ZIPFoundation
       - sdk: libsqlite3.tbd
       - package: MLXLM
         product: MLXLLM

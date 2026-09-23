@@ -3,6 +3,7 @@ import PDFKit
 import UIKit
 import UniformTypeIdentifiers
 import Vision
+import ImageIO
 
 /// Turns an imported file into plain text for the knowledge index.
 enum TextExtractor {
@@ -162,9 +163,21 @@ enum TextExtractor {
 
     /// Text in a photo or scan, read on the phone with Apple's Vision.
     static func imageText(_ url: URL) async throws -> String {
-        let data = try Data(contentsOf: url)
-        guard let image = UIImage(data: data)?.cgImage else { throw ExtractError.empty }
-        return try await recognizeText(in: image)
+        try await imageText(Data(contentsOf: url))
+    }
+
+    /// Decode away from the UI, applying EXIF orientation and bounding pixel
+    /// memory for large camera photos. Vision's models ship with iOS.
+    static func imageText(_ data: Data) async throws -> String {
+        try await Task.detached(priority: .userInitiated) {
+            guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+                  let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                    kCGImageSourceThumbnailMaxPixelSize: 4096
+                  ] as CFDictionary) else { throw ExtractError.empty }
+            return try await recognizeText(in: image)
+        }.value
     }
 
     static func recognizeText(in image: CGImage) async throws -> String {
@@ -172,6 +185,7 @@ enum TextExtractor {
             let request = VNRecognizeTextRequest()
             request.recognitionLevel = .accurate
             request.usesLanguageCorrection = true
+            request.automaticallyDetectsLanguage = true
             try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
             return (request.results ?? [])
                 .compactMap { $0.topCandidates(1).first?.string }

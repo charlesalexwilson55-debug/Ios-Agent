@@ -283,11 +283,10 @@ final class ModelCatalog {
         let scoped = source.startAccessingSecurityScopedResource()
         defer { if scoped { source.stopAccessingSecurityScopedResource() } }
 
-        let destination = Self.managedRoot.appendingPathComponent(source.lastPathComponent)
-        if FileManager.default.fileExists(atPath: destination.path) {
-            throw CocoaError(.fileWriteFileExists)
-        }
-        try FileManager.default.copyItem(at: source, to: destination)
+        let root = Self.managedRoot
+        try await Task.detached(priority: .userInitiated) {
+            try ModelImport.copy(source, into: root)
+        }.value
         await refresh()
     }
 

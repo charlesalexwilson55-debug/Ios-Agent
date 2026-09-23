@@ -216,7 +216,7 @@ struct ProfileSettingsView: View {
                 TextField("Pronouns", text: $draft.pronouns)
                 TextField("Work or study", text: $draft.work)
             } header: {
-                Text("Your personality")
+                Text("Your details")
             } footer: {
                 Text("Conduit reads this before every answer, so keep it to what helps.")
             }

@@ -4,7 +4,8 @@ import SwiftUI
 /// newest first. Everything in them is searchable by later chats.
 struct MemoryView: View {
     @State private var store = ConversationStore.shared
-    @State private var opened: ChatRecord?
+    let isWorking: Bool
+    let onOpen: (ChatRecord) -> Void
     @State private var search = ""
     @State private var hits: [KnowledgeIndex.Hit] = []
 
@@ -31,12 +32,13 @@ struct MemoryView: View {
                     LazyVGrid(columns: columns, spacing: 12) {
                         ForEach(store.chats) { chat in
                             Button {
-                                opened = chat
+                                onOpen(chat)
                             } label: {
                                 MemoryCard(chat: chat)
                                     .frame(height: cardHeight)
                             }
                             .buttonStyle(.plain)
+                            .disabled(isWorking)
                             .contextMenu {
                                 Button("Delete", systemImage: "trash", role: .destructive) {
                                     store.delete(chat.id)
@@ -53,9 +55,6 @@ struct MemoryView: View {
             .onSubmit(of: .search) { runSearch() }
             .onChange(of: search) { _, text in
                 if text.isEmpty { hits = [] }
-            }
-            .sheet(item: $opened) { chat in
-                ChatMemoryView(chatID: chat.id)
             }
         }
     }
@@ -118,19 +117,6 @@ private struct MemoryCard: View {
         .padding(14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .glassEffect(.regular, in: .rect(cornerRadius: 20))
-        .overlay(alignment: .topTrailing) {
-            // The personality the chat was with.
-            Circle()
-                .fill(personaColor)
-                .frame(width: 14, height: 14)
-                .overlay { Circle().strokeBorder(.white.opacity(0.7), lineWidth: 1.5) }
-                .padding(12)
-                .accessibilityLabel(chat.personaName ?? "Conduit")
-        }
-    }
-
-    private var personaColor: Color {
-        chat.personaColorHex.flatMap { Color(hex: $0) } ?? Color.conduitAccent
     }
 }
 

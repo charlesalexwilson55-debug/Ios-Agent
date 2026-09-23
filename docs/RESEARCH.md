@@ -1,6 +1,6 @@
 # Research search and identity evidence
 
-Research uses Tavily advanced web search, not the Wikipedia fallback used for ordinary questions. Add a working key under Sidebar → Online. A missing key, rejected key, provider error or exhausted allowance is reported explicitly. Advanced queries cost more credits; the app's work level bounds searches and page reads.
+Research uses Tavily advanced web search, not the Wikipedia fallback used for ordinary questions. Add a working key under Sidebar → Online. A missing key, rejected key, provider error or exhausted allowance is reported explicitly. Advanced queries cost more credits; one fixed research budget bounds searches and page reads.
 
 Planning is optional model assistance, not a gate before search. Label variants, JSON and fenced JSON are accepted. Names and clues must come from the user's request; unsupported model inventions are dropped. If planning fails, the app extracts clear names and context directly from the request or searches the complete supplied wording in discovery-only mode. Missing formatted output no longer tells the user to supply details they already provided.
 

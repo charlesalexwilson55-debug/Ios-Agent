@@ -39,7 +39,6 @@ struct RootView: View {
     @State private var runner = ModelRunner()
     @State private var session: AgentSession?
     @State private var draft = ""
-    @State private var attachments: [PhotoAttachment] = []
     @State private var loadingState: ModelLoadingState = .idle
     /// Persisted so the choice survives relaunches. On by default: correct
     /// answers to maths and code matter more than speed on those questions.
@@ -50,13 +49,7 @@ struct RootView: View {
     @State private var research = false
     @State private var page: AppPage = .chat
     @State private var sidebarOpen = false
-    @State private var personas = PersonaStore.shared
     @State private var menuOpen = false
-    /// Set by the plus menu so the Personalities page opens a new one.
-    @State private var startNewPersona = false
-    /// The plus menu's work level, and whether Auto picks it per message.
-    @AppStorage("conduit.level") private var levelRaw = WorkLevel.normal.rawValue
-    @AppStorage("conduit.autoLevel") private var autoLevel = false
     /// Views that draw with the chosen accent colour and text size are
     /// rebuilt when either changes.
     @AppStorage(Appearance.accentKey) private var accentHex = ""
@@ -79,13 +72,15 @@ struct RootView: View {
         }
         .animation(.easeInOut(duration: 0.2), value: page)
         .task {
+            // Clear obsolete personality and effort choices from earlier builds.
+            UserDefaults.standard.removeObject(forKey: "conduit.personas")
+            UserDefaults.standard.removeObject(forKey: "conduit.persona.selected")
+            UserDefaults.standard.removeObject(forKey: "conduit.level")
+            UserDefaults.standard.removeObject(forKey: "conduit.autoLevel")
             let newSession = AgentSession(runner: runner, registry: ToolRegistry.standard())
             newSession.thinkingEnabled = thinking
             newSession.onlineEnabled = online
             newSession.researchEnabled = research
-            newSession.persona = personas.selected
-            newSession.workLevel = WorkLevel(rawValue: levelRaw) ?? .normal
-            newSession.autoLevel = autoLevel
             session = newSession
             Diagnostics.log("app.launch avail=\(Diagnostics.availableMB)MB")
             VolumeKeys.shared.onQuickPress = {
@@ -157,8 +152,7 @@ struct RootView: View {
         NavigationStack {
             TranscriptView(
                 entries: session?.transcript ?? [],
-                accent: personas.selected?.color ?? Color.conduitAccent,
-                onShowDraft: { index, id in session?.showDraft(index, of: id) },
+                accent: Color.conduitAccent,
                 onCancelActivity: { id, entryID in session?.cancelActivity(id, in: entryID) },
                 isWorking: session?.isWorking ?? false,
                 onSelectResearchCandidate: { id, entryID in session?.selectResearchCandidate(id, in: entryID) }
@@ -195,38 +189,11 @@ struct RootView: View {
                 online: $online,
                 research: $research,
                 menuOpen: $menuOpen,
-                level: levelBinding,
-                autoLevel: $autoLevel,
-                attachments: $attachments,
-                personas: personas.personas,
-                selectedPersona: personas.selected,
-                onSelectPersona: { personas.select($0) },
-                onManagePersonas: { createNew in
-                    startNewPersona = createNew
-                    page = .personalities
-                },
                 isWorking: session?.isWorking ?? false,
                 isModelLoaded: isReady,
                 onSend: send,
                 onStop: { session?.cancel() }
             )
-        }
-        // Edits to the personality in use apply from the next message.
-        .onChange(of: personas.selected) { _, persona in
-            session?.persona = persona
-        }
-        .onChange(of: personas.selectedID) { _, _ in
-            if let persona = personas.selected {
-                levelRaw = persona.level.rawValue
-                autoLevel = persona.autoLevel
-            }
-            loadModel(for: personas.selected)
-        }
-        .onChange(of: levelRaw) { _, raw in
-            session?.workLevel = WorkLevel(rawValue: raw) ?? .normal
-        }
-        .onChange(of: autoLevel) { _, enabled in
-            session?.autoLevel = enabled
         }
         .id(appearanceKey)
         .onChange(of: page) { _, _ in
@@ -247,12 +214,13 @@ struct RootView: View {
                 page = .chat
             }.environment(catalog)
         case .memory:
-            MemoryView()
+            MemoryView(isWorking: session?.isWorking ?? false) { chat in
+                session?.restore(chat)
+                draft = ""
+                page = .chat
+            }
         case .images:
             ImagesView()
-        case .personalities:
-            PersonasView(startNew: $startNewPersona)
-                .environment(catalog)
         case .directions:
             DirectionsView()
         case .online:
@@ -267,13 +235,6 @@ struct RootView: View {
         case .settings:
             SettingsView()
         }
-    }
-
-    private var levelBinding: Binding<WorkLevel> {
-        Binding(
-            get: { WorkLevel(rawValue: levelRaw) ?? .normal },
-            set: { levelRaw = $0.rawValue }
-        )
     }
 
     private var appearanceKey: String {
@@ -306,10 +267,8 @@ struct RootView: View {
 
     private func send() {
         let text = draft
-        let images = attachments.map(\.data)
         draft = ""
-        attachments = []
-        session?.submit(text, imageData: images)
+        session?.submit(text)
     }
 
     /// Runs a task handed over by Siri or a Shortcut.
@@ -333,23 +292,6 @@ struct RootView: View {
             return
         }
         session?.submit(task)
-    }
-
-    /// Loads the model a personality asks for, when it is on the phone and
-    /// not already loaded.
-    private func loadModel(for persona: Persona?) {
-        guard let persona else { return }
-        let wanted = persona.model.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !wanted.isEmpty else { return }
-        guard let model = ModelMatcher.match(wanted, in: catalog.models) else {
-            session?.note("\(persona.name) asks for the model \u{201C}\(wanted)\u{201D}, which is not "
-                + "on this phone, so the current model stays loaded.")
-            return
-        }
-        guard model.id != catalog.selectedModelID else { return }
-        // A model cannot be swapped out from under an answer being written.
-        if session?.isWorking ?? false { session?.cancel() }
-        select(model)
     }
 
     private func select(_ model: DiscoveredModel) {

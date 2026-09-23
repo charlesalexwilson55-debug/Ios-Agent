@@ -10,11 +10,25 @@ struct ResearchCandidatesView: View {
 
     var body: some View {
         LazyVStack(alignment: .leading, spacing: 10) {
-            ForEach(candidates) { candidate in
-                candidateCard(candidate)
+            ForEach(groupIDs, id: \.self) { groupID in
+                let members = candidates.filter { ($0.displayGroupID ?? $0.id) == groupID }
+                VStack(alignment: .leading, spacing: 10) {
+                    if members.count > 1, let shared = members.first?.sharedAttributes, !shared.isEmpty {
+                        Text("\(members.count) sources with shared details").font(.headline)
+                        Text(shared.joined(separator: " · ")).font(.subheadline)
+                        Text("Shared attributes are not proof of the same identity.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    ForEach(members) { candidate in candidateCard(candidate) }
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var groupIDs: [String] {
+        var seen = Set<String>()
+        return candidates.map { $0.displayGroupID ?? $0.id }.filter { seen.insert($0).inserted }
     }
 
     private func candidateCard(_ candidate: ResearchCandidate) -> some View {

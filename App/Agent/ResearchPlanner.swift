@@ -38,7 +38,11 @@ enum ResearchPlanner {
         let topicSignals: Set<String> = ["models", "algorithms", "weather", "climate", "history", "technology", "physics", "compare", "best"]
         let explicitTopic = (fields["name"] ?? []).contains { $0.lowercased() == "none" }
             && !looksLikePerson && ResearchPlan.words(request).contains { topicSignals.contains($0) }
-        let name = explicitTopic ? nil : (explicitName ?? fallbackName)
+        // A model may truncate a longer supplied name. Prefer the recovered
+        // request name when the proposed name is only a subset of it.
+        // User words outrank model extraction. A small model once converted
+        // "Kokoda Mitchell" into the unrelated topic "Kokoda Track".
+        let name = explicitTopic ? nil : (fallbackName ?? explicitName)
         let clues = values(["location", "locations", "city", "town", "employer", "organisation", "organization", "company", "institution"])
             + requestClues(request)
         let keywords = values(["keyword", "keywords", "occupation", "profession", "role"])
@@ -50,7 +54,7 @@ enum ResearchPlanner {
         return ResearchPlan(request: request, subject: name, keywords: unique, identityClues: clues, isTopic: explicitTopic)
     }
 
-    private static let prefixes = #"^(?:(?:please|can you|could you)\s+)?(?:(?:research|find|search for|look up|tell me about|find information about|find information on|find info on|find out about|who is)\s+)?(?:(?:a|the)\s+)?(?:(?:doctor|dr\.?|professor|prof\.?)\s+)?"#
+    private static let prefixes = #"^(?:(?:please|can you|could you|i want you to)\s+)*(?:(?:do|conduct|carry out)\s+)?(?:(?:some|a)\s+)?(?:(?:research|researcg|reserach|find information about|find information on|find info on|find out about|search for|look up|tell me about|who is|find)\s+)?(?:(?:on|about|for)\s+)?(?:(?:a|the)\s+)?(?:(?:doctor|dr\.?|professor|prof\.?)\s+)?"#
 
     /// Conservative extraction from the request itself. It need not handle every
     /// natural-language form: unknown forms still produce discovery searches.

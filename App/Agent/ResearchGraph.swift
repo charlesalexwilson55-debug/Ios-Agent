@@ -230,9 +230,49 @@ struct ResearchGraph: Codable, Sendable {
         return queries
     }
 
+    struct DisplayGroup: Identifiable {
+        var id: String { sourceIDs[0] }
+        var sourceIDs: [String]
+        var attributes: [String]
+        var name: String
+    }
+
+    /// Presentation groups require the same evidenced name and at least one
+    /// common quoted attribute across EVERY member. No transitive identity merge.
+    func displayGroups() -> [DisplayGroup] {
+        var groups: [DisplayGroup] = []
+        for candidate in candidates {
+            let name = entities.first { $0.id == candidate.entityID }?.label ?? ""
+            let attributes = Set(claims.filter {
+                $0.subjectID == candidate.entityID && ["role", "organisation", "location", "education"].contains($0.predicate)
+            }.map { $0.objectID })
+            if !name.isEmpty, let index = groups.indices.first(where: {
+                ResearchPlan.normalized(groups[$0].name) == ResearchPlan.normalized(name)
+                    && !Set(groups[$0].attributes).isDisjoint(with: attributes)
+            }) {
+                groups[index].sourceIDs.append(candidate.sourceID)
+                groups[index].attributes = Array(Set(groups[index].attributes).intersection(attributes)).sorted()
+            } else {
+                groups.append(.init(sourceIDs: [candidate.sourceID], attributes: attributes.sorted(), name: name))
+            }
+        }
+        return groups.map { group in
+            var result = group
+            result.attributes = group.sourceIDs.count > 1 ? group.attributes.map { id in
+                let label = entities.first { $0.id == id }?.label ?? id
+                return "\(id.components(separatedBy: ":")[0]): \(label)"
+            } : []
+            return result
+        }
+    }
+
     func report() -> String {
         var paragraphs: [String] = []
-        for candidate in candidates {
+        for group in displayGroups() {
+            if group.sourceIDs.count > 1 {
+                paragraphs.append("**Sources sharing \(group.name) and \(group.attributes.joined(separator: ", "))**\n\nShared details organise these sources; they do not prove the profiles are the same person.")
+            }
+            for candidate in candidates.filter({ group.sourceIDs.contains($0.sourceID) }) {
             guard let source = sources.first(where: { $0.id == candidate.sourceID }) else { continue }
             let items = claims.filter { $0.subjectID == candidate.entityID }
             guard !items.isEmpty else { continue }
@@ -240,6 +280,7 @@ struct ResearchGraph: Codable, Sendable {
             for claim in items {
                 let label = claim.status == .corroborated ? "Corroborated across distinct, nonduplicate sites" : claim.status == .disputed ? "Unresolved difference" : "Reported by this source"
                 paragraphs.append("- \(claim.text) — *\(label)* [source](\(source.url.absoluteString))")
+            }
             }
         }
         if !contradictions.isEmpty { paragraphs.append("\(contradictions.count) differences need further evidence; profiles have not been silently combined.") }

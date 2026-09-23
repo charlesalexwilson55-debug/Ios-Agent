@@ -29,12 +29,6 @@ struct CapabilitiesView: View {
              note: "Turn on Research from the plus button. It searches every combination of your "
                  + "keywords, checks each page is about the same subject before using it, and never "
                  + "collects addresses, phone numbers or details about someone's children."),
-        Item(text: "Custom personalities",
-             note: "Each has its own voice, goal, connectors, model, colour and work level."),
-        Item(text: "Work harder on an answer",
-             note: "The plus menu's level slider writes up to five versions of an answer, from simple "
-                 + "to in depth, shows the best, and keeps the others a tap away. Auto picks the level "
-                 + "for each message. Phone actions are never done twice."),
         Item(text: "Use MCP servers on the internet",
              note: "Add them in Settings > Connectors, then name one in a message."),
         Item(text: "Use your Google account",
@@ -45,7 +39,7 @@ struct CapabilitiesView: View {
         Item(text: "Remember earlier chats",
              note: "Every chat is saved on the Memory page and looked up when it helps, even offline."),
         Item(text: "Read pictures and draw new ones",
-             note: "Add a photo from the plus menu, or ask it to draw something. Drawings use Apple's "
+             note: "Add photos to a Library for on-device text recognition, or ask it to draw something. Drawings use Apple's "
                  + "on-device image model, in animation, illustration or sketch style."),
     ]
 

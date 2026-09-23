@@ -15,14 +15,14 @@ struct ThoughtRecord: Codable, Identifiable, Hashable {
 }
 
 /// A saved chat.
-struct ChatRecord: Codable, Identifiable, Hashable {
+struct ChatRecord: Codable, Identifiable {
     var id: UUID
     var title: String
     var created: Date
     var updated: Date
-    var personaName: String?
-    var personaColorHex: String?
     var thoughts: [ThoughtRecord]
+    var transcript: [TranscriptEntry]?
+    var history: [ModelRunner.Message]?
 }
 
 /// The memory bank: every chat, kept on the phone, and indexed so later
@@ -55,22 +55,19 @@ final class ConversationStore {
     static func collection(for chatID: UUID) -> String { "chat:\(chatID.uuidString)" }
 
     /// Saves one exchange and indexes it for recall.
-    func record(chatID: UUID, thought: ThoughtRecord, persona: Persona?) {
+    func record(chatID: UUID, thought: ThoughtRecord,
+                transcript: [TranscriptEntry], history: [ModelRunner.Message]) {
         var chat = chats.first { $0.id == chatID } ?? ChatRecord(
             id: chatID,
             title: Self.title(from: thought.request),
             created: thought.date,
             updated: thought.date,
-            personaName: persona?.name,
-            personaColorHex: persona?.colorHex,
             thoughts: []
         )
         chat.thoughts.append(thought)
         chat.updated = thought.date
-        if let persona {
-            chat.personaName = persona.name
-            chat.personaColorHex = persona.colorHex
-        }
+        chat.transcript = transcript
+        chat.history = history
         chats.removeAll { $0.id == chatID }
         chats.insert(chat, at: 0)
         save(chat)

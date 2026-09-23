@@ -4,17 +4,17 @@ import Foundation
 ///
 /// It records actions and results (searches run, pages read, what each one
 /// gave), not the model's hidden reasoning.
-struct ActivityLog: Equatable {
+struct ActivityLog: Equatable, Codable {
     var title: String
     var steps: [ActivityStep] = []
 }
 
-struct ActivityStep: Identifiable, Equatable {
-    enum Status: Equatable {
+struct ActivityStep: Identifiable, Equatable, Codable {
+    enum Status: String, Equatable, Codable {
         case waiting, running, done, failed, skipped, stopped
     }
 
-    let id = UUID()
+    var id = UUID()
     var title: String
     var detail: String?
     var status: Status = .running
@@ -23,8 +23,8 @@ struct ActivityStep: Identifiable, Equatable {
     var cancellable = false
 }
 
-struct ActivityItem: Identifiable, Equatable {
-    let id = UUID()
+struct ActivityItem: Identifiable, Equatable, Codable {
+    var id = UUID()
     var title: String
     var subtitle: String?
     var url: URL?

@@ -18,6 +18,7 @@ struct ModelPickerSheet: View {
     var showsDoneButton = true
 
     @State private var isImporting = false
+    @State private var isCopying = false
     @State private var importError: String?
     @State private var permissionSnapshot: Permissions.Snapshot?
 
@@ -34,6 +35,11 @@ struct ModelPickerSheet: View {
             .navigationTitle("Model")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { isImporting = true } label: { Image(systemName: "plus") }
+                        .accessibilityLabel("Import model")
+                        .disabled(isCopying)
+                }
                 if showsDoneButton {
                     ToolbarItem(placement: .confirmationAction) {
                         Button("Done") { dismiss() }
@@ -49,7 +55,7 @@ struct ModelPickerSheet: View {
                 isPresented: $isImporting,
                 // A model is a folder of weights plus config and tokenizer
                 // files, so the picker selects a directory, not a file.
-                allowedContentTypes: [.folder],
+                allowedContentTypes: [.zip, .folder],
                 allowsMultipleSelection: false
             ) { result in
                 handleImport(result)
@@ -163,11 +169,12 @@ struct ModelPickerSheet: View {
             Button {
                 isImporting = true
             } label: {
-                Label("Import a model folder", systemImage: "folder.badge.plus")
+                Label("Add model file or folder", systemImage: "plus.circle")
             }
+            .disabled(isCopying)
+            if isCopying { ProgressView("Importing model…") }
         } footer: {
-            Text("Pick a folder containing config.json and .safetensors files. You can also copy "
-                + "a model straight into Conduit's folder in the Files app, under On My iPhone.")
+            Text("Press + and choose a ZIP of the complete MLX model, or its folder. Keep the config, tokenizer and all weight files together.")
         }
     }
 
@@ -237,10 +244,10 @@ struct ModelPickerSheet: View {
         case .success(let urls):
             guard let url = urls.first else { return }
             Task {
+                isCopying = true
+                defer { isCopying = false }
                 do {
                     try await catalog.importModel(from: url)
-                } catch CocoaError.fileWriteFileExists {
-                    importError = "A model with that folder name is already installed."
                 } catch {
                     importError = error.localizedDescription
                 }

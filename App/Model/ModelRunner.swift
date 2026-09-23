@@ -498,10 +498,10 @@ actor ModelRunner {
     /// An assistant turn that requested tools carries those calls, and each
     /// tool result carries the id of the call it answers, so the model always
     /// sees which call a result belongs to.
-    struct Message {
-        enum Role { case system, user, assistant, tool }
+    struct Message: Codable {
+        enum Role: String, Codable { case system, user, assistant, tool }
 
-        struct Call {
+        struct Call: Codable {
             let id: String
             let name: String
             let arguments: ArgumentValue

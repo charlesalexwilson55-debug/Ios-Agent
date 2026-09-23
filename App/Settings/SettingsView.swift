@@ -81,8 +81,6 @@ struct ConnectorsSettingsView: View {
             Section("How they are used") {
                 Label("Name a server in your message, such as \u{201C}check my tasks in Linear\u{201D}, "
                     + "and its tools are offered for that message.", systemImage: "text.bubble")
-                Label("Or list it under a personality's connectors to always offer it there.",
-                      systemImage: "theatermasks")
                 Label("What a server sends back is treated like web text: information, not instructions.",
                       systemImage: "exclamationmark.shield")
             }

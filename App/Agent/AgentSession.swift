@@ -3,8 +3,8 @@ import Observation
 import UIKit
 
 /// One line in the visible transcript.
-struct TranscriptEntry: Identifiable {
-    enum Kind {
+struct TranscriptEntry: Identifiable, Codable {
+    enum Kind: String, Codable {
         case user
         case assistant
         /// A tool ran; shown as a compact chip rather than a chat bubble.
@@ -14,7 +14,7 @@ struct TranscriptEntry: Identifiable {
         case error
     }
 
-    let id = UUID()
+    var id = UUID()
     let kind: Kind
     var text: String
     /// Set for tool entries so the UI can show the right glyph.
@@ -22,21 +22,6 @@ struct TranscriptEntry: Identifiable {
     var isStreaming: Bool = false
     /// Qwen3 thinking for assistant entries, shown folded away.
     var reasoning: String = ""
-    /// Every version of this answer when several were written. `text` is
-    /// the one on show.
-    var drafts: [String] = []
-    /// How many drafts are being written; zero once the answer is final.
-    var draftTarget: Int = 0
-    var shownDraft: Int = 0
-    /// A word for each draft's style, such as "Simple".
-    var draftLabels: [String] = []
-    /// The version Conduit judged best.
-    var bestDraft: Int?
-    /// Where this answer sits in the model's history, so showing another
-    /// draft also changes what the model remembers saying.
-    var historyIndex: Int?
-    /// The work level that wrote the drafts.
-    var levelTitle: String?
     /// The steps of a long task, for `.activity` entries.
     var activity: ActivityLog?
     /// Pictures shown with the entry, from `ImageStore`.
@@ -45,13 +30,46 @@ struct TranscriptEntry: Identifiable {
     var researchCandidates: [ResearchCandidate] = []
     var researchRequest: String?
 
-    enum Outcome {
+    enum Outcome: String, Codable {
         case done
         /// Staged in a system sheet; the user must tap send.
         case awaitingUser
         /// Another app took over; the result is unobservable.
         case handedOff
         case failed
+    }
+
+    init(id: UUID = UUID(), kind: Kind, text: String, toolOutcome: Outcome? = nil,
+         isStreaming: Bool = false, reasoning: String = "", activity: ActivityLog? = nil,
+         imageIDs: [UUID] = [], researchCandidates: [ResearchCandidate] = [], researchRequest: String? = nil) {
+        self.id = id
+        self.kind = kind
+        self.text = text
+        self.toolOutcome = toolOutcome
+        self.isStreaming = isStreaming
+        self.reasoning = reasoning
+        self.activity = activity
+        self.imageIDs = imageIDs
+        self.researchCandidates = researchCandidates
+        self.researchRequest = researchRequest
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, kind, text, toolOutcome, isStreaming, reasoning, activity, imageIDs, researchCandidates, researchRequest
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        kind = try c.decode(Kind.self, forKey: .kind)
+        text = try c.decode(String.self, forKey: .text)
+        toolOutcome = try c.decodeIfPresent(Outcome.self, forKey: .toolOutcome)
+        isStreaming = try c.decodeIfPresent(Bool.self, forKey: .isStreaming) ?? false
+        reasoning = try c.decodeIfPresent(String.self, forKey: .reasoning) ?? ""
+        activity = try c.decodeIfPresent(ActivityLog.self, forKey: .activity)
+        imageIDs = try c.decodeIfPresent([UUID].self, forKey: .imageIDs) ?? []
+        researchCandidates = try c.decodeIfPresent([ResearchCandidate].self, forKey: .researchCandidates) ?? []
+        researchRequest = try c.decodeIfPresent(String.self, forKey: .researchRequest)
     }
 }
 
@@ -87,14 +105,6 @@ final class AgentSession {
     /// followed across several web pages by `ResearchEngine` instead of
     /// going through the normal tool loop.
     var researchEnabled: Bool = false
-
-    /// The personality in use, or nil for plain Conduit. Shapes the prompt
-    /// and the tools offered.
-    var persona: Persona?
-
-    /// The plus menu's work level, and whether Auto picks it per message.
-    var workLevel: WorkLevel = .normal
-    var autoLevel: Bool = false
 
     /// The image-reading model on the phone, if there is one.
     var visionModelDirectory: URL?
@@ -251,6 +261,7 @@ final class AgentSession {
     }
 
     func clear() {
+        guard !isWorking else { return }
         cancel()
         transcript.removeAll()
         history.removeAll()
@@ -260,6 +271,24 @@ final class AgentSession {
         readWebContent = false
         pendingResearchSelection = nil
         chatID = UUID()
+    }
+
+    /// Restore saved exchange exactly and continue with its tool-aware history.
+    func restore(_ chat: ChatRecord) {
+        guard !isWorking else { return }
+        clear()
+        chatID = chat.id
+        transcript = chat.transcript ?? chat.thoughts.flatMap { thought in
+            var answer = TranscriptEntry(kind: .assistant, text: thought.answer)
+            answer.reasoning = thought.reasoning
+            return [TranscriptEntry(kind: .user, text: thought.request)]
+                + thought.actions.map { TranscriptEntry(kind: .tool, text: $0) } + [answer]
+        }
+        history = chat.history ?? chat.thoughts.flatMap { [.user($0.request), .assistant($0.answer)] }
+        for index in transcript.indices { transcript[index].isStreaming = false }
+        readWebContent = history.contains(where: { $0.role == .tool })
+        lastTurnUsedPhoneTools = readWebContent
+        callCounter = history.reduce(0) { $0 + $1.calls.count }
     }
 
     /// Saves the finished exchange to the memory bank.
@@ -282,7 +311,8 @@ final class AgentSession {
         }
         let thought = ThoughtRecord(request: request, reasoning: String(reasoning.prefix(20_000)),
                                     actions: actions, answer: answer)
-        ConversationStore.shared.record(chatID: chatID, thought: thought, persona: persona)
+        ConversationStore.shared.record(chatID: chatID, thought: thought,
+                                        transcript: transcript, history: history)
     }
 
     // MARK: - The loop
@@ -303,24 +333,19 @@ final class AgentSession {
             return
         }
 
-        let persona = self.persona
         let phoneTask = TaskRouter.looksLikePhoneTask(currentRequest)
-        let auto = autoLevel ? AutoConfig.choose(for: currentRequest, isPhoneTask: phoneTask) : nil
-        let level = auto?.level ?? workLevel
         let selection = pendingResearchSelection
         pendingResearchSelection = nil
         let resume = pendingResearchRun
         pendingResearchRun = nil
-        if researchEnabled || auto?.research == true || selection != nil || resume != nil {
-            await runResearch(level: level, selection: selection, resume: resume)
+        if researchEnabled || selection != nil || resume != nil {
+            await runResearch(selection: selection, resume: resume)
             return
         }
 
         let mcp = MCPStore.shared
         let requestServers = mcp.servers(namedIn: currentRequest)
-        let personaServers = persona.map { mcp.servers(namedIn: $0.connectors) } ?? []
         let requestGoogle = GoogleTools.toolNames(for: currentRequest)
-        let personaGoogle = persona.map { GoogleTools.toolNames(for: $0.connectors) } ?? []
         var mode = TaskRouter.mode(for: currentRequest, previousTurnUsedPhoneTools: lastTurnUsedPhoneTools)
         // Naming a connected server or Google service is a request to use it.
         if !requestServers.isEmpty || !requestGoogle.isEmpty { mode = .task }
@@ -330,29 +355,13 @@ final class AgentSession {
             !$0.name.hasPrefix(MCPStore.toolPrefix) && !$0.name.hasPrefix(GoogleTools.prefix)
         }
         var tools = TaskRouter.tools(from: builtIn, mode: mode, online: online)
-        if let persona {
-            var allowed = persona.allowedToolNames
-            // A personality that names only MCP servers gets just those, plus
-            // the clock and calculator.
-            if allowed == nil, !personaServers.isEmpty || !personaGoogle.isEmpty,
-               !Connector.namesEverything(persona.connectors) {
-                allowed = Connector.alwaysAllowed
-            }
-            if let allowed {
-                tools = tools.filter { allowed.contains($0.name) }
-            }
-        }
         if online {
-            let outside = mcp.toolNames(for: requestServers + personaServers)
+            let outside = mcp.toolNames(for: requestServers)
                 .union(requestGoogle)
-                .union(personaGoogle)
             tools += registry.specs.filter { outside.contains($0.name) }
         }
 
         var systemPrompt = SystemPrompt.build(tools: tools, mode: mode)
-        if let persona {
-            systemPrompt += "\n\n" + persona.promptSection
-        }
         if let profile = ProfileStore.shared.promptSection {
             systemPrompt += "\n\n" + profile
         }
@@ -370,17 +379,12 @@ final class AgentSession {
             chip.toolOutcome = .done
             transcript.append(chip)
         }
-        let thinking = auto?.thinking ?? (level.forcesThinking || thinkingEnabled)
-        let toolSteps = level.toolSteps
-        // Only questions are drafted more than once: phone tools have side
-        // effects, and a second draft must never send a second message.
-        let drafts = mode == .answer ? level.drafts : 1
+        let thinking = thinkingEnabled
+        let toolSteps = maxToolIterations
         offeredTools = Set(tools.map(\.name))
         usedPhoneTools = false
         defer { lastTurnUsedPhoneTools = usedPhoneTools }
-        Diagnostics.log("turn mode=\(mode.rawValue) online=\(online) tools=\(tools.count) "
-            + "persona=\(persona == nil ? "none" : "custom") level=\(level.title) "
-            + "auto=\(auto != nil) think=\(thinking) drafts=\(drafts)")
+        Diagnostics.log("turn mode=\(mode.rawValue) online=\(online) tools=\(tools.count) think=\(thinking)")
 
         for iteration in 0..<toolSteps {
             await waitUntilForeground()
@@ -466,10 +470,6 @@ final class AgentSession {
                         ? "I did not produce a reply. Try rephrasing the request."
                         : "I ran out of room while thinking. Try a narrower question, "
                             + "or turn off Think."
-                } else if !replyText.isEmpty, drafts > 1 {
-                    await writeMoreDrafts(first: replyText, entryIndex: entryIndex,
-                                          systemPrompt: systemPrompt, total: drafts,
-                                          levelTitle: level.title)
                 }
                 return
             }
@@ -513,7 +513,7 @@ final class AgentSession {
 
     /// Follows the request across the web with `ResearchEngine`, showing its
     /// steps as they happen, then writes up what was found.
-    private func runResearch(level: WorkLevel, selection: ResearchSelection? = nil, resume: ResearchRun? = nil) async {
+    private func runResearch(selection: ResearchSelection? = nil, resume: ResearchRun? = nil) async {
         let request = resume?.request ?? selection?.request ?? currentRequest
         lastTurnUsedPhoneTools = false
         guard onlineEnabled, Connectivity.shared.isOnline else {
@@ -559,7 +559,7 @@ final class AgentSession {
 
         let engine = ResearchEngine(
             request: request,
-            budget: level.researchBudget,
+            budget: .hard,
             ask: { [weak self] system, user in
                 guard let self else { throw CancellationError() }
                 return try await self.ask(system: system, user: user)
@@ -760,136 +760,6 @@ final class AgentSession {
         } catch {
             reporter.finish(step, .failed, detail: error.localizedDescription)
             transcript.append(TranscriptEntry(kind: .error, text: error.localizedDescription))
-        }
-    }
-
-    // MARK: - Drafts
-
-    /// Writes more versions of the answer, each in a different style, has the
-    /// model pick the best, and shows that one. The others stay a tap away in
-    /// the message, with no need to generate them again.
-    ///
-    /// The phone runs one generation at a time, so the versions are written
-    /// one after another. Tools are withheld: whatever the first version
-    /// looked up is already in the history.
-    private func writeMoreDrafts(
-        first: String,
-        entryIndex: Int,
-        systemPrompt: String,
-        total: Int,
-        levelTitle: String
-    ) async {
-        guard total >= 2, transcript.indices.contains(entryIndex),
-              let last = history.last, last.role == .assistant, last.content == first
-        else { return }
-        let entryID = transcript[entryIndex].id
-        func update(_ change: (inout TranscriptEntry) -> Void) {
-            guard let index = transcript.lastIndex(where: { $0.id == entryID }) else { return }
-            change(&transcript[index])
-        }
-
-        // Several full answers take a while; a screen lock would stop them.
-        UIApplication.shared.isIdleTimerDisabled = true
-        defer { UIApplication.shared.isIdleTimerDisabled = false }
-
-        // The first version comes back out of the history while the others
-        // are written, so they answer the question rather than follow it.
-        history.removeLast()
-        let code = DraftPlanner.isCode(request: currentRequest, answer: first)
-        let styles = DraftPlanner.styles(extraDrafts: total - 1, code: code)
-        var drafts = [first]
-        var labels = [DraftPlanner.firstLabel]
-        update {
-            $0.drafts = drafts
-            $0.draftLabels = labels
-            $0.draftTarget = styles.count + 1
-            $0.levelTitle = levelTitle
-            $0.text = ""
-            $0.isStreaming = true
-        }
-        var base: [ModelRunner.Message] = [.system(systemPrompt)]
-        base.append(contentsOf: trimmedHistory())
-
-        for style in styles {
-            var messages = base
-            messages.append(ModelRunner.Message.user(DraftPlanner.instruction(style: style.instruction)))
-            if let text = await generateQuietly(messages) {
-                drafts.append(text)
-                labels.append(style.label)
-                update {
-                    $0.drafts = drafts
-                    $0.draftLabels = labels
-                }
-            }
-            if Task.isCancelled { break }
-        }
-
-        var best = 0
-        if !Task.isCancelled, drafts.count > 1 {
-            // Drafts that failed are not waited for: the label moves on to
-            // comparing.
-            update { $0.draftTarget = drafts.count }
-            var messages = base
-            messages.append(ModelRunner.Message.user(DraftPlanner.judgePrompt(drafts: drafts, code: code)))
-            if let reply = await generateQuietly(messages, sampling: .extraction(maxTokens: 12)) {
-                best = DraftPlanner.pick(from: reply, count: drafts.count)
-            }
-        }
-
-        // The conversation was cleared while drafting: nothing to record.
-        guard transcript.contains(where: { $0.id == entryID }) else { return }
-        let answer = drafts[best]
-        let historyIndex = history.count
-        history.append(.assistant(answer))
-        update {
-            $0.text = answer
-            $0.isStreaming = false
-            $0.drafts = drafts.count > 1 ? drafts : []
-            $0.shownDraft = best
-            $0.bestDraft = drafts.count > 1 ? best : nil
-            $0.draftTarget = 0
-            $0.historyIndex = historyIndex
-        }
-    }
-
-    /// One generation with no tools and no thinking, collected rather than
-    /// streamed. Nil when it fails, is cancelled or says nothing.
-    private func generateQuietly(
-        _ messages: [ModelRunner.Message],
-        sampling: ModelRunner.Sampling = .chat
-    ) async -> String? {
-        await waitUntilForeground()
-        if Task.isCancelled { return nil }
-        var text = ""
-        isGenerating = true
-        defer { isGenerating = false }
-        do {
-            for try await event in runner.stream(
-                messages: messages, tools: [], thinking: false, sampling: sampling
-            ) {
-                if case .text(let chunk) = event { text += chunk }
-            }
-        } catch {
-            return nil
-        }
-        if Task.isCancelled { return nil }
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
-    }
-
-    /// Shows another of an answer's drafts in place, and makes it the one the
-    /// model remembers giving.
-    func showDraft(_ index: Int, of entryID: UUID) {
-        guard let position = transcript.firstIndex(where: { $0.id == entryID }),
-              !transcript[position].isStreaming,
-              transcript[position].drafts.indices.contains(index)
-        else { return }
-        let draft = transcript[position].drafts[index]
-        transcript[position].shownDraft = index
-        transcript[position].text = draft
-        if let historyIndex = transcript[position].historyIndex,
-           history.indices.contains(historyIndex), history[historyIndex].role == .assistant {
-            history[historyIndex] = .assistant(draft)
         }
     }
 

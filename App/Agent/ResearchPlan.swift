@@ -136,6 +136,12 @@ struct ResearchPlan: Codable, Sendable {
         guard ["https", "http"].contains(url.scheme?.lowercased() ?? ""), !host.isEmpty else { return -100 }
         if ["domain.com", "wix.com", "godaddy.com", "squarespace.com"].contains(host.replacingOccurrences(of: "www.", with: "")) && !hasSubject(in: text) { return -100 }
         if ["domain for sale", "buy this domain", "parked domain", "website builder", "access denied", "just a moment"].contains(where: { normalized.contains($0) }) && !hasSubject(in: text) { return -100 }
+        // Keep an official directory as a lower-priority lead when its snippet
+        // omits the name, but reject partial-name attractions and unrelated pages.
+        if subject != nil && !hasSubject(in: text) {
+            let directory = ["staff", "team", "directory", "practitioners", "faculty", "register"].contains { normalized.contains($0) }
+            return directory && !matchedClues(in: text).isEmpty ? 0 : -100
+        }
         var score = subject == nil ? 0 : (hasSubject(in: text) ? 20 : -5)
         score += matchedClues(in: text).count * 5
         if isMedical && ["hospital", "clinic", "practitioner", "physician", "surgeon", "medical"].contains(where: { normalized.contains($0) }) { score += 8 }

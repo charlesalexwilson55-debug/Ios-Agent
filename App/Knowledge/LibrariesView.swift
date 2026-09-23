@@ -1,4 +1,5 @@
 import SwiftUI
+import PhotosUI
 import UniformTypeIdentifiers
 
 /// The Libraries page: collections of documents Conduit searches when it
@@ -114,6 +115,8 @@ struct LibraryDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var store = LibraryStore.shared
     @State private var importing = false
+    @State private var photos: [PhotosPickerItem] = []
+    @State private var readingPhotos = false
     @State private var editing = false
     @State private var writingNote = false
     @State private var query = ""
@@ -148,6 +151,13 @@ struct LibraryDetailView: View {
                 } label: {
                     Label("Write or paste a note", systemImage: "square.and.pencil")
                 }
+                PhotosPicker(selection: $photos, maxSelectionCount: 20, matching: .images) {
+                    Label("Add photos from gallery", systemImage: "photo.on.rectangle")
+                }
+                .disabled(readingPhotos)
+                if readingPhotos {
+                    HStack { ProgressView(); Text("Reading text from photos on this iPhone…") }
+                }
                 if let progress = store.importing[library.id] {
                     VStack(alignment: .leading, spacing: 6) {
                         ProgressView(value: Double(progress.done), total: Double(max(progress.total, 1)))
@@ -169,7 +179,7 @@ struct LibraryDetailView: View {
                 }
             } footer: {
                 Text("PDF, Word, PowerPoint, Excel, text, Markdown, code, web pages, ZIP archives and photos "
-                    + "of text. Only the text is kept, in a private index on this phone.")
+                    + "of text. Apple Vision reads photos on this iPhone; text is indexed locally.")
             }
 
             Section("Try a search") {
@@ -214,6 +224,30 @@ struct LibraryDetailView: View {
             }
         }
         .navigationTitle(library.name.isEmpty ? "Library" : library.name)
+        .onChange(of: photos) { _, selection in
+            guard !selection.isEmpty, !readingPhotos else { return }
+            readingPhotos = true
+            Task {
+                var failures: [String] = []
+                for (index, photo) in selection.enumerated() {
+                    do {
+                        guard let data = try await photo.loadTransferable(type: Data.self) else {
+                            throw TextExtractor.ExtractError.empty
+                        }
+                        let text = try await TextExtractor.imageText(data)
+                        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                            throw TextExtractor.ExtractError.empty
+                        }
+                        try await store.addNote(title: "Photo \(index + 1) · \(Date().formatted(date: .abbreviated, time: .shortened))", text: text, to: library)
+                    } catch {
+                        failures.append("Photo \(index + 1): \(error.localizedDescription)")
+                    }
+                }
+                if !failures.isEmpty { store.lastFailures[library.id] = failures }
+                photos = []
+                readingPhotos = false
+            }
+        }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {

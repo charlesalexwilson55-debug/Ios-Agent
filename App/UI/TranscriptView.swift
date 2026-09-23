@@ -10,10 +10,8 @@ import UIKit
 /// the distinction this app most needs to communicate.
 struct TranscriptView: View {
     let entries: [TranscriptEntry]
-    /// The colour of the waiting animation: the personality's, or the app's.
+    /// The colour of the waiting animation.
     var accent: Color = .conduitAccent
-    /// Shows another draft of an answer: the draft's index and the entry.
-    var onShowDraft: (Int, UUID) -> Void = { _, _ in }
     /// Stops a step or skips an item of an activity: its id and the entry.
     var onCancelActivity: (UUID, UUID) -> Void = { _, _ in }
     var isWorking: Bool = false
@@ -63,9 +61,7 @@ struct TranscriptView: View {
             UserBubble(text: entry.text, imageIDs: entry.imageIDs)
         case .assistant:
             VStack(alignment: .leading, spacing: 10) {
-                AssistantText(entry: entry, accent: accent) { index in
-                    onShowDraft(index, entry.id)
-                }
+                AssistantText(entry: entry, accent: accent)
                 if !entry.researchCandidates.isEmpty {
                     ResearchCandidatesView(candidates: entry.researchCandidates, isWorking: isWorking) { candidate in
                         onSelectResearchCandidate(candidate.id, entry.id)
@@ -120,7 +116,6 @@ private struct UserBubble: View {
 private struct AssistantText: View {
     let entry: TranscriptEntry
     let accent: Color
-    let onShowDraft: (Int) -> Void
 
     @AppStorage(Appearance.showReasoningKey) private var showReasoning = true
 
@@ -128,7 +123,7 @@ private struct AssistantText: View {
         VStack(alignment: .leading, spacing: 10) {
             if showReasoning && !entry.reasoning.isEmpty {
                 ReasoningView(reasoning: entry.reasoning,
-                              isThinking: entry.isStreaming && entry.text.isEmpty && entry.draftTarget == 0)
+                              isThinking: entry.isStreaming && entry.text.isEmpty)
             }
 
             ForEach(entry.imageIDs, id: \.self) { id in
@@ -145,110 +140,15 @@ private struct AssistantText: View {
             }
 
             if entry.isStreaming {
-                ConduitLoader(color: accent, status: draftStatus)
+                ConduitLoader(color: accent, status: nil)
                     .padding(.top, 2)
-            } else if entry.drafts.count > 1 {
-                DraftNavigator(
-                    count: entry.drafts.count,
-                    shown: entry.shownDraft,
-                    best: entry.bestDraft,
-                    label: entry.draftLabels.indices.contains(entry.shownDraft)
-                        ? entry.draftLabels[entry.shownDraft] : nil,
-                    level: entry.levelTitle,
-                    accent: accent,
-                    onShow: onShowDraft
-                )
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// What the drafting is doing, or nil when it is not drafting.
-    private var draftStatus: String? {
-        guard entry.draftTarget > 0 else { return nil }
-        if entry.drafts.count < entry.draftTarget {
-            return "Writing draft \(entry.drafts.count + 1) of \(entry.draftTarget)\u{2026}"
-        }
-        return "Comparing \(entry.drafts.count) drafts\u{2026}"
-    }
 }
 
-/// Arrows under an answer that had several drafts: every draft is kept, so
-/// flipping between them is instant.
-private struct DraftNavigator: View {
-    let count: Int
-    let shown: Int
-    let best: Int?
-    let label: String?
-    let level: String?
-    let accent: Color
-    let onShow: (Int) -> Void
-
-    var body: some View {
-        HStack(spacing: 2) {
-            arrow("chevron.left", label: "Previous draft", enabled: shown > 0) {
-                onShow(shown - 1)
-            }
-            Text("\(shown + 1) of \(count)")
-                .font(.system(size: 13, weight: .semibold))
-                .monospacedDigit()
-            arrow("chevron.right", label: "Next draft", enabled: shown < count - 1) {
-                onShow(shown + 1)
-            }
-            if let label {
-                Text(label)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .padding(.leading, 2)
-            }
-            if shown == best {
-                Text("Best")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 2)
-                    .background { Capsule().fill(accent) }
-                    .padding(.leading, 6)
-            } else if let best {
-                Button("Show best") { onShow(best) }
-                    .font(.system(size: 12, weight: .medium))
-                    .tint(accent)
-                    .padding(.leading, 6)
-            }
-            if let level {
-                Text(level)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .padding(.leading, 6)
-            }
-        }
-        .padding(.leading, 2)
-        .padding(.trailing, 10)
-        .padding(.vertical, 2)
-        .glassEffect(.clear, in: .capsule)
-        .sensoryFeedback(.selection, trigger: shown)
-    }
-
-    private func arrow(_ symbol: String, label: String, enabled: Bool,
-                       action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 13, weight: .semibold))
-                .frame(width: 32, height: 30)
-                .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        .disabled(!enabled)
-        .opacity(enabled ? 1 : 0.3)
-        .accessibilityLabel(label)
-    }
-}
-
-/// Assistant text split into prose and fenced code blocks.
-///
-/// Parsed on every update while streaming, so an unterminated fence is treated
-/// as code: the block renders as code while it is still being written instead
-/// of flashing as prose and then snapping into a code box.
 struct MessageSegment: Identifiable {
     enum Kind {
         case prose(String)

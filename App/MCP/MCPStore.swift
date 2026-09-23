@@ -17,7 +17,7 @@ struct MCPServer: Identifiable, Codable, Hashable {
 /// The saved MCP servers, their tools as the model sees them, and calls.
 ///
 /// A server's tools are offered to the model only when the user's message
-/// names the server, or the personality in use lists it as a connector. A
+/// names the server. A
 /// phone model's prompt has no room for every tool of every server.
 @MainActor
 @Observable

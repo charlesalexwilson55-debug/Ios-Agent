@@ -13,6 +13,8 @@ struct ResearchCandidate: Identifiable, Codable, Sendable {
     /// Bounded readable text retained in this live conversation. A provider may
     /// have read a site that a direct page load cannot access later.
     var sourceText: String? = nil
+    var displayGroupID: String? = nil
+    var sharedAttributes: [String]? = nil
 }
 
 struct ResearchSelection: Sendable {
