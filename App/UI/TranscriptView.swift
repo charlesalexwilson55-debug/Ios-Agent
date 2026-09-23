@@ -130,12 +130,20 @@ private struct AssistantText: View {
                 StoredImageView(id: id, maxHeight: 340)
             }
 
-            ForEach(MessageSegment.parse(entry.text)) { segment in
-                switch segment.kind {
-                case .prose(let prose):
-                    ProseText(markdown: prose)
-                case .code(let language, let code):
-                    CodeBlockView(language: language, code: code)
+            if entry.isStreaming {
+                // Parsing the entire growing answer as Markdown for every
+                // token makes long code answers expensive and visually jumpy.
+                Text(entry.text)
+                    .font(.system(size: 16 * Appearance.textScale))
+                    .textSelection(.enabled)
+            } else {
+                ForEach(MessageSegment.parse(entry.text)) { segment in
+                    switch segment.kind {
+                    case .prose(let prose):
+                        ProseText(markdown: prose)
+                    case .code(let language, let code):
+                        CodeBlockView(language: language, code: code)
+                    }
                 }
             }
 

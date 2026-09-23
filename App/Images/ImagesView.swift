@@ -1,4 +1,5 @@
 import Photos
+import PhotosUI
 import SwiftUI
 
 /// A picture from `ImageStore`, loaded as a thumbnail. Tapping opens it full
@@ -51,6 +52,12 @@ struct ImagesView: View {
     @State private var store = ImageStore.shared
     @State private var filter: Filter = .all
     @State private var opened: StoredImage?
+    @State private var chosenPhotos: [PhotosPickerItem] = []
+    @State private var showingCreate = false
+    @State private var prompt = ""
+    @State private var style: ImageGenerator.Style = .animation
+    @State private var generating = false
+    @State private var error: String?
 
     private let columns = [GridItem(.adaptive(minimum: 104), spacing: 6)]
 
@@ -66,7 +73,12 @@ struct ImagesView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    betaBanner
+                    HStack {
+                        Text("Create a picture or add one from Photos. Imported pictures get an on-device description.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                    }
                     Picker("Show", selection: $filter) {
                         ForEach(Filter.allCases) { Text($0.title).tag($0) }
                     }
@@ -76,8 +88,7 @@ struct ImagesView: View {
                         ContentUnavailableView(
                             "No pictures yet",
                             systemImage: "photo.on.rectangle",
-                            description: Text("Ask Conduit to draw something, or add a photo from the plus "
-                                + "menu and ask about it.")
+                            description: Text("Use + to create a picture, or the Photos button to add one.")
                         )
                         .padding(.top, 30)
                     }
@@ -101,32 +112,91 @@ struct ImagesView: View {
                 .padding(.bottom, 24)
             }
             .navigationTitle("Images")
+            .toolbar {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    PhotosPicker(selection: $chosenPhotos, maxSelectionCount: 10, matching: .images) {
+                        Image(systemName: "photo.badge.plus")
+                    }
+                    .accessibilityLabel("Import photos")
+                    Button { showingCreate = true } label: { Image(systemName: "plus") }
+                        .accessibilityLabel("Create image")
+                }
+            }
+            .onChange(of: chosenPhotos) { _, items in
+                guard !items.isEmpty else { return }
+                Task {
+                    for item in items {
+                        guard let data = try? await item.loadTransferable(type: Data.self),
+                              let stored = store.addPhoto(data, prompt: "Imported from Photos") else { continue }
+                        if let description = try? await QuickVision.describe(data) {
+                            store.setDescription(stored.id, description)
+                        }
+                    }
+                    chosenPhotos = []
+                }
+            }
+            .sheet(isPresented: $showingCreate) { creationSheet }
             .fullScreenCover(item: $opened) { image in
                 ImageDetailView(id: image.id)
             }
         }
     }
 
-    private var betaBanner: some View {
-        HStack(spacing: 10) {
-            Text("BETA")
-                .font(.system(size: 11, weight: .heavy))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 3)
-                .background { Capsule().fill(Color.conduitAccent) }
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Custom presets for images are coming soon.")
-                    .font(.subheadline.weight(.semibold))
-                Text("Pictures are drawn by Apple's on-device image model and read by the image model on "
-                    + "your phone.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+    private var creationSheet: some View {
+        NavigationStack {
+            Form {
+                Section("Picture") {
+                    TextField("What should Conduit draw?", text: $prompt, axis: .vertical)
+                        .lineLimit(3...7)
+                    Picker("Style", selection: $style) {
+                        ForEach(ImageGenerator.Style.allCases) { option in
+                            Text(option.title).tag(option)
+                        }
+                    }
+                    if let error { Text(error).foregroundStyle(.red).font(.footnote) }
+                }
+                Section {
+                    Button {
+                        generate()
+                    } label: {
+                        HStack {
+                            Text("Create image")
+                            Spacer()
+                            if generating { ProgressView() }
+                        }
+                    }
+                    .disabled(generating || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                } footer: {
+                    Text("Uses Apple's on-device Image Playground. It needs Apple Intelligence and the model installed in iOS settings.")
+                }
+            }
+            .navigationTitle("Create image")
+            .toolbar { ToolbarItem(placement: .cancellationAction) {
+                Button("Done") { showingCreate = false }
+            } }
+        }
+    }
+
+    private func generate() {
+        let request = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !request.isEmpty else { return }
+        generating = true
+        error = nil
+        Task {
+            defer { generating = false }
+            do {
+                let picture = try await ImageGenerator.create(request, style: style)
+                guard store.addCreated(picture, prompt: request, style: style.rawValue) != nil else {
+                    error = "Could not save the image."
+                    return
+                }
+                prompt = ""
+                showingCreate = false
+                filter = .all
+            } catch {
+                self.error = error.localizedDescription
             }
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassEffect(.regular, in: .rect(cornerRadius: 16))
     }
 
     private func thumbnail(_ image: StoredImage) -> some View {

@@ -455,20 +455,40 @@ actor ModelRunner {
             buffer += chunk
             var pieces: [Piece] = []
             while true {
-                // A redundant opening tag inside reasoning is dropped.
-                if inThink, let stray = buffer.range(of: Self.open) {
-                    buffer.removeSubrange(stray)
+                // Search both tags even when the chat template has already
+                // opened thinking. A closing tag without a visible opening
+                // tag means the preceding bytes were reasoning, not an answer.
+                let opening = buffer.range(of: Self.open)
+                let closing = buffer.range(of: Self.close)
+                let range: Range<String.Index>?
+                let isClosing: Bool
+                switch (opening, closing) {
+                case (let open?, let close?):
+                    isClosing = close.lowerBound < open.lowerBound
+                    range = isClosing ? close : open
+                case (let open?, nil):
+                    isClosing = false; range = open
+                case (nil, let close?):
+                    isClosing = true; range = close
+                case (nil, nil):
+                    isClosing = false; range = nil
                 }
-                let tag = inThink ? Self.close : Self.open
-                if let range = buffer.range(of: tag) {
-                    pieces.append(Piece(isReasoning: inThink, text: String(buffer[..<range.lowerBound])))
+                if let range {
+                    let before = String(buffer[..<range.lowerBound])
+                    if !before.isEmpty {
+                        pieces.append(Piece(isReasoning: isClosing || inThink, text: before))
+                    }
                     buffer = String(buffer[range.upperBound...])
-                    inThink.toggle()
+                    inThink = !isClosing
                     continue
                 }
-                let keep = Self.partialTagSuffix(buffer, tag: tag)
+                // Either tag may straddle chunks. Never display a partial
+                // special token as prose or code.
+                let keep = max(Self.partialTagSuffix(buffer, tag: Self.open),
+                               Self.partialTagSuffix(buffer, tag: Self.close))
                 let cut = buffer.index(buffer.endIndex, offsetBy: -keep)
-                pieces.append(Piece(isReasoning: inThink, text: String(buffer[..<cut])))
+                let before = String(buffer[..<cut])
+                if !before.isEmpty { pieces.append(Piece(isReasoning: inThink, text: before)) }
                 buffer = String(buffer[cut...])
                 return pieces
             }
@@ -476,7 +496,11 @@ actor ModelRunner {
 
         mutating func flush() -> [Piece] {
             defer { buffer = "" }
-            return [Piece(isReasoning: inThink, text: buffer)]
+            // An incomplete tag at the end is a tokenizer fragment.
+            let keep = max(Self.partialTagSuffix(buffer, tag: Self.open),
+                           Self.partialTagSuffix(buffer, tag: Self.close))
+            let text = keep == 0 ? buffer : String(buffer.dropLast(keep))
+            return text.isEmpty ? [] : [Piece(isReasoning: inThink, text: text)]
         }
 
         /// Length of the longest suffix of `text` that is a prefix of `tag`.

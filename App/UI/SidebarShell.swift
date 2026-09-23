@@ -2,37 +2,25 @@ import SwiftUI
 
 /// The app's pages, reached from the sidebar.
 enum AppPage: String, CaseIterable, Identifiable {
-    case chat, research, libraries, memory, images, directions, online, models, capabilities, settings
+    case chat, libraries, images, models
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .chat: "Chat"
-        case .research: "Research"
         case .libraries: "Libraries"
-        case .memory: "Memory"
         case .images: "Images (beta)"
-        case .directions: "Directions"
-        case .online: "Online"
         case .models: "Models"
-        case .capabilities: "What Conduit can do"
-        case .settings: "Settings"
         }
     }
 
     var symbol: String {
         switch self {
         case .chat: "bubble.left.and.bubble.right"
-        case .research: "point.3.connected.trianglepath.dotted"
         case .libraries: "books.vertical"
-        case .memory: "brain.head.profile"
         case .images: "photo.on.rectangle"
-        case .directions: "arrow.triangle.turn.up.right.diamond"
-        case .online: "globe"
         case .models: "cpu"
-        case .capabilities: "checklist"
-        case .settings: "gearshape"
         }
     }
 }
@@ -48,6 +36,7 @@ enum AppPage: String, CaseIterable, Identifiable {
 struct SidebarOverlay: View {
     @Binding var page: AppPage
     @Binding var isOpen: Bool
+    let onSettings: () -> Void
 
     private static let buttonSize: CGFloat = 44
 
@@ -115,6 +104,17 @@ struct SidebarOverlay: View {
                 ForEach(AppPage.allCases) { item in
                     railButton(item)
                 }
+                Button {
+                    isOpen = false
+                    onSettings()
+                } label: {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 19, weight: .medium))
+                        .frame(width: 48, height: 48)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Settings")
               }
             }
             .scrollIndicators(.hidden)

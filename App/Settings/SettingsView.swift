@@ -1,45 +1,82 @@
 import SwiftUI
 
-/// The Settings page: connectors, appearance and power, as tabs across the
-/// top. Tabs rather than pushed pages, because the app's round menu button
-/// sits where a Back button would be.
+/// Dark glass settings window. Archives live here so main navigation stays small.
 struct SettingsView: View {
     enum Tab: String, CaseIterable, Identifiable {
-        case connectors, you, appearance, power
+        case connectors, web, you, appearance, power, memory, research, information
         var id: String { rawValue }
         var title: String {
             switch self {
             case .connectors: "Connectors"
+            case .web: "Web Searching"
             case .you: "You"
             case .appearance: "Appearance"
             case .power: "Power"
+            case .memory: "Memory"
+            case .research: "Research Archive"
+            case .information: "Information"
             }
         }
     }
 
+    let isWorking: Bool
+    let canResume: Bool
+    let onOpenChat: (ChatRecord) -> Void
+    let onResumeResearch: (ResearchRun) -> Void
+    let onClose: () -> Void
     @AppStorage("conduit.settings.tab") private var tabRaw = Tab.connectors.rawValue
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                Picker("Section", selection: $tabRaw) {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Settings").font(.title2.bold())
+                Spacer()
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 14, weight: .semibold))
+                        .frame(width: 36, height: 36)
+                }
+                .buttonStyle(.plain)
+                .background(.white.opacity(0.1), in: .circle)
+                .accessibilityLabel("Close settings")
+            }
+            .padding(.horizontal, 18)
+            .padding(.top, 16)
+            .padding(.bottom, 10)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 7) {
                     ForEach(Tab.allCases) { tab in
-                        Text(tab.title).tag(tab.rawValue)
+                        Button { tabRaw = tab.rawValue } label: {
+                            Text(tab.title)
+                                .font(.system(size: 13, weight: .medium))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(tabRaw == tab.rawValue ? Color.conduitAccent.opacity(0.35) : .white.opacity(0.08), in: .capsule)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 8)
+                .padding(.horizontal, 18)
+            }
+            .padding(.bottom, 10)
 
+            Group {
                 switch Tab(rawValue: tabRaw) ?? .connectors {
                 case .connectors: ConnectorsSettingsView()
+                case .web: OnlineSettingsView()
                 case .you: ProfileSettingsView()
                 case .appearance: AppearanceSettingsView()
                 case .power: PowerSettingsView()
+                case .memory: MemoryView(isWorking: isWorking, onOpen: onOpenChat)
+                case .research:
+                    ResearchArchiveView(isWorking: isWorking, canResume: canResume, onResume: onResumeResearch)
+                case .information: NavigationStack { CapabilitiesView() }
                 }
             }
-            .navigationTitle("Settings")
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .environment(\.colorScheme, .dark)
     }
 }
 
@@ -86,6 +123,7 @@ struct ConnectorsSettingsView: View {
             }
             .font(.subheadline)
         }
+        .scrollContentBackground(.hidden)
         .sheet(item: $editing) { server in
             MCPServerEditor(server: server)
         }

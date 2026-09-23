@@ -616,7 +616,7 @@ final class AgentSession {
             replyText += "\nBudget omitted \(findings.combinationsSkipped) queries and \(findings.pagesSkipped) discovered pages."
         }
         if !findings.limitations.isEmpty { replyText += "\nSearch limitations: " + findings.limitations.joined(separator: " ") }
-        replyText += "\n\nSources, dates, relationships and search history are saved in Sidebar → Research."
+        replyText += "\n\nSources, dates, relationships and search history are saved in Settings → Research Archive."
         reporter.finish(writing)
         transcript.append(TranscriptEntry(kind: .assistant, text: replyText))
         history.append(.assistant(replyText))

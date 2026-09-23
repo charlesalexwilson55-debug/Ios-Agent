@@ -48,10 +48,10 @@ enum WebSearch {
 
         var errorDescription: String? {
             switch self {
-            case .researchNeedsKey: "Research needs a working Exa or Tavily key. Add one in Sidebar → Online. Wikipedia alone cannot perform this research."
-            case .providerNeedsKey(let provider): "Add a \(provider.displayName) key in Sidebar → Online before testing it."
+            case .researchNeedsKey: "Research needs a working Exa or Tavily key. Add one in Settings → Web Searching. Wikipedia alone cannot perform this research."
+            case .providerNeedsKey(let provider): "Add a \(provider.displayName) key in Settings → Web Searching before testing it."
             case .providersFailed(let detail): "Full-web research failed: \(detail)"
-            case .http(401): "The web search key was rejected. Replace it in Sidebar → Online."
+            case .http(401): "The web search key was rejected. Replace it in Settings → Web Searching."
             case .http(429), .http(432), .http(433): "The web search provider's rate or usage limit was reached. Research stopped; this does not mean the person was not found."
             case .http(let status): "the search service answered with error \(status)."
             case .badResponse: "the search service sent something unreadable."
@@ -61,7 +61,7 @@ enum WebSearch {
 
     static let noKeyLimitation = "No web search key is set, so only Wikipedia was searched. "
         + "For news, prices or local information, tell the user that an Exa or Tavily key can "
-        + "be added on the Online page."
+        + "be added in Settings → Web Searching."
 
     private static let userAgent = "Conduit/1.0 (personal on-device assistant for iOS)"
     private static let summaryLimit = 320
@@ -197,7 +197,7 @@ enum WebSearch {
         if case SearchError.http(let status) = error {
             switch status {
             case 401:
-                return "The \(provider.displayName) key was rejected, so only Wikipedia was searched. Tell the user to check it on the Online page."
+                return "The \(provider.displayName) key was rejected, so only Wikipedia was searched. Tell the user to check it in Settings → Web Searching."
             case 429, 432, 433:
                 return "The \(provider.displayName) allowance is used up for now, so only Wikipedia was searched. Tell the user."
             default:

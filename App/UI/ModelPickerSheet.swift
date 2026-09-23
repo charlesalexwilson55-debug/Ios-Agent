@@ -32,6 +32,7 @@ struct ModelPickerSheet: View {
                 permissionsSection
                 capabilitiesSection
             }
+            .scrollContentBackground(.hidden)
             .navigationTitle("Model")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

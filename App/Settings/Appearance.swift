@@ -199,16 +199,16 @@ struct AppearanceSettingsView: View {
             }
 
             Section {
-                Toggle("Volume buttons open the menu", isOn: $volumeKeys)
+                Toggle("Volume button navigation", isOn: $volumeKeys)
                     .onChange(of: volumeKeys) { _, on in
                         if on { VolumeKeys.shared.start() } else { VolumeKeys.shared.stop() }
                     }
             } header: {
                 Text("Controls")
             } footer: {
-                Text("Press volume up then down quickly, or one button twice quickly, to open or close the "
-                    + "menu. Holding a button still changes the volume. Presses at full or zero volume "
-                    + "cannot be seen by apps.")
+                Text("Tap Up for previous tab or Down for next tab. Double-tap either button to open or "
+                    + "close the menu. Hold to change volume. iOS cannot report a press when volume is "
+                    + "already at its maximum or minimum.")
             }
 
             Section {
@@ -221,6 +221,7 @@ struct AppearanceSettingsView: View {
                 }
             }
         }
+        .scrollContentBackground(.hidden)
     }
 
     private func swatch(hex: String, color: Color, name: String) -> some View {

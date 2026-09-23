@@ -6,11 +6,52 @@ import UniformTypeIdentifiers
 /// answers.
 struct LibrariesView: View {
     @State private var store = LibraryStore.shared
+    @AppStorage("conduit.libraries.layout") private var layout = "list"
     @State private var creating = false
     @State private var opened: Library?
 
     var body: some View {
         NavigationStack {
+            Group {
+                if layout == "grid" { grid }
+                else { list }
+            }
+            .navigationTitle("Libraries")
+            .toolbar {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button {
+                        layout = layout == "grid" ? "list" : "grid"
+                    } label: {
+                        Image(systemName: layout == "grid" ? "list.bullet" : "square.grid.2x2")
+                    }
+                    .accessibilityLabel(layout == "grid" ? "List view" : "Grid view")
+                    Button {
+                        creating = true
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                    .accessibilityLabel("New library")
+                }
+            }
+            .sheet(isPresented: $creating) {
+                LibraryEditor(library: nil) { name, symbol in
+                    let created = store.create(name: name, symbol: symbol)
+                    Task {
+                        try? await Task.sleep(for: .milliseconds(450))
+                        opened = created
+                    }
+                }
+            }
+            .sheet(item: $opened) { library in
+                LibraryDetailView(libraryID: library.id)
+            }
+            .task {
+                for library in store.libraries { await store.refresh(library) }
+            }
+        }
+    }
+
+    private var list: some View {
             List {
                 if store.libraries.isEmpty {
                     Section {
@@ -39,34 +80,51 @@ struct LibrariesView: View {
                     .buttonStyle(.plain)
                 }
             }
-            .navigationTitle("Libraries")
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        creating = true
-                    } label: {
-                        Image(systemName: "plus")
-                    }
-                    .accessibilityLabel("New library")
+            .scrollContentBackground(.hidden)
+    }
+
+    private var grid: some View {
+        ScrollView {
+            if store.libraries.isEmpty {
+                ContentUnavailableView("No libraries yet", systemImage: "books.vertical",
+                                       description: Text("Tap + to make a library."))
+                    .padding(.top, 30)
+            }
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                ForEach(store.libraries) { library in
+                    Button { opened = library } label: { card(library) }
+                        .buttonStyle(.plain)
                 }
             }
-            .sheet(isPresented: $creating) {
-                LibraryEditor(library: nil) { name, symbol in
-                    let created = store.create(name: name, symbol: symbol)
-                    // Opened once this sheet has finished closing.
-                    Task {
-                        try? await Task.sleep(for: .milliseconds(450))
-                        opened = created
-                    }
-                }
-            }
-            .sheet(item: $opened) { library in
-                LibraryDetailView(libraryID: library.id)
-            }
-            .task {
-                for library in store.libraries { await store.refresh(library) }
-            }
+            .padding(16)
         }
+    }
+
+    private func card(_ library: Library) -> some View {
+        ZStack(alignment: .bottomLeading) {
+            RoundedRectangle(cornerRadius: 20)
+                .fill(Color.conduitAccent.opacity(0.16))
+            if let id = library.coverImageID, let picture = ImageStore.shared.thumbnail(id, size: 420) {
+                Image(uiImage: picture).resizable().scaledToFill()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
+            } else {
+                Image(systemName: library.symbol)
+                    .font(.system(size: 42, weight: .ultraLight))
+                    .foregroundStyle(Color.conduitAccent)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            LinearGradient(colors: [.clear, .black.opacity(0.8)], startPoint: .center, endPoint: .bottom)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(library.name).font(.headline).lineLimit(2)
+                Text(summary(library)).font(.caption).lineLimit(1)
+            }
+            .foregroundStyle(.white)
+            .padding(12)
+        }
+        .frame(height: 174)
+        .clipShape(.rect(cornerRadius: 20))
+        .accessibilityLabel("\(library.name), \(summary(library))")
     }
 
     private func row(_ library: Library) -> some View {
@@ -116,6 +174,7 @@ struct LibraryDetailView: View {
     @State private var store = LibraryStore.shared
     @State private var importing = false
     @State private var photos: [PhotosPickerItem] = []
+    @State private var chosenCover: PhotosPickerItem?
     @State private var readingPhotos = false
     @State private var editing = false
     @State private var writingNote = false
@@ -153,6 +212,9 @@ struct LibraryDetailView: View {
                 }
                 PhotosPicker(selection: $photos, maxSelectionCount: 20, matching: .images) {
                     Label("Add photos from gallery", systemImage: "photo.on.rectangle")
+                }
+                PhotosPicker(selection: $chosenCover, matching: .images) {
+                    Label("Choose grid cover", systemImage: "photo.badge.plus")
                 }
                 .disabled(readingPhotos)
                 if readingPhotos {
@@ -239,6 +301,11 @@ struct LibraryDetailView: View {
                             throw TextExtractor.ExtractError.empty
                         }
                         try await store.addNote(title: "Photo \(index + 1) · \(Date().formatted(date: .abbreviated, time: .shortened))", text: text, to: library)
+                        if let image = ImageStore.shared.addPhoto(data, prompt: "Imported into \(library.name)"),
+                           var updated = store.libraries.first(where: { $0.id == library.id }), updated.coverPinned != true {
+                            updated.coverImageID = image.id
+                            store.update(updated)
+                        }
                     } catch {
                         failures.append("Photo \(index + 1): \(error.localizedDescription)")
                     }
@@ -246,6 +313,18 @@ struct LibraryDetailView: View {
                 if !failures.isEmpty { store.lastFailures[library.id] = failures }
                 photos = []
                 readingPhotos = false
+            }
+        }
+        .onChange(of: chosenCover) { _, selected in
+            guard let selected else { return }
+            Task {
+                defer { chosenCover = nil }
+                guard let data = try? await selected.loadTransferable(type: Data.self),
+                      let image = ImageStore.shared.addPhoto(data, prompt: "Cover for \(library.name)"),
+                      var updated = store.libraries.first(where: { $0.id == library.id }) else { return }
+                updated.coverImageID = image.id
+                updated.coverPinned = true
+                store.update(updated)
             }
         }
         .navigationBarTitleDisplayMode(.inline)

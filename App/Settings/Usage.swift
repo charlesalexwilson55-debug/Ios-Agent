@@ -1,4 +1,3 @@
-import Charts
 import Foundation
 import Observation
 import SwiftUI
@@ -106,112 +105,75 @@ final class UsageStore {
 struct PowerSettingsView: View {
     @State private var store = UsageStore.shared
     @State private var confirmReset = false
-    @State private var now = UsageStore.shared.reading()
+
+    private var totalWh: Double {
+        store.ranked.reduce(0) { $0 + $1.estimatedWattHours }
+    }
+
+    /// Illustrative energy stores; their sizes vary by product and use.
+    private let comparisons: [(name: String, symbol: String, wattHours: Double)] = [
+        ("9V battery", "battery.25percent", 5),
+        ("Two phone charges", "battery.50percent", 32),
+        ("Four phone charges", "battery.75percent", 64),
+        ("Eight phone charges", "battery.100percent", 128),
+        ("Electric car battery example", "car.side", 75_000),
+        ("1 MW data center for one hour", "server.rack", 1_000_000),
+    ]
 
     var body: some View {
         Form {
-            Section {
-                if let top = store.ranked.first, store.totalSeconds > 0 {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Used most")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                        Text(top.model)
-                            .font(.headline)
-                        Text("\(percent(top.seconds / store.totalSeconds)) of all generating time")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+            Section("Total AI use since \(store.since.formatted(date: .abbreviated, time: .omitted))") {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(String(format: "%.1f%% of a phone charge", totalWh / UsageStore.batteryWattHours * 100))
+                        .font(.title2.bold())
+                    Text(String(format: "%.2f Wh total energy", totalWh))
+                        .font(.headline)
+                    Text("About \(Int(UsageStore.estimatedWatts)) W while generating · \(duration(store.totalSeconds)) total")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 8)
+            }
+
+            Section("Energy in context") {
+                ForEach(comparisons.indices, id: \.self) { index in
+                    let item = comparisons[index]
+                    HStack(spacing: 12) {
+                        Image(systemName: item.symbol)
+                            .font(.system(size: 24))
+                            .foregroundStyle(Color.conduitAccent)
+                            .frame(width: 34)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(item.name).font(.subheadline.weight(.medium))
+                            ProgressView(value: min(totalWh / item.wattHours, 1))
+                                .tint(Color.conduitAccent)
+                            Text(String(format: "%.2f of this example · %.0f Wh", totalWh / item.wattHours, item.wattHours))
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                     }
-                    .padding(.vertical, 2)
-                    chart
-                } else {
-                    Text("Nothing recorded yet. Usage appears here after the model answers something.")
-                        .foregroundStyle(.secondary)
+                    .padding(.vertical, 3)
                 }
-            } header: {
-                Text("Since \(store.since.formatted(date: .abbreviated, time: .omitted))")
-            }
-
-            ForEach(store.ranked) { entry in
-                Section(entry.model) {
-                    row("Replies and checks", "\(entry.replies)")
-                    row("Words read / written", "\(tokens(entry.promptTokens)) / \(tokens(entry.generatedTokens))")
-                    row("Time generating", duration(entry.seconds))
-                    row("Estimated energy",
-                        String(format: "%.2f Wh \u{00B7} about %.1f%% of a charge",
-                               entry.estimatedWattHours, entry.estimatedPercentOfCharge))
-                    row("Battery drop measured", String(format: "%.0f%%", entry.batteryPercent))
-                }
-            }
-
-            Section {
-                row("Battery", batteryText)
-                row("Heat", thermalText)
-                row("Low Power Mode", ProcessInfo.processInfo.isLowPowerModeEnabled ? "On" : "Off")
-            } header: {
-                Text("Right now")
             } footer: {
-                Text("Estimates assume about \(Int(UsageStore.estimatedWatts)) W while the model is "
-                    + "generating, on a \(Int(UsageStore.batteryWattHours)) Wh battery. The measured drop only "
-                    + "counts time on battery power, in whole percent. A hot phone slows the model down to "
-                    + "protect itself.")
+                Text("Comparisons use rounded example capacities. Energy is estimated from generation time at 6 W; iOS does not provide a direct per-app power meter. A 9V battery stores less energy than a phone charge.")
+            }
+
+            if !store.ranked.isEmpty {
+                Section("By model") {
+                    ForEach(store.ranked) { entry in
+                        LabeledContent(entry.model) {
+                            Text(String(format: "%.2f Wh", entry.estimatedWattHours))
+                        }
+                    }
+                }
             }
 
             Section {
                 Button("Reset usage", role: .destructive) { confirmReset = true }
             }
         }
-        .onAppear { now = store.reading() }
+        .scrollContentBackground(.hidden)
         .confirmationDialog("Reset all usage figures?", isPresented: $confirmReset, titleVisibility: .visible) {
             Button("Reset", role: .destructive) { store.reset() }
         }
-    }
-
-    private var chart: some View {
-        Chart(store.ranked) { entry in
-            BarMark(
-                x: .value("Minutes", entry.seconds / 60),
-                y: .value("Model", entry.model)
-            )
-            .foregroundStyle(Color.conduitAccent.gradient)
-            .annotation(position: .trailing) {
-                Text(duration(entry.seconds))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .chartXAxisLabel("Minutes generating")
-        .frame(height: CGFloat(max(1, store.ranked.count)) * 44 + 30)
-    }
-
-    private func row(_ title: String, _ value: String) -> some View {
-        LabeledContent(title) {
-            Text(value).multilineTextAlignment(.trailing)
-        }
-    }
-
-    private var batteryText: String {
-        guard now.level >= 0 else { return "Unknown" }
-        let level = Int((now.level * 100).rounded())
-        return now.unplugged ? "\(level)%" : "\(level)%, charging or plugged in"
-    }
-
-    private var thermalText: String {
-        switch ProcessInfo.processInfo.thermalState {
-        case .nominal: return "Normal"
-        case .fair: return "Warm"
-        case .serious: return "Hot, slowing down"
-        case .critical: return "Very hot"
-        @unknown default: return "Unknown"
-        }
-    }
-
-    private func percent(_ fraction: Double) -> String {
-        "\(Int((fraction * 100).rounded()))%"
-    }
-
-    private func tokens(_ count: Int) -> String {
-        count >= 1000 ? String(format: "%.1fk", Double(count) / 1000) : "\(count)"
     }
 
     private func duration(_ seconds: Double) -> String {

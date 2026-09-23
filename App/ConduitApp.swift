@@ -9,10 +9,6 @@ struct ConduitApp: App {
         WindowGroup {
             RootView()
                 .environment(catalog)
-                // Glass surfaces are designed against a real backdrop; a plain
-                // system background gives them nothing to refract and they
-                // read as flat grey rectangles.
-                .background(BackdropView())
                 .modifier(AppearanceModifier())
         }
     }
@@ -49,14 +45,17 @@ struct RootView: View {
     @State private var research = false
     @State private var page: AppPage = .chat
     @State private var sidebarOpen = false
+    @State private var showingSettings = false
     @State private var menuOpen = false
     /// Views that draw with the chosen accent colour and text size are
     /// rebuilt when either changes.
     @AppStorage(Appearance.accentKey) private var accentHex = ""
     @AppStorage(Appearance.textSizeKey) private var textSize = ""
+    @AppStorage(Appearance.backdropKey) private var backdrop = Appearance.Backdrop.aurora.rawValue
 
     var body: some View {
         ZStack {
+            BackdropView()
             // The chat stays in the hierarchy on every page, so leaving it and
             // coming back keeps the scroll position and any unsent draft.
             chatPage
@@ -67,8 +66,15 @@ struct RootView: View {
                 otherPage
                     .transition(.opacity)
             }
-            SidebarOverlay(page: $page, isOpen: $sidebarOpen)
+            SidebarOverlay(page: $page, isOpen: $sidebarOpen) {
+                showingSettings = true
+            }
                 .id(appearanceKey)
+            if showingSettings {
+                settingsWindow
+                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                    .zIndex(10)
+            }
         }
         .animation(.easeInOut(duration: 0.2), value: page)
         .task {
@@ -77,13 +83,17 @@ struct RootView: View {
             UserDefaults.standard.removeObject(forKey: "conduit.persona.selected")
             UserDefaults.standard.removeObject(forKey: "conduit.level")
             UserDefaults.standard.removeObject(forKey: "conduit.autoLevel")
+            UserDefaults.standard.removeObject(forKey: "conduit.research.plannerModel")
+            UserDefaults.standard.removeObject(forKey: "conduit.research.extractorModel")
             let newSession = AgentSession(runner: runner, registry: ToolRegistry.standard())
             newSession.thinkingEnabled = thinking
             newSession.onlineEnabled = online
             newSession.researchEnabled = research
             session = newSession
             Diagnostics.log("app.launch avail=\(Diagnostics.availableMB)MB")
-            VolumeKeys.shared.onQuickPress = {
+            VolumeKeys.shared.onUp = { selectAdjacentPage(-1) }
+            VolumeKeys.shared.onDown = { selectAdjacentPage(1) }
+            VolumeKeys.shared.onDoublePress = {
                 withAnimation { sidebarOpen.toggle() }
             }
             VolumeKeys.shared.start()
@@ -139,9 +149,6 @@ struct RootView: View {
             default: break
             }
         }
-        .overlay(alignment: .top) {
-            if case .loading = loadingState { loadingBanner }
-        }
     }
 
     /// Chat, with the command bar. A NavigationStack purely to host the
@@ -171,6 +178,18 @@ struct RootView: View {
             .toolbarTitleDisplayMode(.inline)
             .toolbarBackgroundVisibility(.hidden, for: .navigationBar)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    HStack(spacing: 7) {
+                        Circle().fill(Color.blue.gradient)
+                            .frame(width: 9, height: 9)
+                            .shadow(color: .blue.opacity(0.7), radius: 5)
+                        Text(modelStatus)
+                            .font(.system(size: 12, weight: .medium))
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel(modelStatus)
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         session?.clear()
@@ -208,37 +227,16 @@ struct RootView: View {
             EmptyView()
         case .libraries:
             LibrariesView()
-        case .research:
-            ResearchArchiveView(isWorking: session?.isWorking ?? false, canResume: isReady) { run in
-                session?.resumeResearch(run)
-                page = .chat
-            }.environment(catalog)
-        case .memory:
-            MemoryView(isWorking: session?.isWorking ?? false) { chat in
-                session?.restore(chat)
-                draft = ""
-                page = .chat
-            }
         case .images:
             ImagesView()
-        case .directions:
-            DirectionsView()
-        case .online:
-            OnlineSettingsView()
         case .models:
             ModelPickerSheet(onSelect: selectFromPage, loadingState: loadingState, showsDoneButton: false)
                 .environment(catalog)
-        case .capabilities:
-            NavigationStack {
-                CapabilitiesView()
-            }
-        case .settings:
-            SettingsView()
         }
     }
 
     private var appearanceKey: String {
-        accentHex + "|" + textSize
+        accentHex + "|" + textSize + "|" + backdrop
     }
 
     private func selectFromPage(_ model: DiscoveredModel) {
@@ -248,21 +246,49 @@ struct RootView: View {
     }
 
     private var isReady: Bool {
-        if case .loading = loadingState { return false }
+        guard case .idle = loadingState else { return false }
         return catalog.selectedModel != nil
     }
 
-    private var loadingBanner: some View {
-        HStack(spacing: 9) {
-            ProgressView().controlSize(.small)
-            Text("Loading model…")
-                .font(.system(size: 13, weight: .medium))
+    private var modelStatus: String {
+        switch loadingState {
+        case .loading: "Loading \(catalog.selectedModel?.displayName ?? "model")…"
+        case .failed: "Model unavailable"
+        case .idle: catalog.selectedModel?.displayName ?? "Choose a model"
         }
-        .padding(.horizontal, 15)
-        .padding(.vertical, 10)
-        .glassEffect(.regular, in: .capsule)
-        .padding(.top, 8)
-        .transition(.move(edge: .top).combined(with: .opacity))
+    }
+
+    private func selectAdjacentPage(_ offset: Int) {
+        guard !showingSettings else { return }
+        let pages = AppPage.allCases
+        guard let index = pages.firstIndex(of: page) else { return }
+        withAnimation { page = pages[(index + offset + pages.count) % pages.count] }
+    }
+
+    private var settingsWindow: some View {
+        GeometryReader { geometry in
+            ZStack {
+                Color.black.opacity(0.48).ignoresSafeArea()
+                    .onTapGesture { showingSettings = false }
+                SettingsView(isWorking: session?.isWorking ?? false, canResume: isReady,
+                             onOpenChat: { chat in
+                                 session?.restore(chat)
+                                 draft = ""
+                                 page = .chat
+                                 showingSettings = false
+                             }, onResumeResearch: { run in
+                                 session?.resumeResearch(run)
+                                 page = .chat
+                                 showingSettings = false
+                             }, onClose: { showingSettings = false })
+                    .frame(width: geometry.size.width - 28, height: geometry.size.height * 0.88)
+                    .background(Color.black.opacity(0.7), in: .rect(cornerRadius: 28))
+                    .glassEffect(.regular.tint(.black.opacity(0.72)), in: .rect(cornerRadius: 28))
+                    .overlay { RoundedRectangle(cornerRadius: 28).strokeBorder(.white.opacity(0.15), lineWidth: 0.7) }
+                    .clipShape(.rect(cornerRadius: 28))
+                    .shadow(color: .black.opacity(0.35), radius: 24, y: 12)
+            }
+        }
     }
 
     private func send() {

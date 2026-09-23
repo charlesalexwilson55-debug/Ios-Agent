@@ -125,7 +125,8 @@ struct OnlineSettingsView: View {
                           systemImage: "lock.iphone")
                 }
             }
-            .navigationTitle("Online")
+            .scrollContentBackground(.hidden)
+            .navigationTitle("Web Searching")
             .onAppear { refreshKeyState() }
         }
     }

@@ -6,21 +6,12 @@ struct ResearchArchiveView: View {
     let isWorking: Bool
     let canResume: Bool
     let onResume: (ResearchRun) -> Void
-    @Environment(ModelCatalog.self) private var catalog
     @State private var runs: [ResearchRun] = []
     @State private var error: String?
-    @AppStorage("conduit.research.plannerModel") private var plannerModel = ""
-    @AppStorage("conduit.research.extractorModel") private var extractorModel = ""
 
     var body: some View {
         NavigationStack {
             List {
-                Section("Local model routing") {
-                    modelPicker("Planning and verification", selection: $plannerModel)
-                    modelPicker("Page extraction", selection: $extractorModel)
-                    Text("Use the chat model for both to avoid reloads. Optional models are loaded one at a time and must pass the phone's memory check. A failed load falls back to the chat model.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
                 Section("Research archive") {
                     if runs.isEmpty { Text("Research runs and their evidence will appear here, including interrupted work.").foregroundStyle(.secondary) }
                     ForEach(runs) { run in
@@ -46,18 +37,11 @@ struct ResearchArchiveView: View {
                 }
                 if let error { Text(error).foregroundStyle(.red) }
             }
+            .scrollContentBackground(.hidden)
             .navigationTitle("Research")
             .onAppear(perform: refresh)
             .refreshable { refresh() }
         }
-    }
-    private func modelPicker(_ label: String, selection: Binding<String>) -> some View {
-        Picker(label, selection: selection) {
-            Text("Chat model").tag("")
-            ForEach(catalog.models.filter { !$0.isAdapter && !$0.isVisionModel }) { model in
-                Text(model.displayName).tag(model.directory.path)
-            }
-        }.disabled(isWorking)
     }
     private func refresh() {
         do { runs = try ResearchStore.open().list(); error = nil }

@@ -9,6 +9,10 @@ struct Library: Identifiable, Codable, Hashable {
     /// Whether chats search it.
     var enabled = true
     var created = Date()
+    /// A locally stored gallery photo used on the grid card.
+    var coverImageID: UUID?
+    /// nil on older libraries; true when the user picked a cover explicitly.
+    var coverPinned: Bool?
 
     var collection: String { "library:\(id.uuidString)" }
 

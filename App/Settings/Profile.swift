@@ -243,6 +243,7 @@ struct ProfileSettingsView: View {
                     + "folder or file here. It is read and kept only on this phone.")
             }
         }
+        .scrollContentBackground(.hidden)
         .onChange(of: draft) { _, updated in store.save(updated) }
         .fileImporter(isPresented: $showingImporter,
                       allowedContentTypes: [.zip, .folder, .json, .html, .plainText, .commaSeparatedText]) { result in

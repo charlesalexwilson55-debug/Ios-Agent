@@ -24,7 +24,7 @@ struct CapabilitiesView: View {
         Item(text: "Tell you the time, date and time zone", note: nil),
         Item(text: "Search the web, read pages and check the weather",
              note: "With the globe switch on. Full web search needs a free Tavily key on the "
-                 + "Online page; without one it searches Wikipedia."),
+                 + "Settings → Web Searching; without one it searches Wikipedia."),
         Item(text: "Research a person or topic across many pages",
              note: "Turn on Research from the plus button. It searches every combination of your "
                  + "keywords, checks each page is about the same subject before using it, and never "
@@ -106,6 +106,7 @@ struct CapabilitiesView: View {
                 Text("Getting past the limits")
             }
         }
+        .scrollContentBackground(.hidden)
         .navigationTitle("Capabilities")
         .navigationBarTitleDisplayMode(.inline)
     }
