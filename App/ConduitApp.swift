@@ -57,30 +57,27 @@ struct RootView: View {
     @AppStorage(Appearance.backdropKey) private var backdrop = Appearance.Backdrop.aurora.rawValue
 
     var body: some View {
-        TabView(selection: $page) {
-            Tab("Chat", systemImage: AppPage.chat.symbol, value: AppPage.chat) { chatPage }
-            Tab("Libraries", systemImage: AppPage.libraries.symbol, value: AppPage.libraries) {
+        ZStack {
+            chatPage
+                .opacity(page == .chat ? 1 : 0)
+                .allowsHitTesting(page == .chat)
+                .accessibilityHidden(page != .chat)
+            if page == .libraries {
                 LibrariesView { id, question in
                     session?.submit(question, libraryPhotoID: id)
                     page = .chat
                 }
             }
-            Tab("Models", systemImage: AppPage.models.symbol, value: AppPage.models) {
+            if page == .models {
                 ModelPickerSheet(onSelect: selectFromPage, loadingState: loadingState,
                                  showsDoneButton: false)
                     .environment(catalog)
             }
-            Tab("Settings", systemImage: AppPage.settings.symbol, value: AppPage.settings) {
-                Color.clear
-            }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            ConduitNavigationBar(selected: $page, onSettings: { showingSettings = true })
         }
         .tint(Color.conduitAccent)
-        .onChange(of: page) { previous, selected in
-            if selected == .settings {
-                page = previous == .settings ? .chat : previous
-                showingSettings = true
-            }
-        }
         .sheet(isPresented: $showingSettings) { settingsSheet }
         .task {
             // Clear obsolete personality and effort choices from earlier builds.
@@ -247,7 +244,6 @@ struct RootView: View {
         autoModel = ""
         session?.visionModelDirectory = catalog.visionModels.first?.directory
         select(model)
-        page = .chat
     }
 
     private var isReady: Bool {

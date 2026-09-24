@@ -51,6 +51,10 @@
   <string>Conduit uses your location for directions and for the weather where you are.</string>
   <key>NSPhotoLibraryAddUsageDescription</key>
   <string>Conduit saves images to your library when you ask it to.</string>
+  <key>NSPhotoLibraryUsageDescription</key>
+  <string>Conduit reads and indexes photos on this iPhone when you ask about your gallery or choose to import all photos. Photo analysis stays on this device.</string>
+  <key>NSMotionUsageDescription</key>
+  <string>Conduit uses device motion to tilt and shimmer your model badge while you hold it.</string>
 
   <!-- canOpenURL is gated by this allowlist; anything not listed reports false
        even when the app IS installed, which makes capability checks lie. -->

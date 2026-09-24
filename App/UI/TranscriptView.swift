@@ -36,7 +36,7 @@ struct TranscriptView: View {
                 }
                 .padding(.horizontal, 18)
                 .padding(.top, 12)
-                .padding(.bottom, 8)
+                .padding(.bottom, 30)
             }
             // The glass bar floats over the top edge of the scroll content;
             // this keeps the system's edge-fade consistent with it.
@@ -287,7 +287,7 @@ private struct ReasoningView: View {
 
     var body: some View {
         DisclosureGroup(isExpanded: $expanded) {
-            Text(reasoning.trimmingCharacters(in: .whitespacesAndNewlines))
+            Text(ResponseTextCleaner.clean(reasoning))
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)

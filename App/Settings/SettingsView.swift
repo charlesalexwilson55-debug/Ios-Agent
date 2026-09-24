@@ -1,4 +1,5 @@
 import SwiftUI
+import CoreMotion
 
 /// Dark glass settings window. Archives live here so main navigation stays small.
 struct SettingsView: View {
@@ -37,6 +38,10 @@ struct SettingsView: View {
     let onResumeResearch: (ResearchRun) -> Void
     let onClose: () -> Void
     @State private var selectedTab: Tab?
+    @State private var profile = ProfileStore.shared
+    @State private var usage = UsageStore.shared
+    @AppStorage("conduit.profile.email") private var email = ""
+    @AppStorage(NavigationStyle.storageKey) private var navigationStyle = NavigationStyle.icons.rawValue
 
     var body: some View {
         VStack(spacing: 0) {
@@ -80,35 +85,76 @@ struct SettingsView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List {
-                    Section("Connections") {
-                        settingsRow(.connectors)
-                        settingsRow(.web)
+                ScrollView {
+                    VStack(spacing: 17) {
+                        profileCard
+                        settingsGroup("Your app", tabs: [.appearance, .power])
+                        VStack(spacing: 10) {
+                            Text("Navigation bar").font(.headline)
+                            Picker("Navigation bar", selection: $navigationStyle) {
+                                ForEach(NavigationStyle.allCases) { option in
+                                    Text(option.title).tag(option.rawValue)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                        }
+                        .padding(16)
+                        .frame(maxWidth: .infinity)
+                        .glassEffect(.regular, in: .rect(cornerRadius: 20))
+                        settingsGroup("Connections", tabs: [.connectors, .web])
+                        settingsGroup("Saved work", tabs: [.memory, .research])
+                        settingsGroup("About", tabs: [.information])
                     }
-                    Section("Personal") {
-                        settingsRow(.you)
-                        settingsRow(.appearance)
-                        settingsRow(.power)
-                    }
-                    Section("Saved work") {
-                        settingsRow(.memory)
-                        settingsRow(.research)
-                    }
-                    Section("About") {
-                        settingsRow(.information)
-                    }
+                    .padding(.horizontal, 18)
+                    .padding(.bottom, 24)
                 }
-                .scrollContentBackground(.hidden)
             }
         }
-        .environment(\.colorScheme, .dark)
+        .background(BackdropView())
+    }
+
+    private var profileCard: some View {
+        VStack(spacing: 9) {
+            Button { withAnimation { selectedTab = .you } } label: {
+                VStack(spacing: 8) {
+                Image(systemName: "person.crop.circle.fill")
+                    .font(.system(size: 47, weight: .ultraLight))
+                    .foregroundStyle(Color.conduitAccent)
+                Text(profile.profile.name.isEmpty ? "Your profile" : profile.profile.name)
+                    .font(.title3.bold())
+                if !email.isEmpty {
+                    Text(email).font(.subheadline).foregroundStyle(.secondary)
+                }
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Edit profile")
+            ModelBadge(model: usage.ranked.first?.model)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 20)
+        .glassEffect(.regular, in: .rect(cornerRadius: 22))
+    }
+
+    private func settingsGroup(_ title: String, tabs: [Tab]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                .padding(.horizontal, 6)
+            VStack(spacing: 0) {
+                ForEach(tabs) { tab in
+                    settingsRow(tab)
+                    if tab != tabs.last { Divider().padding(.leading, 54) }
+                }
+            }
+            .glassEffect(.regular, in: .rect(cornerRadius: 19))
+        }
     }
 
     private func settingsRow(_ tab: Tab) -> some View {
         Button { withAnimation(.easeInOut(duration: 0.18)) { selectedTab = tab } } label: {
             HStack(spacing: 12) {
                 Image(systemName: tab.symbol)
-                    .frame(width: 28)
+                    .frame(width: 28, height: 28)
                     .foregroundStyle(Color.conduitAccent)
                 Text(tab.title)
                 Spacer()
@@ -116,9 +162,65 @@ struct SettingsView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
             }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .contentShape(.rect)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(tab.title)
+    }
+}
+
+private struct ModelBadge: View {
+    let model: String?
+    @State private var held = false
+    @State private var tiltX = 0.0
+    @State private var tiltY = 0.0
+    @State private var motion = CMMotionManager()
+
+    private var tier: (name: String, color: Color) {
+        let name = (model ?? "").lowercased()
+        if name.contains("9b") || name.contains("8b") { return ("Advanced", .purple) }
+        if name.contains("4b") || name.contains("3b") { return ("Versatile", .blue) }
+        return ("Local model", .teal)
+    }
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "sparkle")
+            Text(model.map { "\(tier.name) · \($0)" } ?? "No model used yet")
+                .lineLimit(1)
+        }
+        .font(.caption.weight(.semibold))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background {
+            Capsule().fill(LinearGradient(
+                colors: [tier.color.opacity(0.2), tier.color.opacity(held ? 0.8 : 0.4), .white.opacity(held ? 0.65 : 0.15)],
+                startPoint: UnitPoint(x: 0.1 + tiltX * 0.3, y: 0.1 + tiltY * 0.3),
+                endPoint: UnitPoint(x: 0.9 - tiltX * 0.3, y: 0.9 - tiltY * 0.3)))
+        }
+        .overlay { Capsule().strokeBorder(tier.color.opacity(0.7)) }
+        .scaleEffect(held ? 1.22 : 1)
+        .rotation3DEffect(.degrees(held ? tiltY * 13 : 0), axis: (x: 1, y: 0, z: 0))
+        .onLongPressGesture(minimumDuration: 0.25, pressing: { pressing in
+            held = pressing
+            if pressing {
+                guard motion.isDeviceMotionAvailable else { return }
+                motion.deviceMotionUpdateInterval = 1.0 / 30
+                motion.startDeviceMotionUpdates(to: .main) { data, _ in
+                    guard let gravity = data?.gravity else { return }
+                    tiltX = gravity.x
+                    tiltY = gravity.y
+                }
+            } else {
+                motion.stopDeviceMotionUpdates()
+                tiltX = 0
+                tiltY = 0
+            }
+        }, perform: {})
+        .onDisappear { motion.stopDeviceMotionUpdates() }
+        .accessibilityLabel(model.map { "Most used model: \($0), \(tier.name) tier" } ?? "No model usage yet")
     }
 }
 

@@ -324,6 +324,10 @@ final class AgentSession {
     // MARK: - The loop
 
     private func runTurn() async {
+        if PhotoLibraryIndex.isGalleryQuestion(currentRequest) {
+            await answerGalleryQuestion()
+            return
+        }
         // Pictures go to the image model first; the chat model gets its
         // descriptions with the user's words.
         if !pendingImageIDs.isEmpty {
@@ -417,7 +421,7 @@ final class AgentSession {
                     case .text(let chunk):
                         replyText += chunk
                         if transcript.indices.contains(entryIndex) {
-                            transcript[entryIndex].text = replyText
+                            transcript[entryIndex].text = ResponseTextCleaner.clean(replyText, streaming: true)
                         }
                     case .reasoning(let chunk):
                         if transcript.indices.contains(entryIndex) {
@@ -438,6 +442,7 @@ final class AgentSession {
                 }
             } catch {
                 isGenerating = false
+                replyText = ResponseTextCleaner.clean(replyText)
                 finishStreaming(at: entryIndex, text: replyText)
                 transcript.append(TranscriptEntry(
                     kind: .error,
@@ -446,6 +451,7 @@ final class AgentSession {
                 return
             }
             isGenerating = false
+            replyText = ResponseTextCleaner.clean(replyText)
 
             if Task.isCancelled {
                 // cancel() has already closed the bubble. Keep any partial
@@ -502,6 +508,50 @@ final class AgentSession {
                 await summarise(systemPrompt: systemPrompt)
                 return
             }
+        }
+    }
+
+    /// Gallery questions search every Photos asset the user granted access to.
+    /// A single attached image is never used as a substitute for that search.
+    private func answerGalleryQuestion() async {
+        let index = transcript.count
+        transcript.append(TranscriptEntry(kind: .assistant, text: "Reading your photo library…", isStreaming: true))
+        do {
+            let found = try await PhotoLibraryIndex.shared.search(currentRequest)
+            guard !Task.isCancelled else { return }
+            let names = found.terms.joined(separator: ", ")
+            var answer: String
+            if found.terms.isEmpty {
+                answer = currentRequest.lowercased().contains("how many") || currentRequest.lowercased().contains("count")
+                    ? "I can access \(found.accessible) photos in your photo library; \(found.indexed) have been indexed."
+                    : "Tell me what you want to find in your photo library."
+            } else {
+                let count = found.matches.count
+                answer = "I found \(count) of \(found.indexed) indexed photos matching “\(names)”."
+                if currentRequest.lowercased().contains("message") {
+                    let screenshots = found.matches.filter(\.isScreenshot).count
+                    answer += " \(screenshots) of those are marked as screenshots. "
+                        + "Recognized text cannot prove who sent each message, so this is a candidate count."
+                }
+                if let first = found.matches.first {
+                    let excerpt = String(first.text.replacingOccurrences(of: "\n", with: " ").prefix(220))
+                    if !excerpt.isEmpty { answer += " Newest match reads: “\(excerpt)”." }
+                    if !first.labels.isEmpty {
+                        answer += " Visual labels: \(first.labels.prefix(4).joined(separator: ", "))."
+                    }
+                }
+            }
+            if found.limited {
+                answer += " iOS granted access to selected photos only; this does not cover the whole library."
+            } else if found.failed > 0 || found.indexed < found.accessible {
+                answer += " \(found.failed) photos could not be read, so the count may be low."
+            }
+            transcript[index].text = answer
+            transcript[index].isStreaming = false
+            history.append(.assistant(answer))
+        } catch {
+            transcript[index].text = error.localizedDescription
+            transcript[index].isStreaming = false
         }
     }
 
@@ -910,7 +960,7 @@ final class AgentSession {
                 if case .text(let chunk) = event {
                     replyText += chunk
                     if transcript.indices.contains(entryIndex) {
-                        transcript[entryIndex].text = replyText
+                        transcript[entryIndex].text = ResponseTextCleaner.clean(replyText, streaming: true)
                     }
                 }
             }
@@ -919,6 +969,7 @@ final class AgentSession {
             // error bubble on top of the tool chips the user can already see.
         }
 
+        replyText = ResponseTextCleaner.clean(replyText)
         finishStreaming(at: entryIndex, text: replyText)
         if replyText.isEmpty, transcript.indices.contains(entryIndex) {
             transcript.remove(at: entryIndex)

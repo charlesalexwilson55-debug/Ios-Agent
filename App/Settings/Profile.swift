@@ -204,6 +204,7 @@ extension TextExtractor {
 struct ProfileSettingsView: View {
     @State private var store = ProfileStore.shared
     @State private var draft = ProfileStore.shared.profile
+    @AppStorage("conduit.profile.email") private var email = ""
     @State private var importService: String?
     @State private var showingImporter = false
     @State private var importError: String?
@@ -213,6 +214,10 @@ struct ProfileSettingsView: View {
         Form {
             Section {
                 TextField("Name", text: $draft.name)
+                TextField("Email", text: $email)
+                    .textContentType(.emailAddress)
+                    .keyboardType(.emailAddress)
+                    .textInputAutocapitalization(.never)
                 TextField("Pronouns", text: $draft.pronouns)
                 TextField("Work or study", text: $draft.work)
             } header: {

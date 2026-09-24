@@ -183,6 +183,8 @@ struct LibraryDetailView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var store = LibraryStore.shared
+    @State private var gallery = PhotoLibraryIndex.shared
+    @State private var galleryError: String?
     @State private var importing = false
     @State private var photos: [PhotosPickerItem] = []
     @State private var chosenCover: PhotosPickerItem?
@@ -226,6 +228,25 @@ struct LibraryDetailView: View {
                 PhotosPicker(selection: $photos, maxSelectionCount: 20, matching: .images) {
                     Label("Add photos from gallery", systemImage: "photo.on.rectangle")
                 }
+                Button {
+                    Task {
+                        do { try await gallery.indexAll() }
+                        catch { galleryError = error.localizedDescription }
+                    }
+                } label: {
+                    Label("Import all photos for search", systemImage: "square.stack.3d.up")
+                }
+                .disabled(gallery.isIndexing)
+                if gallery.isIndexing {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ProgressView(value: Double(gallery.indexed), total: Double(max(gallery.total, 1)))
+                        Text("Indexed \(gallery.indexed) of \(gallery.total) accessible photos")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                } else if gallery.indexed > 0 {
+                    Text("\(gallery.indexed) gallery photos searchable on this iPhone")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
                 PhotosPicker(selection: $chosenCover, matching: .images) {
                     Label("Choose grid cover", systemImage: "photo.badge.plus")
                 }
@@ -252,9 +273,6 @@ struct LibraryDetailView: View {
                             .font(.footnote)
                     }
                 }
-            } footer: {
-                Text("PDF, Word, PowerPoint, Excel, text, Markdown, code, web pages, ZIP archives and photos "
-                    + "of text. Apple Vision reads photos on this iPhone; text is indexed locally.")
             }
 
             if !library.readablePhotoIDs.isEmpty {
@@ -321,6 +339,13 @@ struct LibraryDetailView: View {
             }
         }
         .navigationTitle(library.name.isEmpty ? "Library" : library.name)
+        .alert("Could not read photo library", isPresented: Binding(
+            get: { galleryError != nil }, set: { if !$0 { galleryError = nil } }
+        )) {
+            Button("OK", role: .cancel) { galleryError = nil }
+        } message: {
+            Text(galleryError ?? "")
+        }
         .onChange(of: photos) { _, selection in
             guard !selection.isEmpty, !readingPhotos else { return }
             readingPhotos = true

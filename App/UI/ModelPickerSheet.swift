@@ -18,6 +18,7 @@ struct ModelPickerSheet: View {
     var showsDoneButton = true
 
     @State private var isImporting = false
+    @State private var showingSuggestions = false
     @State private var isCopying = false
     @State private var importError: String?
     @State private var permissionSnapshot: Permissions.Snapshot?
@@ -27,7 +28,6 @@ struct ModelPickerSheet: View {
             List {
                 modelsSection
                 if !catalog.adapters.isEmpty { adaptersSection }
-                downloadSection
                 permissionsSection
                 capabilitiesSection
             }
@@ -36,11 +36,6 @@ struct ModelPickerSheet: View {
             .navigationTitle("Models")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { isImporting = true } label: { Image(systemName: "plus") }
-                        .accessibilityLabel("Import model")
-                        .disabled(isCopying)
-                }
                 if showsDoneButton {
                     ToolbarItem(placement: .confirmationAction) {
                         Button("Done") { dismiss() }
@@ -61,6 +56,17 @@ struct ModelPickerSheet: View {
             ) { result in
                 handleImport(result)
             }
+            .sheet(isPresented: $showingSuggestions) {
+                NavigationStack {
+                    List { downloadSection }
+                        .navigationTitle("Suggested models")
+                        .toolbar {
+                            ToolbarItem(placement: .confirmationAction) {
+                                Button("Done") { showingSuggestions = false }
+                            }
+                        }
+                }
+            }
             // A real two-way binding, not `.constant`: with a constant binding
             // SwiftUI cannot clear the flag itself, so an interactive dismiss
             // leaves the state set and the alert immediately re-presents.
@@ -80,9 +86,14 @@ struct ModelPickerSheet: View {
     private var modelsSection: some View {
         Section {
             VStack(spacing: 14) {
-                Text("Upload a model")
-                    .font(.title2.bold())
-                    .frame(maxWidth: .infinity)
+                HStack(spacing: 7) {
+                    Text("Upload a model").font(.title2.bold())
+                    Button { showingSuggestions = true } label: {
+                        Image(systemName: "info.circle")
+                    }
+                    .accessibilityLabel("Suggested models")
+                }
+                .frame(maxWidth: .infinity)
                 Button { isImporting = true } label: {
                     VStack(spacing: 8) {
                         Image(systemName: "folder.badge.plus")
@@ -101,23 +112,8 @@ struct ModelPickerSheet: View {
             .padding(.vertical, 8)
 
             GeometryReader { geometry in
-              ScrollViewReader { reader in
                ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .top, spacing: 12) {
-                    Button { isImporting = true } label: {
-                        VStack(spacing: 9) {
-                            Image(systemName: "plus")
-                                .font(.system(size: 24, weight: .medium))
-                                .frame(width: 54, height: 54)
-                                .background(Color.conduitAccent.opacity(0.15), in: .rect(cornerRadius: 16))
-                            Text("Add model").font(.caption).lineLimit(1)
-                        }
-                        .frame(width: 94)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(isCopying)
-                    .accessibilityLabel("Add model")
-                    .id("add-model")
                     ForEach(catalog.models) { model in
                         Button { onSelect(model) } label: {
                             VStack(spacing: 9) {
@@ -146,8 +142,6 @@ struct ModelPickerSheet: View {
                        alignment: catalog.models.isEmpty ? .center : .leading)
                 .animation(.spring(response: 0.36, dampingFraction: 0.82), value: catalog.models.count)
                }
-               .onAppear { reader.scrollTo("add-model", anchor: .leading) }
-              }
             }
             .frame(height: 108)
             if let selected = catalog.selectedModel {

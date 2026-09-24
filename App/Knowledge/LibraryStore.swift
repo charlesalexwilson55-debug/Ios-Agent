@@ -67,6 +67,10 @@ final class LibraryStore {
     /// explicitly asks about the latest photo. Never guess between libraries.
     func photoID(for request: String) -> UUID? {
         let text = request.lowercased()
+        // A question about a collection must not silently attach one image.
+        if ["photo library", "gallery", "camera roll", "all photos", "all pictures",
+            "how many photos", "how many pictures", "which photos", "find photos"]
+            .contains(where: { text.contains($0) }) { return nil }
         guard ["photo", "picture", "image"].contains(where: { text.contains($0) }) else { return nil }
         let matches = libraries.filter {
             !$0.name.isEmpty && text.contains($0.name.lowercased()) && !$0.readablePhotoIDs.isEmpty

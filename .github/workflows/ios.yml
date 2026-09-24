@@ -78,6 +78,8 @@ jobs:
             artifacts/graph-tests
             xcrun swiftc -swift-version 5 -parse-as-library App/Web/WebSearch.swift scripts/provider-tests.swift -o artifacts/provider-tests
             artifacts/provider-tests
+            xcrun swiftc -swift-version 5 -parse-as-library App/Model/ResponseTextCleaner.swift scripts/output-cleaner-tests.swift -o artifacts/output-cleaner-tests
+            artifacts/output-cleaner-tests
           } 2>&1 | tee build/xcodebuild.log
           bash scripts/build-ios.sh
 
