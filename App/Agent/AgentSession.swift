@@ -324,7 +324,7 @@ final class AgentSession {
     // MARK: - The loop
 
     private func runTurn() async {
-        if pendingImageIDs.isEmpty && PhotoLibraryIndex.isGalleryQuestion(currentRequest) {
+        if PhotoLibraryIndex.isGalleryQuestion(currentRequest) {
             await answerGalleryQuestion()
             return
         }
