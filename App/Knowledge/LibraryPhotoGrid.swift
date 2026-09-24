@@ -23,6 +23,7 @@ struct LibraryPhotoGrid: View {
     @State private var selectedPhoto: LibraryPhoto?
     @State private var editing = false
     @State private var viewerStartIndex = 0
+    @State private var query = ""
 
     private var library: Library? { store.libraries.first { $0.id == libraryID } }
 
@@ -31,6 +32,23 @@ struct LibraryPhotoGrid: View {
         let local = library.readablePhotoIDs.reversed().map { LibraryPhoto(source: .stored($0)) }
         let gallery = (library.galleryAssetIDs ?? []).map { LibraryPhoto(source: .gallery($0)) }
         return local + gallery
+    }
+
+    private var filteredPhotos: [LibraryPhoto] {
+        let terms = query.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
+        guard !terms.isEmpty else { return photos }
+        return photos.filter { photo in
+            let text: String
+            switch photo.source {
+            case .stored(let id):
+                let record = ImageStore.shared.record(id: id)
+                text = (record?.description ?? "") + " " + (record?.prompt ?? "")
+            case .gallery(let id):
+                let record = PhotoLibraryIndex.shared.record(for: id)
+                text = (record?.text ?? "") + " " + (record?.labels.joined(separator: " ") ?? "")
+            }
+            return terms.allSatisfy { text.localizedCaseInsensitiveContains($0) }
+        }
     }
 
     var body: some View {
@@ -42,7 +60,7 @@ struct LibraryPhotoGrid: View {
                         .padding(.top, 50)
                 } else {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 3), count: 3), spacing: 3) {
-                        ForEach(photos) { photo in
+                        ForEach(filteredPhotos) { photo in
                             Button {
                                 viewerStartIndex = entries.count
                                 selectedPhoto = photo
@@ -62,6 +80,7 @@ struct LibraryPhotoGrid: View {
             .background(BackdropView())
             .navigationTitle(library?.name ?? "Library")
             .navigationBarTitleDisplayMode(.inline)
+            .searchable(text: $query, prompt: "Search photos in this library")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) { Button("Back") { dismiss() } }
                 ToolbarItem(placement: .topBarTrailing) {

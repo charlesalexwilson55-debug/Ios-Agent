@@ -290,9 +290,9 @@ struct LibraryManageView: View {
                 }
             }
 
-            Section("Try a search") {
+            Section("Search documents") {
                 HStack {
-                    TextField("Search photos and documents in this library", text: $query)
+                    TextField("Search documents in this library", text: $query)
                         .submitLabel(.search)
                         .onSubmit { search(library) }
                     if searching { ProgressView() }

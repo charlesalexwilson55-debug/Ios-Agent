@@ -45,6 +45,8 @@ final class PhotoLibraryIndex {
         records.values.sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
     }
 
+    func record(for assetID: String) -> Record? { records[assetID] }
+
     private static var file: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("photo-library-index.json")
