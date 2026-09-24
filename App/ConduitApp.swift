@@ -315,7 +315,8 @@ struct RootView: View {
     }
 
     private func checkBatterySaver() {
-        guard session?.isWorking != true, case .idle = loadingState else { return }
+        guard scenePhase == .active, session?.isWorking != true,
+              case .idle = loadingState else { return }
         let level = UIDevice.current.batteryLevel
         guard level >= 0 else { return }
         if !batterySaver || level >= 0.25 {
