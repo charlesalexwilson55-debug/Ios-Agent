@@ -541,6 +541,18 @@ final class AgentSession {
                     }
                 }
             }
+            let lower = currentRequest.lowercased()
+            let isCount = lower.contains("how many") || lower.contains("count")
+            if !isCount, let match = found.matches.first,
+               let data = await PhotoLibraryIndex.shared.imageData(for: match.assetID),
+               let photo = ImageStore.shared.addPhoto(data, prompt: "Found in photo library for: \(currentRequest)") {
+                transcript[index].imageIDs = [photo.id]
+                if await readImages([photo.id]) != nil,
+                   let description = ImageStore.shared.record(id: photo.id)?.description {
+                    answer += "\n\nNewest matching photo: " + ResponseTextCleaner.clean(description)
+                }
+            }
+            guard !Task.isCancelled else { return }
             if found.limited {
                 answer += " iOS granted access to selected photos only; this does not cover the whole library."
             } else if found.failed > 0 || found.indexed < found.accessible {

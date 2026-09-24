@@ -114,6 +114,14 @@ final class PhotoLibraryIndex {
                             terms: terms)
     }
 
+    /// Loads one matched photo only when the user asks to inspect it. Bulk
+    /// indexing never copies originals into Conduit's storage.
+    func imageData(for assetID: String) async -> Data? {
+        let assets = PHAsset.fetchAssets(withLocalIdentifiers: [assetID], options: nil)
+        guard let asset = assets.firstObject else { return nil }
+        return await Self.thumbnailData(for: asset)
+    }
+
     static func isGalleryQuestion(_ request: String) -> Bool {
         let text = request.lowercased()
         let gallery = ["photo library", "gallery", "camera roll", "all photos", "all pictures",
