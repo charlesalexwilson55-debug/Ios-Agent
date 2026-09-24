@@ -50,12 +50,16 @@ struct RootView: View {
     @State private var page: AppPage = .chat
     @State private var showingSettings = false
     @State private var menuOpen = false
+    @State private var startupReady = false
+    @State private var startupVisible = true
     /// Views that draw with the chosen accent colour and text size are
     /// rebuilt when either changes.
     @AppStorage(Appearance.accentKey) private var accentHex = ""
     @AppStorage(ModelColors.storageKey) private var modelColors = ""
     @AppStorage(Appearance.textSizeKey) private var textSize = ""
     @AppStorage(Appearance.backdropKey) private var backdrop = Appearance.Backdrop.aurora.rawValue
+    @AppStorage(Appearance.startupEnabledKey) private var startupEnabled = true
+    @AppStorage(Appearance.startupOrbKey) private var startupOrbHex = AccentPalette.palette[0].hex
 
     var body: some View {
         ZStack {
@@ -76,6 +80,15 @@ struct RootView: View {
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             ConduitNavigationBar(selected: $page, onSettings: { showingSettings = true })
+        }
+        .overlay {
+            if startupEnabled && startupVisible {
+                StartupSplash(ready: startupReady,
+                              color: Color(hex: startupOrbHex) ?? .blue,
+                              onComplete: { withAnimation(.easeOut(duration: 0.28)) { startupVisible = false } })
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+            }
         }
         .tint(Color.conduitAccent)
         .sheet(isPresented: $showingSettings) { settingsSheet }
@@ -115,6 +128,8 @@ struct RootView: View {
             }
             checkBatterySaver()
             consumePendingTask()
+            startupReady = true
+            if !startupEnabled { startupVisible = false }
         }
         .task {
             let warnings = NotificationCenter.default.notifications(

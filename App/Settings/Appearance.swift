@@ -10,6 +10,8 @@ enum Appearance {
     static let backdropKey = "conduit.appearance.backdrop"
     static let textSizeKey = "conduit.appearance.textSize"
     static let showReasoningKey = "conduit.appearance.showReasoning"
+    static let startupEnabledKey = "conduit.appearance.startupEnabled"
+    static let startupOrbKey = "conduit.appearance.startupOrb"
 
     enum Theme: String, CaseIterable, Identifiable {
         case system, light, dark
@@ -129,6 +131,8 @@ struct AppearanceSettingsView: View {
     @AppStorage(Appearance.backdropKey) private var backdrop = Appearance.Backdrop.aurora.rawValue
     @AppStorage(Appearance.textSizeKey) private var textSize = Appearance.TextSize.standard.rawValue
     @AppStorage(Appearance.showReasoningKey) private var showReasoning = true
+    @AppStorage(Appearance.startupEnabledKey) private var startupEnabled = true
+    @AppStorage(Appearance.startupOrbKey) private var startupOrbHex = AccentPalette.palette[0].hex
     @AppStorage(NavigationStyle.storageKey) private var navigationStyle = NavigationStyle.icons.rawValue
     @Environment(\.colorScheme) private var colorScheme
 
@@ -141,6 +145,14 @@ struct AppearanceSettingsView: View {
                     }
                 }
                 .pickerStyle(.segmented)
+            }
+            Section("Startup") {
+                Toggle("Show startup animation", isOn: $startupEnabled)
+                ColorPicker("Orb colour", selection: Binding(
+                    get: { Color(hex: startupOrbHex) ?? .blue },
+                    set: { startupOrbHex = $0.hexString }
+                ), supportsOpacity: false)
+                .disabled(!startupEnabled)
             }
             Section("Theme") {
                 Picker("Theme", selection: $theme) {
@@ -213,6 +225,8 @@ struct AppearanceSettingsView: View {
                     backdrop = Appearance.Backdrop.aurora.rawValue
                     textSize = Appearance.TextSize.standard.rawValue
                     showReasoning = true
+                    startupEnabled = true
+                    startupOrbHex = AccentPalette.palette[0].hex
                 }
             }
         }
