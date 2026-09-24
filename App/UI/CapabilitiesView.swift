@@ -26,14 +26,11 @@ struct CapabilitiesView: View {
              note: "With the globe switch on. Full web search needs a free Tavily key on the "
                  + "Settings → Web Searching; without one it searches Wikipedia."),
         Item(text: "Research a person or topic across many pages",
-             note: "Turn on Research from the plus button. It searches every combination of your "
+             note: "Ask Conduit to research something, or turn on Research from the plus button. It searches combinations of your "
                  + "keywords, checks each page is about the same subject before using it, and never "
                  + "collects addresses, phone numbers or details about someone's children."),
-        Item(text: "Use MCP servers on the internet",
-             note: "Add them in Settings > Connectors, then name one in a message."),
-        Item(text: "Use your Google account",
-             note: "Gmail (search, read, save drafts), Calendar, Drive, Docs, Sheets, Tasks, Contacts and "
-                 + "YouTube, after connecting Google in Settings > Connectors."),
+        Item(text: "Search your accessible photo library",
+             note: "Conduit can index permitted photos on-device, recognize text, and report candidate matches and dates."),
         Item(text: "Answer from your own documents",
              note: "Libraries index PDFs, Office files, notes, code and photos of pages on the phone."),
         Item(text: "Remember earlier chats",

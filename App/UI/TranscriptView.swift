@@ -119,6 +119,9 @@ private struct AssistantText: View {
     let accent: Color
 
     @AppStorage(Appearance.showReasoningKey) private var showReasoning = true
+    @State private var staged = false
+    @State private var finishingSince: Date?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -131,13 +134,13 @@ private struct AssistantText: View {
                 StoredImageView(id: id, maxHeight: 340)
             }
 
-            if entry.isStreaming {
+            if entry.isStreaming && !staged {
                 // Parsing the entire growing answer as Markdown for every
                 // token makes long code answers expensive and visually jumpy.
                 Text(entry.text)
                     .font(.system(size: 16 * Appearance.textScale))
                     .textSelection(.enabled)
-            } else {
+            } else if !staged {
                 ForEach(MessageSegment.parse(entry.text)) { segment in
                     switch segment.kind {
                     case .prose(let prose):
@@ -148,12 +151,29 @@ private struct AssistantText: View {
                 }
             }
 
-            if entry.isStreaming {
-                ConduitLoader(color: accent, status: nil)
+            if entry.isStreaming || staged {
+                ConduitLoader(color: accent, status: nil, finishingSince: finishingSince)
                     .padding(.top, 2)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .onAppear { staged = entry.isStreaming && entry.text.isEmpty }
+        .onChange(of: entry.text.isEmpty) { wasEmpty, isEmpty in
+            guard wasEmpty && !isEmpty && staged else { return }
+            finishingSince = Date()
+            Task { @MainActor in
+                if !reduceMotion {
+                    for step in 0..<4 {
+                        try? await Task.sleep(for: .milliseconds(135 + step * 35))
+                        UIImpactFeedbackGenerator(style: step < 2 ? .light : .medium).impactOccurred()
+                    }
+                }
+                try? await Task.sleep(for: .milliseconds(120))
+                staged = false
+                finishingSince = nil
+                if !reduceMotion { UINotificationFeedbackGenerator().notificationOccurred(.success) }
+            }
+        }
     }
 
 }

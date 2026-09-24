@@ -41,6 +41,10 @@ final class PhotoLibraryIndex {
     private(set) var isIndexing = false
     private var records: [String: Record] = [:]
 
+    var allRecords: [Record] {
+        records.values.sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
+    }
+
     private static var file: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("photo-library-index.json")
@@ -104,9 +108,11 @@ final class PhotoLibraryIndex {
     func search(_ query: String) async throws -> SearchResult {
         try await indexAll()
         let terms = Self.searchTerms(query)
+        let screenshotsOnly = query.localizedCaseInsensitiveContains("screenshot")
         let matches = records.values.filter { record in
             let corpus = (record.text + " " + record.labels.joined(separator: " ")).lowercased()
-            return !terms.isEmpty && terms.allSatisfy { corpus.contains($0) }
+            return (!screenshotsOnly || record.isScreenshot)
+                && (terms.isEmpty || terms.allSatisfy { corpus.contains($0) })
         }.sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
         return SearchResult(matches: matches, indexed: records.count, accessible: total,
                             failed: failed,
@@ -122,31 +128,47 @@ final class PhotoLibraryIndex {
         return await Self.thumbnailData(for: asset)
     }
 
+    func previewData(for assetID: String, size: CGFloat = 320) async -> Data? {
+        let assets = PHAsset.fetchAssets(withLocalIdentifiers: [assetID], options: nil)
+        guard let asset = assets.firstObject else { return nil }
+        return await Self.thumbnailData(for: asset, size: size)
+    }
+
     static func isGalleryQuestion(_ request: String) -> Bool {
         let text = request.lowercased()
         let gallery = ["photo library", "gallery", "camera roll", "all photos", "all pictures",
-                       "my photos", "my pictures"]
-        let operation = ["how many", "count", "find", "search", "which", "show", "look for", "do i have"]
+                       "my photos", "my pictures", "screenshot", "photos of", "pictures of",
+                       "photo of", "image of"]
+        let operation = ["how many", "count", "find", "search", "which", "show", "look for",
+                         "do i have", "when did", "when was", "what date", "what time"]
         return gallery.contains(where: { text.contains($0) })
             && operation.contains(where: { text.contains($0) })
     }
 
     private static func searchTerms(_ query: String) -> [String] {
+        let personPattern = #"(?i)\b(?:messages?|texts?|chats?)\s+(?:to|with|from)\s+([\p{L}][\p{L}\p{N}'-]*)"#
+        if let regex = try? NSRegularExpression(pattern: personPattern),
+           let match = regex.firstMatch(in: query, range: NSRange(query.startIndex..., in: query)),
+           let range = Range(match.range(at: 1), in: query) {
+            return [String(query[range]).lowercased()]
+        }
         let stop: Set<String> = ["how", "many", "count", "find", "search", "which", "show", "look", "for",
-            "do", "i", "have", "in", "my", "the", "a", "an", "all", "of", "to", "from", "were", "are",
+            "do", "did", "when", "was", "take", "took", "if", "there", "theres", "there's", "multiple",
+            "them", "any", "i", "have", "in", "my", "the", "a", "an", "all", "of", "to", "from", "were", "are",
             "is", "photo", "photos", "picture", "pictures", "image", "images", "library", "gallery",
-            "camera", "roll", "message", "messages", "text", "texts", "screenshot", "screenshots"]
+            "camera", "roll", "message", "messages", "text", "texts", "screenshot", "screenshots",
+            "date", "time", "about", "that", "this", "with", "more", "than", "one"]
         return query.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber })
             .map(String.init).filter { $0.count > 1 && !stop.contains($0) }
     }
 
-    private static func thumbnailData(for asset: PHAsset) async -> Data? {
+    private static func thumbnailData(for asset: PHAsset, size: CGFloat = 1200) async -> Data? {
         await withCheckedContinuation { continuation in
             let options = PHImageRequestOptions()
             options.deliveryMode = .highQualityFormat
             options.resizeMode = .fast
             options.isNetworkAccessAllowed = false
-            PHImageManager.default().requestImage(for: asset, targetSize: CGSize(width: 1200, height: 1200),
+            PHImageManager.default().requestImage(for: asset, targetSize: CGSize(width: size, height: size),
                                                   contentMode: .aspectFit, options: options) { image, info in
                 if info?[PHImageResultIsDegradedKey] as? Bool == true { return }
                 continuation.resume(returning: image?.jpegData(compressionQuality: 0.78))

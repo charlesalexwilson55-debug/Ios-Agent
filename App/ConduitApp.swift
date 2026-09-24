@@ -53,6 +53,7 @@ struct RootView: View {
     /// Views that draw with the chosen accent colour and text size are
     /// rebuilt when either changes.
     @AppStorage(Appearance.accentKey) private var accentHex = ""
+    @AppStorage(ModelColors.storageKey) private var modelColors = ""
     @AppStorage(Appearance.textSizeKey) private var textSize = ""
     @AppStorage(Appearance.backdropKey) private var backdrop = Appearance.Backdrop.aurora.rawValue
 
@@ -63,10 +64,9 @@ struct RootView: View {
                 .allowsHitTesting(page == .chat)
                 .accessibilityHidden(page != .chat)
             if page == .libraries {
-                LibrariesView { id, question in
+                LibrariesView(onAskPhoto: { id, question in
                     session?.submit(question, libraryPhotoID: id)
-                    page = .chat
-                }
+                }, entries: session?.transcript ?? [], isWorking: session?.isWorking ?? false)
             }
             if page == .models {
                 ModelPickerSheet(onSelect: selectFromPage, loadingState: loadingState,
@@ -169,7 +169,7 @@ struct RootView: View {
         NavigationStack {
             TranscriptView(
                 entries: session?.transcript ?? [],
-                accent: Color.conduitAccent,
+                accent: Color(hex: ModelColors.hex(for: catalog.selectedModelID, in: modelColors)) ?? .blue,
                 onCancelActivity: { id, entryID in session?.cancelActivity(id, in: entryID) },
                 isWorking: session?.isWorking ?? false,
                 onSelectResearchCandidate: { id, entryID in session?.selectResearchCandidate(id, in: entryID) }

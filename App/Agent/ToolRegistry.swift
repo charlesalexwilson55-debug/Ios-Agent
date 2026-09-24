@@ -37,8 +37,6 @@ final class ToolRegistry {
             CodeTools(),
             WebTools(),
         ], dynamicProviders: [
-            MCPTools(),
-            GoogleTools(),
         ])
     }
 

@@ -129,10 +129,19 @@ struct AppearanceSettingsView: View {
     @AppStorage(Appearance.backdropKey) private var backdrop = Appearance.Backdrop.aurora.rawValue
     @AppStorage(Appearance.textSizeKey) private var textSize = Appearance.TextSize.standard.rawValue
     @AppStorage(Appearance.showReasoningKey) private var showReasoning = true
+    @AppStorage(NavigationStyle.storageKey) private var navigationStyle = NavigationStyle.icons.rawValue
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         Form {
+            Section("Navigation bar") {
+                Picker("Navigation bar", selection: $navigationStyle) {
+                    ForEach(NavigationStyle.allCases) { option in
+                        Text(option.title).tag(option.rawValue)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
             Section("Theme") {
                 Picker("Theme", selection: $theme) {
                     ForEach(Appearance.Theme.allCases) { Text($0.title).tag($0.rawValue) }

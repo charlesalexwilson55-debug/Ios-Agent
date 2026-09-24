@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 enum NavigationStyle: String, CaseIterable, Identifiable {
     case icons, labels, compact
@@ -17,6 +18,7 @@ struct ConduitNavigationBar: View {
     @Binding var selected: AppPage
     let onSettings: () -> Void
     @AppStorage(NavigationStyle.storageKey) private var style = NavigationStyle.icons.rawValue
+    @State private var dragLocation: CGFloat?
 
     private let pages = AppPage.allCases
 
@@ -63,11 +65,12 @@ struct ConduitNavigationBar: View {
         GeometryReader { geometry in
             ZStack(alignment: .leading) {
                 Capsule().fill(Color.secondary.opacity(0.35)).frame(height: 3)
-                Circle()
-                    .fill(Color.conduitAccent)
-                    .frame(width: 9, height: 9)
-                    .shadow(color: Color.conduitAccent.opacity(0.8), radius: 6)
-                    .offset(x: (geometry.size.width - 9) * CGFloat(activeIndex) / CGFloat(pages.count - 1))
+                Capsule()
+                    .fill(.white)
+                    .frame(width: 24, height: 3)
+                    .shadow(color: Color.conduitAccent.opacity(0.9), radius: 8)
+                    .offset(x: min(max((dragLocation ?? (geometry.size.width - 24)
+                        * CGFloat(activeIndex) / CGFloat(max(pages.count - 1, 1))), 0), geometry.size.width - 24))
             }
             .frame(maxHeight: .infinity)
             .contentShape(.rect)
@@ -75,13 +78,15 @@ struct ConduitNavigationBar: View {
                 let fraction = min(max(location.x / max(geometry.size.width, 1), 0), 1)
                 choose(pages[Int((fraction * CGFloat(pages.count - 1)).rounded())])
             }
-            .gesture(DragGesture(minimumDistance: 12).onEnded { value in
-                if value.translation.width < -12 {
-                    choose(pages[min(activeIndex + 1, pages.count - 1)])
-                } else if value.translation.width > 12 {
-                    choose(pages[max(activeIndex - 1, 0)])
+            .gesture(DragGesture(minimumDistance: 4)
+                .onChanged { value in
+                    dragLocation = min(max(value.location.x - 12, 0), geometry.size.width - 24)
                 }
-            })
+                .onEnded { value in
+                    let fraction = min(max(value.location.x / max(geometry.size.width, 1), 0), 1)
+                    choose(pages[Int((fraction * CGFloat(pages.count - 1)).rounded())])
+                    dragLocation = nil
+                })
             .accessibilityLabel("Compact navigation, \(selected.rawValue) selected. Swipe to change page.")
         }
         .frame(height: 20)
@@ -92,6 +97,8 @@ struct ConduitNavigationBar: View {
     private var activeIndex: Int { pages.firstIndex(of: selected) ?? 0 }
 
     private func choose(_ page: AppPage) {
+        guard page != selected || page == .settings else { return }
+        UISelectionFeedbackGenerator().selectionChanged()
         if page == .settings { onSettings() }
         else { withAnimation(.easeInOut(duration: 0.2)) { selected = page } }
     }

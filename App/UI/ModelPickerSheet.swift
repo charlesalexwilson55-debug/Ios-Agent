@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 /// Model selection, import and download.
@@ -21,15 +22,13 @@ struct ModelPickerSheet: View {
     @State private var showingSuggestions = false
     @State private var isCopying = false
     @State private var importError: String?
-    @State private var permissionSnapshot: Permissions.Snapshot?
+    @AppStorage(ModelColors.storageKey) private var modelColors = ""
 
     var body: some View {
         NavigationStack {
             List {
                 modelsSection
                 if !catalog.adapters.isEmpty { adaptersSection }
-                permissionsSection
-                capabilitiesSection
             }
             .scrollContentBackground(.hidden)
             .background(BackdropView())
@@ -45,7 +44,6 @@ struct ModelPickerSheet: View {
             .refreshable { await catalog.refresh() }
             .task {
                 await catalog.refresh()
-                permissionSnapshot = await Permissions.shared.snapshot()
             }
             .fileImporter(
                 isPresented: $isImporting,
@@ -111,41 +109,44 @@ struct ModelPickerSheet: View {
             }
             .padding(.vertical, 8)
 
-            GeometryReader { geometry in
-               ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .top, spacing: 12) {
-                    ForEach(catalog.models) { model in
-                        Button { onSelect(model) } label: {
-                            VStack(spacing: 9) {
-                                Image(systemName: petIcon(for: model))
-                                    .font(.system(size: 28))
-                                    .frame(width: 54, height: 54)
-                                    .background(Color.conduitAccent.opacity(0.15), in: .rect(cornerRadius: 16))
-                                Text(model.displayName)
-                                    .font(.caption)
-                                    .lineLimit(2)
-                                    .frame(height: 32, alignment: .top)
-                            }
-                            .frame(width: 104)
-                            .foregroundStyle(catalog.selectedModelID == model.id ? Color.conduitAccent : Color.primary)
-                        }
-                        .buttonStyle(.plain)
-                        .contextMenu {
-                            Button("Delete model", systemImage: "trash", role: .destructive) {
-                                Task { await catalog.delete(model) }
-                            }
-                        }
-                        .accessibilityLabel("Select \(model.displayName)")
+            if !catalog.models.isEmpty {
+                HStack(alignment: .center, spacing: 8) {
+                    if catalog.models.count > 1 {
+                        modelTile(offset: -1)
+                    }
+                    modelTile(offset: 0)
+                    if catalog.models.count > 2 {
+                        modelTile(offset: 1)
                     }
                 }
-                .frame(minWidth: geometry.size.width,
-                       alignment: catalog.models.isEmpty ? .center : .leading)
-                .animation(.spring(response: 0.36, dampingFraction: 0.82), value: catalog.models.count)
-               }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 18)
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Model carousel")
             }
-            .frame(height: 108)
             if let selected = catalog.selectedModel {
                 ModelRow(model: selected, isSelected: true, loadingState: loadingState)
+                Text("Conduit light")
+                    .font(.caption.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .center)
+                HStack(spacing: 12) {
+                    ForEach(AccentPalette.palette) { swatch in
+                        Button {
+                            modelColors = ModelColors.setting(swatch.hex, for: selected.id, in: modelColors)
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        } label: {
+                            Circle()
+                                .fill(Color(hex: swatch.hex) ?? .blue)
+                                .frame(width: 22, height: 22)
+                                .overlay {
+                                    Circle().strokeBorder(.white, lineWidth:
+                                        ModelColors.hex(for: selected.id, in: modelColors) == swatch.hex ? 2 : 0)
+                                }
+                        }
+                        .accessibilityLabel("\(swatch.name) model light")
+                    }
+                }
+                .frame(maxWidth: .infinity)
             }
             if !catalog.visionModels.isEmpty {
                 Text("Image reader: \(catalog.visionModels.map(\.displayName).joined(separator: ", "))")
@@ -159,6 +160,35 @@ struct ModelPickerSheet: View {
                 Text("Scanning…")
             }
         }
+    }
+
+    private func modelTile(offset: Int) -> some View {
+        let selectedIndex = catalog.models.firstIndex { $0.id == catalog.selectedModelID } ?? 0
+        let index = (selectedIndex + offset + catalog.models.count) % catalog.models.count
+        let model = catalog.models[index]
+        let isCenter = offset == 0
+        return Button { onSelect(model); UISelectionFeedbackGenerator().selectionChanged() } label: {
+            VStack(spacing: 10) {
+                Image(systemName: petIcon(for: model))
+                    .font(.system(size: isCenter ? 44 : 26))
+                    .frame(width: isCenter ? 90 : 64, height: isCenter ? 90 : 64)
+                    .background(Color(hex: ModelColors.hex(for: model.id, in: modelColors))?.opacity(0.18) ?? .blue.opacity(0.18),
+                                in: .rect(cornerRadius: 24))
+                Text(model.displayName)
+                    .font(isCenter ? .headline : .caption)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+            }
+            .frame(maxWidth: isCenter ? 150 : 95)
+            .foregroundStyle(isCenter ? Color.primary : Color.secondary)
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button("Delete model", systemImage: "trash", role: .destructive) {
+                Task { await catalog.delete(model) }
+            }
+        }
+        .accessibilityLabel("Select \(model.displayName)")
     }
 
     private func petIcon(for model: DiscoveredModel) -> String {
@@ -244,34 +274,6 @@ struct ModelPickerSheet: View {
             Text("Download these with the MLX or Hugging Face CLI on a computer, then import the "
                 + "folder. Pulling several gigabytes through the app is slower and more fragile "
                 + "than copying it across.")
-        }
-    }
-
-    // MARK: - Status
-
-    private var permissionsSection: some View {
-        Section {
-            if let snapshot = permissionSnapshot {
-                PermissionRow(name: "Calendar", status: snapshot.calendar)
-                PermissionRow(name: "Reminders", status: snapshot.reminders)
-                PermissionRow(name: "Contacts", status: snapshot.contacts)
-                PermissionRow(name: "Notifications", status: snapshot.notifications)
-            }
-        } header: {
-            Text("Permissions")
-        } footer: {
-            Text("Conduit asks for each of these the first time it needs them. Denied permissions "
-                + "can only be changed in the Settings app.")
-        }
-    }
-
-    private var capabilitiesSection: some View {
-        Section {
-            NavigationLink {
-                CapabilitiesView()
-            } label: {
-                Label("What Conduit can and cannot do", systemImage: "info.circle")
-            }
         }
     }
 

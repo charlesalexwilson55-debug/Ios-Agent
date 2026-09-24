@@ -1,32 +1,31 @@
 import SwiftUI
-import CoreMotion
 
 /// Dark glass settings window. Archives live here so main navigation stays small.
 struct SettingsView: View {
     enum Tab: String, CaseIterable, Identifiable {
-        case connectors, web, you, appearance, power, memory, research, information
+        case web, you, appearance, power, memory, research, permissions, information
         var id: String { rawValue }
         var title: String {
             switch self {
-            case .connectors: "Connectors"
             case .web: "Web Searching"
             case .you: "You"
             case .appearance: "Appearance"
             case .power: "Power"
             case .memory: "Memory"
             case .research: "Research Archive"
+            case .permissions: "Permissions"
             case .information: "Information"
             }
         }
         var symbol: String {
             switch self {
-            case .connectors: "point.3.connected.trianglepath.dotted"
             case .web: "globe"
             case .you: "person.crop.circle"
             case .appearance: "paintpalette"
             case .power: "bolt"
             case .memory: "square.grid.2x2"
             case .research: "magnifyingglass"
+            case .permissions: "hand.raised"
             case .information: "info.circle"
             }
         }
@@ -41,7 +40,7 @@ struct SettingsView: View {
     @State private var profile = ProfileStore.shared
     @State private var usage = UsageStore.shared
     @AppStorage("conduit.profile.email") private var email = ""
-    @AppStorage(NavigationStyle.storageKey) private var navigationStyle = NavigationStyle.icons.rawValue
+    @State private var badgeHeld = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -72,7 +71,6 @@ struct SettingsView: View {
             if let selectedTab {
                 Group {
                 switch selectedTab {
-                case .connectors: ConnectorsSettingsView()
                 case .web: OnlineSettingsView()
                 case .you: ProfileSettingsView()
                 case .appearance: AppearanceSettingsView()
@@ -80,6 +78,7 @@ struct SettingsView: View {
                 case .memory: MemoryView(isWorking: isWorking, onOpen: onOpenChat)
                 case .research:
                     ResearchArchiveView(isWorking: isWorking, canResume: canResume, onResume: onResumeResearch)
+                case .permissions: PermissionsSettingsView()
                 case .information: NavigationStack { CapabilitiesView() }
                 }
                 }
@@ -89,25 +88,14 @@ struct SettingsView: View {
                     VStack(spacing: 17) {
                         profileCard
                         settingsGroup("Your app", tabs: [.appearance, .power])
-                        VStack(spacing: 10) {
-                            Text("Navigation bar").font(.headline)
-                            Picker("Navigation bar", selection: $navigationStyle) {
-                                ForEach(NavigationStyle.allCases) { option in
-                                    Text(option.title).tag(option.rawValue)
-                                }
-                            }
-                            .pickerStyle(.segmented)
-                        }
-                        .padding(16)
-                        .frame(maxWidth: .infinity)
-                        .glassEffect(.regular, in: .rect(cornerRadius: 20))
-                        settingsGroup("Connections", tabs: [.connectors, .web])
+                        settingsGroup("Web", tabs: [.web])
                         settingsGroup("Saved work", tabs: [.memory, .research])
-                        settingsGroup("About", tabs: [.information])
+                        settingsGroup("About", tabs: [.permissions, .information])
                     }
                     .padding(.horizontal, 18)
                     .padding(.bottom, 24)
                 }
+                .scrollDisabled(badgeHeld)
             }
         }
         .background(BackdropView())
@@ -129,7 +117,7 @@ struct SettingsView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Edit profile")
-            ModelBadge(model: usage.ranked.first?.model)
+            ModelBadge(model: usage.ranked.first?.model, held: $badgeHeld)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 20)
@@ -173,10 +161,9 @@ struct SettingsView: View {
 
 private struct ModelBadge: View {
     let model: String?
-    @State private var held = false
+    @Binding var held: Bool
     @State private var tiltX = 0.0
     @State private var tiltY = 0.0
-    @State private var motion = CMMotionManager()
 
     private var tier: (name: String, color: Color) {
         let name = (model ?? "").lowercased()
@@ -203,245 +190,42 @@ private struct ModelBadge: View {
         .overlay { Capsule().strokeBorder(tier.color.opacity(0.7)) }
         .scaleEffect(held ? 1.22 : 1)
         .rotation3DEffect(.degrees(held ? tiltY * 13 : 0), axis: (x: 1, y: 0, z: 0))
-        .onLongPressGesture(minimumDuration: 0.25, pressing: { pressing in
-            held = pressing
-            if pressing {
-                guard motion.isDeviceMotionAvailable else { return }
-                motion.deviceMotionUpdateInterval = 1.0 / 30
-                motion.startDeviceMotionUpdates(to: .main) { data, _ in
-                    guard let gravity = data?.gravity else { return }
-                    tiltX = gravity.x
-                    tiltY = gravity.y
-                }
-            } else {
-                motion.stopDeviceMotionUpdates()
-                tiltX = 0
-                tiltY = 0
+        .simultaneousGesture(DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                held = true
+                tiltX = min(max(value.translation.width / 100, -1), 1)
+                tiltY = min(max(value.translation.height / 100, -1), 1)
             }
-        }, perform: {})
-        .onDisappear { motion.stopDeviceMotionUpdates() }
+            .onEnded { _ in
+                withAnimation(.spring(response: 0.3)) {
+                    held = false
+                    tiltX = 0
+                    tiltY = 0
+                }
+            })
+        .onDisappear { held = false }
         .accessibilityLabel(model.map { "Most used model: \($0), \(tier.name) tier" } ?? "No model usage yet")
     }
 }
 
-/// Settings > Connectors: remote MCP servers.
-struct ConnectorsSettingsView: View {
-    @State private var store = MCPStore.shared
-    @State private var editing: MCPServer?
+private struct PermissionsSettingsView: View {
+    @State private var snapshot: Permissions.Snapshot?
 
     var body: some View {
-        List {
-            GoogleConnectSection()
-
-            Section {
-                if store.servers.isEmpty {
-                    Text("No servers yet.")
-                        .foregroundStyle(.secondary)
-                }
-                ForEach(store.servers) { server in
-                    serverRow(server)
-                        .contentShape(.rect)
-                        .onTapGesture { editing = server }
-                        .swipeActions(edge: .trailing) {
-                            Button("Delete", role: .destructive) { store.delete(server.id) }
-                        }
-                }
-                Button {
-                    editing = MCPServer()
-                } label: {
-                    Label("Add MCP server", systemImage: "plus.circle.fill")
-                }
-            } header: {
-                Text("MCP servers")
-            } footer: {
-                Text("Conduit connects to MCP servers on the internet that use the Streamable HTTP "
-                    + "transport, with an optional access token. It cannot start servers on the phone, "
-                    + "and servers that need a sign-in page are not supported yet.")
-            }
-
-            Section("How they are used") {
-                Label("Name a server in your message, such as \u{201C}check my tasks in Linear\u{201D}, "
-                    + "and its tools are offered for that message.", systemImage: "text.bubble")
-                Label("What a server sends back is treated like web text: information, not instructions.",
-                      systemImage: "exclamationmark.shield")
-            }
-            .font(.subheadline)
-        }
-        .scrollContentBackground(.hidden)
-        .sheet(item: $editing) { server in
-            MCPServerEditor(server: server)
-        }
-    }
-
-    private func serverRow(_ server: MCPServer) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: "server.rack")
-                .foregroundStyle(server.enabled ? Color.conduitAccent : Color.secondary)
-                .frame(width: 26)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(server.name.isEmpty ? "Untitled" : server.name)
-                Text(status(server))
-                    .font(.footnote)
-                    .foregroundStyle(server.lastError == nil ? Color.secondary : Color.red)
-                    .lineLimit(2)
-            }
-            Spacer()
-            if store.refreshing.contains(server.id) {
-                ProgressView()
+        Form {
+            if let snapshot {
+                LabeledContent("Calendar", value: snapshot.calendar)
+                LabeledContent("Reminders", value: snapshot.reminders)
+                LabeledContent("Contacts", value: snapshot.contacts)
+                LabeledContent("Notifications", value: snapshot.notifications)
             } else {
-                Toggle("Enabled", isOn: Binding(
-                    get: { server.enabled },
-                    set: { store.setEnabled(server.id, $0) }
-                ))
-                .labelsHidden()
+                ProgressView("Checking permissions")
             }
+            Text("iOS asks when Conduit first needs access. Change denied access in iPhone Settings.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
         }
-    }
-
-    private func status(_ server: MCPServer) -> String {
-        if let error = server.lastError { return error }
-        if server.lastChecked == nil { return "Not checked yet" }
-        let count = server.tools.count
-        return count == 1 ? "1 tool" : "\(count) tools"
+        .task { snapshot = await Permissions.shared.snapshot() }
     }
 }
 
-/// Adding or changing one MCP server.
-struct MCPServerEditor: View {
-    @Environment(\.dismiss) private var dismiss
-    @State private var store = MCPStore.shared
-    @State private var draft: MCPServer
-    @State private var token = ""
-    @State private var removeToken = false
-    @State private var isNew: Bool
-
-    init(server: MCPServer) {
-        _draft = State(initialValue: server)
-        _isNew = State(initialValue: !MCPStore.shared.servers.contains { $0.id == server.id })
-    }
-
-    private var current: MCPServer? {
-        store.servers.first { $0.id == draft.id }
-    }
-
-    private var canSave: Bool {
-        !draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && URL(string: draft.url.trimmingCharacters(in: .whitespacesAndNewlines))?.host != nil
-    }
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    TextField("Name, for example Linear", text: $draft.name)
-                        .textInputAutocapitalization(.words)
-                    TextField("https://example.com/mcp", text: $draft.url)
-                        .keyboardType(.URL)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                } header: {
-                    Text("Server")
-                } footer: {
-                    Text("The name is what you say in a message to use it.")
-                }
-
-                Section {
-                    SecureField(tokenPlaceholder, text: $token)
-                        .textContentType(.password)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    if !isNew, store.hasToken(draft.id) {
-                        Toggle("Remove saved token", isOn: $removeToken)
-                    }
-                } header: {
-                    Text("Access token (optional)")
-                } footer: {
-                    Text("Sent as a bearer token. Kept in the iPhone's Keychain, never in the chat.")
-                }
-
-                if let current, !isNew {
-                    Section("Tools") {
-                        if current.tools.isEmpty {
-                            Text(current.lastError ?? "No tools found yet. Tap Save and check connection.")
-                                .foregroundStyle(current.lastError == nil ? Color.secondary : Color.red)
-                        }
-                        ForEach(current.tools, id: \.name) { tool in
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(tool.name).font(.body.monospaced())
-                                if !tool.description.isEmpty {
-                                    Text(tool.description)
-                                        .font(.footnote)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(3)
-                                }
-                            }
-                        }
-                        if current.tools.count >= MCPStore.toolsPerServer {
-                            Text("Only the first \(MCPStore.toolsPerServer) tools are used, to keep "
-                                + "the model's prompt small enough for the phone.")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-
-                Section {
-                    Button {
-                        saveAndCheck()
-                    } label: {
-                        HStack {
-                            Text("Save and check connection")
-                            Spacer()
-                            if store.refreshing.contains(draft.id) { ProgressView() }
-                        }
-                    }
-                    .disabled(!canSave || store.refreshing.contains(draft.id))
-                    if !isNew {
-                        Button("Delete server", role: .destructive) {
-                            store.delete(draft.id)
-                            dismiss()
-                        }
-                    }
-                }
-            }
-            .navigationTitle(isNew ? "Add server" : draft.name)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        save()
-                        dismiss()
-                    }
-                    .disabled(!canSave)
-                }
-            }
-        }
-    }
-
-    private var tokenPlaceholder: String {
-        !isNew && store.hasToken(draft.id) ? "Saved (type to replace)" : "Paste token"
-    }
-
-    private func save() {
-        let newToken: String?
-        if removeToken {
-            newToken = ""
-        } else {
-            let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
-            newToken = trimmed.isEmpty ? nil : trimmed
-        }
-        store.save(draft, token: newToken)
-        token = ""
-        removeToken = false
-        isNew = false
-    }
-
-    private func saveAndCheck() {
-        save()
-        let id = draft.id
-        Task { await store.refresh(id) }
-    }
-}

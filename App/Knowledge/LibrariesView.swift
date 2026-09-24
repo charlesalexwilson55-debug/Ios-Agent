@@ -1,15 +1,19 @@
 import SwiftUI
 import PhotosUI
 import UniformTypeIdentifiers
+import UIKit
 
 /// The Libraries page: collections of documents Conduit searches when it
 /// answers.
 struct LibrariesView: View {
     let onAskPhoto: (UUID, String) -> Void
+    let entries: [TranscriptEntry]
+    let isWorking: Bool
     @State private var store = LibraryStore.shared
     @AppStorage("conduit.libraries.layout") private var layout = "list"
     @State private var creating = false
     @State private var opened: Library?
+    @State private var managing: Library?
 
     var body: some View {
         NavigationStack {
@@ -19,6 +23,7 @@ struct LibrariesView: View {
             }
             .background(BackdropView())
             .navigationTitle("Libraries")
+            .toolbarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button {
@@ -45,7 +50,11 @@ struct LibrariesView: View {
                 }
             }
             .sheet(item: $opened) { library in
-                LibraryDetailView(libraryID: library.id, onAskPhoto: onAskPhoto)
+                LibraryPhotoGrid(libraryID: library.id, entries: entries,
+                                 isWorking: isWorking, onAskPhoto: onAskPhoto)
+            }
+            .sheet(item: $managing) { library in
+                LibraryManageView(libraryID: library.id)
             }
             .task {
                 for library in store.libraries { await store.refresh(library) }
@@ -80,6 +89,7 @@ struct LibrariesView: View {
                         row(library)
                     }
                     .buttonStyle(.plain)
+                    .contextMenu { Button("Edit library", systemImage: "square.and.pencil") { managing = library } }
                 }
             }
             .scrollContentBackground(.hidden)
@@ -96,6 +106,7 @@ struct LibrariesView: View {
                 ForEach(store.libraries) { library in
                     Button { opened = library } label: { card(library) }
                         .buttonStyle(.plain)
+                        .contextMenu { Button("Edit library", systemImage: "square.and.pencil") { managing = library } }
                 }
             }
             .padding(16)
@@ -177,9 +188,8 @@ struct LibrariesView: View {
 }
 
 /// One library: its documents, adding more, and a search to try it out.
-struct LibraryDetailView: View {
+struct LibraryManageView: View {
     let libraryID: UUID
-    let onAskPhoto: (UUID, String) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var store = LibraryStore.shared
@@ -195,8 +205,7 @@ struct LibraryDetailView: View {
     @State private var hits: [KnowledgeIndex.Hit] = []
     @State private var searching = false
     @State private var confirmDelete = false
-    @State private var selectedPhotoID: UUID?
-    @State private var photoQuestion = ""
+    @State private var coverForCrop: UIImage?
 
     private var library: Library? {
         store.libraries.first { $0.id == libraryID }
@@ -230,7 +239,13 @@ struct LibraryDetailView: View {
                 }
                 Button {
                     Task {
-                        do { try await gallery.indexAll() }
+                        do {
+                            try await gallery.indexAll()
+                            if var updated = store.libraries.first(where: { $0.id == library.id }) {
+                                updated.galleryAssetIDs = gallery.allRecords.map(\.assetID)
+                                store.update(updated)
+                            }
+                        }
                         catch { galleryError = error.localizedDescription }
                     }
                 } label: {
@@ -275,31 +290,9 @@ struct LibraryDetailView: View {
                 }
             }
 
-            if !library.readablePhotoIDs.isEmpty {
-                Section("Photos") {
-                    ForEach(library.readablePhotoIDs.reversed(), id: \.self) { id in
-                        if let picture = ImageStore.shared.thumbnail(id, size: 160) {
-                            Button {
-                                selectedPhotoID = id
-                                photoQuestion = "What is in this photo?"
-                            } label: {
-                                HStack(spacing: 12) {
-                                    Image(uiImage: picture).resizable().scaledToFill()
-                                        .frame(width: 64, height: 64)
-                                        .clipShape(.rect(cornerRadius: 10))
-                                    Text("Ask Conduit about this photo")
-                                    Spacer()
-                                    Image(systemName: "chevron.right").foregroundStyle(.secondary)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
             Section("Try a search") {
                 HStack {
-                    TextField("Ask something this library covers", text: $query)
+                    TextField("Search photos and documents in this library", text: $query)
                         .submitLabel(.search)
                         .onSubmit { search(library) }
                     if searching { ProgressView() }
@@ -381,27 +374,22 @@ struct LibraryDetailView: View {
             Task {
                 defer { chosenCover = nil }
                 guard let data = try? await selected.loadTransferable(type: Data.self),
-                      let image = ImageStore.shared.addPhoto(data, prompt: "Cover for \(library.name)"),
-                      var updated = store.libraries.first(where: { $0.id == library.id }) else { return }
-                updated.coverImageID = image.id
-                updated.coverPinned = true
-                store.update(updated)
+                      let image = UIImage(data: data) else { return }
+                coverForCrop = image
             }
         }
         .navigationBarTitleDisplayMode(.inline)
-        .alert("Ask about this photo", isPresented: Binding(
-            get: { selectedPhotoID != nil },
-            set: { if !$0 { selectedPhotoID = nil } }
-        )) {
-            TextField("Your question", text: $photoQuestion)
-            Button("Ask") {
-                if let id = selectedPhotoID { onAskPhoto(id, photoQuestion) }
-                selectedPhotoID = nil
-                dismiss()
+        .sheet(isPresented: Binding(get: { coverForCrop != nil }, set: { if !$0 { coverForCrop = nil } })) {
+            if let coverForCrop {
+                CoverCropView(image: coverForCrop) { data in
+                    guard let stored = ImageStore.shared.addPhoto(data, prompt: "Cover for \(library.name)"),
+                          var updated = store.libraries.first(where: { $0.id == library.id }) else { return }
+                    updated.coverImageID = stored.id
+                    updated.coverPinned = true
+                    store.update(updated)
+                    self.coverForCrop = nil
+                }
             }
-            Button("Cancel", role: .cancel) { selectedPhotoID = nil }
-        } message: {
-            Text("Conduit will read this photo with the installed image model, or Apple Vision when none is installed.")
         }
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {

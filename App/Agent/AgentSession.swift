@@ -324,7 +324,7 @@ final class AgentSession {
     // MARK: - The loop
 
     private func runTurn() async {
-        if PhotoLibraryIndex.isGalleryQuestion(currentRequest) {
+        if pendingImageIDs.isEmpty && PhotoLibraryIndex.isGalleryQuestion(currentRequest) {
             await answerGalleryQuestion()
             return
         }
@@ -347,28 +347,17 @@ final class AgentSession {
         pendingResearchSelection = nil
         let resume = pendingResearchRun
         pendingResearchRun = nil
-        if researchEnabled || selection != nil || resume != nil {
+        let request = currentRequest.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let asksForResearch = ["research ", "investigate ", "look into ", "researching "]
+            .contains(where: { request.hasPrefix($0) })
+        if researchEnabled || asksForResearch || selection != nil || resume != nil {
             await runResearch(selection: selection, resume: resume)
             return
         }
 
-        let mcp = MCPStore.shared
-        let requestServers = mcp.servers(namedIn: currentRequest)
-        let requestGoogle = GoogleTools.toolNames(for: currentRequest)
-        var mode = TaskRouter.mode(for: currentRequest, previousTurnUsedPhoneTools: lastTurnUsedPhoneTools)
-        // Naming a connected server or Google service is a request to use it.
-        if !requestServers.isEmpty || !requestGoogle.isEmpty { mode = .task }
+        let mode = TaskRouter.mode(for: currentRequest, previousTurnUsedPhoneTools: lastTurnUsedPhoneTools)
         let online = onlineEnabled && Connectivity.shared.isOnline
-
-        let builtIn = registry.specs.filter {
-            !$0.name.hasPrefix(MCPStore.toolPrefix) && !$0.name.hasPrefix(GoogleTools.prefix)
-        }
-        var tools = TaskRouter.tools(from: builtIn, mode: mode, online: online)
-        if online {
-            let outside = mcp.toolNames(for: requestServers)
-                .union(requestGoogle)
-            tools += registry.specs.filter { outside.contains($0.name) }
-        }
+        let tools = TaskRouter.tools(from: registry.specs, mode: mode, online: online)
 
         var systemPrompt = SystemPrompt.build(tools: tools, mode: mode)
         if let profile = ProfileStore.shared.promptSection {
@@ -521,19 +510,24 @@ final class AgentSession {
             guard !Task.isCancelled else { return }
             let names = found.terms.joined(separator: ", ")
             var answer: String
-            if found.terms.isEmpty {
-                answer = currentRequest.lowercased().contains("how many") || currentRequest.lowercased().contains("count")
-                    ? "I can access \(found.accessible) photos in your photo library; \(found.indexed) have been indexed."
-                    : "Tell me what you want to find in your photo library."
+            let count = found.matches.count
+            if found.terms.isEmpty && !currentRequest.lowercased().contains("screenshot") {
+                answer = "I can access \(found.accessible) photos in your photo library; \(found.indexed) have been indexed."
             } else {
-                let count = found.matches.count
-                answer = "I found \(count) of \(found.indexed) indexed photos matching “\(names)”."
+                let kind = currentRequest.lowercased().contains("screenshot") ? "screenshots" : "photos"
+                answer = "I found \(count) \(kind) matching “\(names.isEmpty ? "your request" : names)” among \(found.indexed) indexed photos."
                 if currentRequest.lowercased().contains("message") {
-                    let screenshots = found.matches.filter(\.isScreenshot).count
-                    answer += " \(screenshots) of those are marked as screenshots. "
-                        + "Recognized text cannot prove who sent each message, so this is a candidate count."
+                    answer += " Recognized text cannot prove who sent each message, so this is a candidate count."
                 }
                 if let first = found.matches.first {
+                    if let date = first.date {
+                        answer += " Newest match was taken \(date.formatted(date: .abbreviated, time: .shortened))."
+                    }
+                    if currentRequest.lowercased().contains("when") && count > 1 {
+                        let otherDates = found.matches.dropFirst().prefix(4).compactMap(\.date)
+                            .map { $0.formatted(date: .abbreviated, time: .shortened) }
+                        if !otherDates.isEmpty { answer += " Other dates: \(otherDates.joined(separator: ", "))." }
+                    }
                     let excerpt = String(first.text.replacingOccurrences(of: "\n", with: " ").prefix(220))
                     if !excerpt.isEmpty { answer += " Newest match reads: “\(excerpt)”." }
                     if !first.labels.isEmpty {

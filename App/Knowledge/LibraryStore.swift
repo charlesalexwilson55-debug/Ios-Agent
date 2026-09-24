@@ -13,6 +13,8 @@ struct Library: Identifiable, Codable, Hashable {
     var coverImageID: UUID?
     /// Gallery photos kept for visual questions. Optional for older saved libraries.
     var photoIDs: [UUID]?
+    /// Photos assets referenced by this library after an explicit gallery import.
+    var galleryAssetIDs: [String]?
     /// nil on older libraries; true when the user picked a cover explicitly.
     var coverPinned: Bool?
 
