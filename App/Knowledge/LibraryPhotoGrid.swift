@@ -137,6 +137,7 @@ private struct LibraryPhotoViewer: View {
     @State private var question = ""
     @State private var hideMessages = false
     @State private var isSending = false
+    @State private var photoError: String?
 
     var body: some View {
         ZStack {
@@ -150,7 +151,12 @@ private struct LibraryPhotoViewer: View {
                     .padding(.horizontal, 10)
                     .padding(.vertical, 55)
             } else {
-                ProgressView().tint(.white)
+                if let photoError {
+                    ContentUnavailableView(photoError, systemImage: "photo.badge.exclamationmark")
+                        .foregroundStyle(.white)
+                } else {
+                    ProgressView().tint(.white)
+                }
             }
             VStack(spacing: 0) {
                 HStack {
@@ -203,7 +209,7 @@ private struct LibraryPhotoViewer: View {
                     Button(action: send) {
                         Image(systemName: "arrow.up.circle.fill").font(.title2)
                     }
-                    .disabled(question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSending)
+                    .disabled(question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSending || image == nil)
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
@@ -218,6 +224,7 @@ private struct LibraryPhotoViewer: View {
             case .gallery(let id):
                 if let data = await PhotoLibraryIndex.shared.imageData(for: id) { image = UIImage(data: data) }
             }
+            if image == nil { photoError = "This photo is unavailable on this iPhone." }
         }
     }
 
@@ -237,6 +244,7 @@ private struct LibraryPhotoViewer: View {
                 } else { id = nil }
             }
             if let id { onAskPhoto(id, text) }
+            else { photoError = "Could not read this photo." }
             isSending = false
         }
     }

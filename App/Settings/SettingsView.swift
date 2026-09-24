@@ -190,7 +190,7 @@ private struct ModelBadge: View {
         .overlay { Capsule().strokeBorder(tier.color.opacity(0.7)) }
         .scaleEffect(held ? 1.22 : 1)
         .rotation3DEffect(.degrees(held ? tiltY * 13 : 0), axis: (x: 1, y: 0, z: 0))
-        .simultaneousGesture(DragGesture(minimumDistance: 0)
+        .highPriorityGesture(DragGesture(minimumDistance: 0)
             .onChanged { value in
                 held = true
                 tiltX = min(max(value.translation.width / 100, -1), 1)

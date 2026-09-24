@@ -182,8 +182,9 @@ struct LibrariesView: View {
     private func summary(_ library: Library) -> String {
         let documents = store.documents[library.id] ?? []
         let count = documents.count == 1 ? "1 document" : "\(documents.count) documents"
-        let passages = documents.reduce(0) { $0 + $1.passages }
-        return library.enabled ? "\(count) \u{00B7} \(passages) passages" : "\(count) \u{00B7} not used in chats"
+        let photos = library.readablePhotoIDs.count + (library.galleryAssetIDs?.count ?? 0)
+        let photoCount = photos == 1 ? "1 photo" : "\(photos) photos"
+        return library.enabled ? "\(photoCount) \u{00B7} \(count)" : "\(photoCount) \u{00B7} not used in chats"
     }
 }
 
