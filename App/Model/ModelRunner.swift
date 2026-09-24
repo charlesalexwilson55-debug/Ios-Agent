@@ -38,6 +38,7 @@ actor ModelRunner {
         case loadFailed(String)
         case generationFailed(String)
         case insufficientMemory(String)
+        case thermalLimit
 
         var errorDescription: String? {
             switch self {
@@ -49,6 +50,8 @@ actor ModelRunner {
                 return "Generation failed: \(why)"
             case .insufficientMemory(let why):
                 return why
+            case .thermalLimit:
+                return "Conduit stopped because the phone reached your heat limit. Let it cool, then try again."
             }
         }
     }
@@ -304,6 +307,9 @@ actor ModelRunner {
         // A model put aside for the image model comes back on first use.
         if container == nil, isSuspended { try await resume() }
         guard let container else { throw RunnerError.noModelLoaded }
+        if InferencePolicy.shouldStop(for: ProcessInfo.processInfo.thermalState) {
+            throw RunnerError.thermalLimit
+        }
 
         let input = UserInput(
             chat: messages.map { $0.asChatMessage },
@@ -319,6 +325,7 @@ actor ModelRunner {
             requestedTokens = limit
             temperature = 0.2
         }
+        requestedTokens = min(requestedTokens, InferencePolicy.replyTokens)
 
         MLX.Memory.clearCache()
         let prepared = try await container.prepare(input: input)
@@ -381,6 +388,9 @@ actor ModelRunner {
             let stream = try await container.generate(input: prepared, parameters: parameters)
             for await event in stream {
                 if Task.isCancelled { break }
+                if InferencePolicy.shouldStop(for: ProcessInfo.processInfo.thermalState) {
+                    throw RunnerError.thermalLimit
+                }
                 switch event {
                 case .chunk(let text):
                     generated += 1
@@ -402,6 +412,7 @@ actor ModelRunner {
             emit(splitter.flush())
         } catch {
             Diagnostics.log("generate.error \(error.localizedDescription)")
+            if let runnerError = error as? RunnerError { throw runnerError }
             throw RunnerError.generationFailed(error.localizedDescription)
         }
         MLX.Memory.clearCache()
@@ -411,7 +422,7 @@ actor ModelRunner {
     private func budgetTokens(promptTokens: Int, requested: Int) throws -> Int {
         guard let headroom = Self.availableMemory() else { return requested }
 
-        let usable = headroom - Self.reserveBytes
+        let usable = Int(Double(max(headroom - Self.reserveBytes, 0)) * InferencePolicy.memoryFraction)
         let promptCost = promptTokens * kvBytesPerToken + Self.prefillWorkspaceBytes
         let answerTokens = (usable - promptCost) / max(kvBytesPerToken, 1)
 

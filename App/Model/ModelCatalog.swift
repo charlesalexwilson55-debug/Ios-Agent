@@ -196,8 +196,7 @@ final class ModelCatalog {
             )) ?? []
             let names = Set(contents.map(\.lastPathComponent))
 
-            if names.contains("adapter_config.json"),
-               names.contains(where: { $0.hasSuffix(".safetensors") }) {
+            if names.contains("adapter_config.json"), validWeights(in: directory, names: names) {
                 seen.insert(directory.path)
                 result.adapters.append(DiscoveredModel(
                     directory: directory,
@@ -210,11 +209,10 @@ final class ModelCatalog {
                 return
             }
 
-            // A model directory is config.json plus weights. Checking for both
-            // avoids listing a folder that merely holds a tokenizer or a
-            // partial download.
-            if names.contains("config.json"),
-               names.contains(where: { $0.hasSuffix(".safetensors") }) {
+            // Check every safetensors payload against its header. A USB copy
+            // interrupted mid-file still has config.json and a weight filename;
+            // listing it as a model would fail during loading or battery swap.
+            if names.contains("config.json"), validWeights(in: directory, names: names) {
                 seen.insert(directory.path)
                 let config = readConfig(directory.appendingPathComponent("config.json"))
                 result.models.append(DiscoveredModel(
@@ -240,6 +238,45 @@ final class ModelCatalog {
             inspect(root)
         }
         return result
+    }
+
+    private nonisolated static func validWeights(in directory: URL, names: Set<String>) -> Bool {
+        let weightNames = Set(names.filter { $0.hasSuffix(".safetensors") })
+        guard !weightNames.isEmpty else { return false }
+        if names.contains("model.safetensors.index.json") {
+            guard let data = try? Data(contentsOf: directory.appendingPathComponent("model.safetensors.index.json")),
+                  let index = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let map = index["weight_map"] as? [String: String], !map.isEmpty
+            else { return false }
+            guard Set(map.values).isSubset(of: weightNames) else { return false }
+        }
+        for name in weightNames {
+            let url = directory.appendingPathComponent(name)
+            guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+            defer { try? handle.close() }
+            guard let prefix = try? handle.read(upToCount: 8), prefix.count == 8 else {
+                return false
+            }
+            let headerLength = prefix.enumerated().reduce(UInt64(0)) {
+                $0 | (UInt64($1.element) << (8 * $1.offset))
+            }
+            guard headerLength > 0, headerLength < 64 * 1_048_576,
+                  let header = try? handle.read(upToCount: Int(headerLength)),
+                  header.count == Int(headerLength),
+                  let tensors = try? JSONSerialization.jsonObject(with: header) as? [String: Any]
+            else { return false }
+            let lastByte = tensors.compactMap { key, value -> Int64? in
+                guard key != "__metadata__", let tensor = value as? [String: Any],
+                      let offsets = tensor["data_offsets"] as? [NSNumber], offsets.count == 2
+                else { return nil }
+                return offsets[1].int64Value
+            }.max()
+            guard let lastByte,
+                  let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize,
+                  Int64(size) >= Int64(8 + headerLength) + lastByte
+            else { return false }
+        }
+        return true
     }
 
     private nonisolated static func readConfig(_ url: URL) -> (architecture: String?, quantBits: Int?) {

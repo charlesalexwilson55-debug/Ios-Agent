@@ -40,14 +40,14 @@ struct RootView: View {
     /// answers to maths and code matter more than speed on those questions.
     @AppStorage("conduit.thinking") private var thinking = true
     @AppStorage("conduit.online") private var online = true
+    @AppStorage(InferencePolicy.batterySaverKey) private var batterySaver = false
+    @AppStorage(InferencePolicy.batteryModelKey) private var batteryModel = ""
+    @AppStorage("conduit.power.preSaverModel") private var preSaverModel = ""
+    @AppStorage("conduit.power.autoModel") private var autoModel = ""
     /// Research mode. Not persisted: it changes what every message does, so
     /// it starts off each launch.
     @State private var research = false
     @State private var page: AppPage = .chat
-    @State private var sidebarOpen = false
-    @State private var sidebarPreview = false
-    @State private var previewTask: Task<Void, Never>?
-    @State private var pageDirection = 1
     @State private var showingSettings = false
     @State private var menuOpen = false
     /// Views that draw with the chosen accent colour and text size are
@@ -57,34 +57,31 @@ struct RootView: View {
     @AppStorage(Appearance.backdropKey) private var backdrop = Appearance.Backdrop.aurora.rawValue
 
     var body: some View {
-        ZStack {
-            BackdropView()
-            // The chat stays in the hierarchy on every page, so leaving it and
-            // coming back keeps the scroll position and any unsent draft.
-            chatPage
-                .opacity(page == .chat ? 1 : 0)
-                .offset(y: page == .chat ? 0 : (pageDirection > 0 ? -48 : 48))
-                .allowsHitTesting(page == .chat)
-                .accessibilityHidden(page != .chat)
-            if page != .chat {
-                otherPage
-                    .id(page)
-                    .transition(.asymmetric(
-                        insertion: .move(edge: pageDirection > 0 ? .bottom : .top).combined(with: .opacity),
-                        removal: .move(edge: pageDirection > 0 ? .top : .bottom).combined(with: .opacity)
-                    ))
+        TabView(selection: $page) {
+            Tab("Chat", systemImage: AppPage.chat.symbol, value: AppPage.chat) { chatPage }
+            Tab("Libraries", systemImage: AppPage.libraries.symbol, value: AppPage.libraries) {
+                LibrariesView { id, question in
+                    session?.submit(question, libraryPhotoID: id)
+                    page = .chat
+                }
             }
-            SidebarOverlay(page: $page, isOpen: $sidebarOpen, isPreviewing: sidebarPreview) {
-                showingSettings = true
+            Tab("Models", systemImage: AppPage.models.symbol, value: AppPage.models) {
+                ModelPickerSheet(onSelect: selectFromPage, loadingState: loadingState,
+                                 showsDoneButton: false)
+                    .environment(catalog)
             }
-                .id(appearanceKey)
-            if showingSettings {
-                settingsWindow
-                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
-                    .zIndex(10)
+            Tab("Settings", systemImage: AppPage.settings.symbol, value: AppPage.settings) {
+                Color.clear
             }
         }
-        .animation(.easeInOut(duration: 0.2), value: page)
+        .tint(Color.conduitAccent)
+        .onChange(of: page) { previous, selected in
+            if selected == .settings {
+                page = previous == .settings ? .chat : previous
+                showingSettings = true
+            }
+        }
+        .sheet(isPresented: $showingSettings) { settingsSheet }
         .task {
             // Clear obsolete personality and effort choices from earlier builds.
             UserDefaults.standard.removeObject(forKey: "conduit.personas")
@@ -98,21 +95,8 @@ struct RootView: View {
             newSession.onlineEnabled = online
             newSession.researchEnabled = research
             session = newSession
+            UIDevice.current.isBatteryMonitoringEnabled = true
             Diagnostics.log("app.launch avail=\(Diagnostics.availableMB)MB")
-            VolumeKeys.shared.onUp = { selectAdjacentPage(-1) }
-            VolumeKeys.shared.onDown = { selectAdjacentPage(1) }
-            VolumeKeys.shared.onDoublePress = {
-                withAnimation {
-                    if showingSettings {
-                        showingSettings = false
-                        sidebarOpen = true
-                    } else {
-                        sidebarOpen.toggle()
-                    }
-                }
-            }
-            VolumeKeys.shared.start()
-
             // Read before loading, which writes a marker of its own.
             let unfinished = Diagnostics.takeUnfinishedWork()
             if let unfinished {
@@ -132,6 +116,7 @@ struct RootView: View {
             } else {
                 page = .models
             }
+            checkBatterySaver()
             consumePendingTask()
         }
         .task {
@@ -156,14 +141,24 @@ struct RootView: View {
         .onChange(of: catalog.visionModels) { _, models in
             session?.visionModelDirectory = models.first?.directory
         }
+        .onChange(of: session?.isWorking) { _, working in
+            if working == false { checkBatterySaver() }
+        }
+        .onChange(of: batterySaver) { _, _ in checkBatterySaver() }
+        .onChange(of: batteryModel) { _, _ in checkBatterySaver() }
+        .onReceive(NotificationCenter.default.publisher(for: UIDevice.batteryLevelDidChangeNotification)) { _ in
+            checkBatterySaver()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIDevice.batteryStateDidChangeNotification)) { _ in
+            checkBatterySaver()
+        }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .active:
                 consumePendingTask()
-                VolumeKeys.shared.start()
+                checkBatterySaver()
             case .inactive, .background:
                 session?.leavingForeground()
-                if phase == .background { VolumeKeys.shared.stop() }
             default: break
             }
         }
@@ -243,27 +238,13 @@ struct RootView: View {
         }
     }
 
-    @ViewBuilder
-    private var otherPage: some View {
-        switch page {
-        case .chat:
-            EmptyView()
-        case .libraries:
-            LibrariesView { id, question in
-                session?.submit(question, libraryPhotoID: id)
-                withAnimation { page = .chat }
-            }
-        case .models:
-            ModelPickerSheet(onSelect: selectFromPage, loadingState: loadingState, showsDoneButton: false)
-                .environment(catalog)
-        }
-    }
-
     private var appearanceKey: String {
         accentHex + "|" + textSize + "|" + backdrop
     }
 
     private func selectFromPage(_ model: DiscoveredModel) {
+        preSaverModel = ""
+        autoModel = ""
         session?.visionModelDirectory = catalog.visionModels.first?.directory
         select(model)
         page = .chat
@@ -282,48 +263,21 @@ struct RootView: View {
         }
     }
 
-    private func selectAdjacentPage(_ offset: Int) {
-        guard !showingSettings else { return }
-        let pages = AppPage.allCases
-        guard let index = pages.firstIndex(of: page) else { return }
-        pageDirection = offset
-        withAnimation(.spring(response: 0.32, dampingFraction: 0.85)) {
-            page = pages[(index + offset + pages.count) % pages.count]
-            sidebarPreview = true
-        }
-        previewTask?.cancel()
-        previewTask = Task {
-            try? await Task.sleep(for: .milliseconds(850))
-            if !Task.isCancelled {
-                withAnimation { sidebarPreview = false }
-            }
-        }
-    }
-
-    private var settingsWindow: some View {
-        GeometryReader { geometry in
-            ZStack {
-                Color.black.opacity(0.48).ignoresSafeArea()
-                    .onTapGesture { showingSettings = false }
-                SettingsView(isWorking: session?.isWorking ?? false, canResume: isReady,
-                             onOpenChat: { chat in
-                                 session?.restore(chat)
-                                 draft = ""
-                                 page = .chat
-                                 showingSettings = false
-                             }, onResumeResearch: { run in
-                                 session?.resumeResearch(run)
-                                 page = .chat
-                                 showingSettings = false
-                             }, onClose: { showingSettings = false })
-                    .frame(width: geometry.size.width - 28, height: geometry.size.height * 0.88)
-                    .background(Color.black.opacity(0.7), in: .rect(cornerRadius: 28))
-                    .glassEffect(.regular.tint(.black.opacity(0.72)), in: .rect(cornerRadius: 28))
-                    .overlay { RoundedRectangle(cornerRadius: 28).strokeBorder(.white.opacity(0.15), lineWidth: 0.7) }
-                    .clipShape(.rect(cornerRadius: 28))
-                    .shadow(color: .black.opacity(0.35), radius: 24, y: 12)
-            }
-        }
+    private var settingsSheet: some View {
+        SettingsView(isWorking: session?.isWorking ?? false, canResume: isReady,
+                     onOpenChat: { chat in
+                         session?.restore(chat)
+                         draft = ""
+                         page = .chat
+                         showingSettings = false
+                     }, onResumeResearch: { run in
+                         session?.resumeResearch(run)
+                         page = .chat
+                         showingSettings = false
+                     }, onClose: { showingSettings = false })
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+            .presentationBackground(.ultraThinMaterial)
     }
 
     private func send() {
@@ -360,6 +314,34 @@ struct RootView: View {
         Task { await load(model) }
     }
 
+    private func checkBatterySaver() {
+        guard session?.isWorking != true, case .idle = loadingState else { return }
+        let level = UIDevice.current.batteryLevel
+        guard level >= 0 else { return }
+        if !batterySaver || level >= 0.25 {
+            guard !preSaverModel.isEmpty, catalog.selectedModelID == autoModel,
+                  let previous = catalog.models.first(where: { $0.id == preSaverModel }) else {
+                preSaverModel = ""
+                autoModel = ""
+                return
+            }
+            preSaverModel = ""
+            autoModel = ""
+            select(previous)
+            return
+        }
+        guard level <= 0.20, let current = catalog.selectedModel,
+              current.id != autoModel else { return }
+        let smaller = catalog.models.filter {
+            $0.id != current.id && $0.sizeBytes < current.sizeBytes && ($0.quantBits ?? 4) <= 4
+        }.sorted { $0.sizeBytes < $1.sizeBytes }
+        let chosen = smaller.first(where: { $0.id == batteryModel }) ?? smaller.first
+        guard let chosen else { return }
+        preSaverModel = current.id
+        autoModel = chosen.id
+        select(chosen)
+    }
+
     private func load(_ model: DiscoveredModel) async {
         loadingState = .loading(model.id)
         do {
@@ -369,6 +351,7 @@ struct RootView: View {
                 adapterDirectory: catalog.selectedAdapter?.directory
             )
             loadingState = .idle
+            checkBatterySaver()
         } catch {
             loadingState = .failed(error.localizedDescription)
             // Surfaced on the Models page rather than as an alert: the fix is

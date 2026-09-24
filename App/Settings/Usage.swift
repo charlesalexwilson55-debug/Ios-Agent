@@ -103,8 +103,14 @@ final class UsageStore {
 
 /// Settings > Power.
 struct PowerSettingsView: View {
+    @Environment(ModelCatalog.self) private var catalog
     @State private var store = UsageStore.shared
     @State private var confirmReset = false
+    @AppStorage(InferencePolicy.thermalKey) private var thermalLimit = 2
+    @AppStorage(InferencePolicy.replyTokensKey) private var replyTokens = 4096
+    @AppStorage(InferencePolicy.memoryFractionKey) private var memoryFraction = 1.0
+    @AppStorage(InferencePolicy.batterySaverKey) private var batterySaver = false
+    @AppStorage(InferencePolicy.batteryModelKey) private var batteryModel = ""
 
     private var totalWh: Double {
         store.ranked.reduce(0) { $0 + $1.estimatedWattHours }
@@ -122,6 +128,56 @@ struct PowerSettingsView: View {
 
     var body: some View {
         Form {
+            Section("Heat control") {
+                Picker("Stop generation when", selection: $thermalLimit) {
+                    Text("Warm").tag(1)
+                    Text("Hot").tag(2)
+                    Text("Never").tag(0)
+                }
+                Picker("Longest reply", selection: $replyTokens) {
+                    Text("512 tokens").tag(512)
+                    Text("1,024 tokens").tag(1024)
+                    Text("2,048 tokens").tag(2048)
+                    Text("4,096 tokens").tag(4096)
+                }
+                Text("iOS reports heat as thermal states, not degrees Celsius. Conduit stops at the chosen state. Shorter replies reduce sustained work.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+
+            Section("Battery saver") {
+                Toggle("Switch model below 20%", isOn: $batterySaver)
+                if batterySaver {
+                    Picker("Smaller model", selection: $batteryModel) {
+                        Text("Automatic smallest installed").tag("")
+                        ForEach(catalog.models) { model in
+                            Text(model.displayName).tag(model.id)
+                        }
+                    }
+                    Text("Conduit switches between turns. At 25%, it restores the prior model unless you picked another one. Install a smaller model first; this setting does not download one.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+
+            Section("Generation memory") {
+                HStack {
+                    Text("Cache headroom")
+                    Spacer()
+                    Text("\(Int(memoryFraction * 100))%")
+                        .foregroundStyle(.secondary)
+                }
+                Slider(value: $memoryFraction, in: 0.35...1, step: 0.05)
+                ProgressView(value: memoryFraction)
+                    .tint(Color.conduitAccent)
+                Text("Caps extra memory Conduit uses for each answer. iOS reserves system RAM itself; this slider cannot assign RAM to apps.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+
+            Section("Background and processor") {
+                Label("AI generation pauses when Conduit leaves the screen.", systemImage: "pause.circle")
+                Label("MLX models use Metal. ANE routing needs a Core ML version of the model; it cannot be selected for these MLX files.", systemImage: "cpu")
+            }
+            .font(.footnote)
+
             Section("Total AI use since \(store.since.formatted(date: .abbreviated, time: .omitted))") {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(String(format: "%.1f%% of a phone charge", totalWh / UsageStore.batteryWattHours * 100))

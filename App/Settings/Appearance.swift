@@ -129,7 +129,6 @@ struct AppearanceSettingsView: View {
     @AppStorage(Appearance.backdropKey) private var backdrop = Appearance.Backdrop.aurora.rawValue
     @AppStorage(Appearance.textSizeKey) private var textSize = Appearance.TextSize.standard.rawValue
     @AppStorage(Appearance.showReasoningKey) private var showReasoning = true
-    @AppStorage(VolumeKeys.enabledKey) private var volumeKeys = true
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -196,19 +195,6 @@ struct AppearanceSettingsView: View {
             } footer: {
                 Text("Controls whether thinking appears in the conversation. Models can still think when it "
                     + "is hidden.")
-            }
-
-            Section {
-                Toggle("Volume button navigation", isOn: $volumeKeys)
-                    .onChange(of: volumeKeys) { _, on in
-                        if on { VolumeKeys.shared.start() } else { VolumeKeys.shared.stop() }
-                    }
-            } header: {
-                Text("Controls")
-            } footer: {
-                Text("Tap Up for previous tab or Down for next tab. Double-tap either button to open or "
-                    + "close the menu. Hold to change volume. iOS cannot report a press when volume is "
-                    + "already at its maximum or minimum.")
             }
 
             Section {
