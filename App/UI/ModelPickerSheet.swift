@@ -84,7 +84,7 @@ struct ModelPickerSheet: View {
     // MARK: - Models
 
     private var edgeDownloads: some View {
-        Section("Download directly to iPhone") {
+        Section {
             ForEach(Edge0Download.Tier.allCases) { tier in
                 Button {
                     downloader.start(tier, catalog: catalog)
@@ -106,6 +106,8 @@ struct ModelPickerSheet: View {
                 Text(downloader.status).font(.caption)
             }
             if let error = downloader.error { Text(error).font(.caption).foregroundStyle(.red) }
+        } header: {
+            Text("Download directly to iPhone")
         } footer: {
             Text("Experimental streaming models. Use Wi-Fi and keep Conduit open. Completed tensors are saved if interrupted. 35B weights are prepared on this iPhone; no computer storage is needed.")
         }
