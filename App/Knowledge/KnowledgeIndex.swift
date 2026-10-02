@@ -173,15 +173,27 @@ actor KnowledgeIndex {
                 limit: Int = 6) throws -> [Hit] {
         try open()
         guard !sources.isEmpty else { return [] }
+        if let collections, collections.isEmpty { return [] }
+        let selectedCollections = collections?.sorted() ?? []
+        let collectionClause = collections == nil ? "" : " AND d.collection IN (\(selectedCollections.map { _ in "?" }.joined(separator: ",")))"
+        let collectionValues = selectedCollections.map { Value.text($0) }
+        var eligiblePassages: Set<Int64>?
+        if collections != nil {
+            let rows = try query("SELECT p.rowid FROM passages p JOIN documents d ON d.id = p.document WHERE 1=1" + collectionClause, collectionValues)
+            eligiblePassages = Set(rows.compactMap { row in
+                if case .int(let id) = row[0] { return id }
+                return nil
+            })
+        }
         let terms = Self.searchTerms(text)
         var keywordRanks: [Int64: Int] = [:]
         if !terms.isEmpty {
             let match = terms.map { "\"\($0)\"" }.joined(separator: " OR ")
             let rows = try query("""
                 SELECT passages.rowid FROM passages JOIN documents d ON d.id = passages.document
-                WHERE passages MATCH ? AND d.source IN (\(sources.map { "'\($0.rawValue)'" }.joined(separator: ",")))
+                WHERE passages MATCH ? AND d.source IN (\(sources.map { "'\($0.rawValue)'" }.joined(separator: ",")))\(collectionClause)
                 ORDER BY bm25(passages) LIMIT 60
-                """, [.text(match)])
+                """, [.text(match)] + collectionValues)
             for (rank, row) in rows.enumerated() {
                 if case .int(let id) = row[0] { keywordRanks[id] = rank }
             }
@@ -193,6 +205,7 @@ actor KnowledgeIndex {
             var scored: [(Int64, Float)] = []
             for source in sources {
                 for item in try cachedVectors(source) {
+                    if let eligiblePassages, !eligiblePassages.contains(item.passage) { continue }
                     scored.append((item.passage, Self.cosine(queryVector, item.vector)))
                 }
             }

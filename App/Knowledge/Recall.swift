@@ -57,9 +57,12 @@ enum Recall {
         // Greetings and thanks have nothing worth looking up.
         guard !terms.isEmpty, request.count >= 8 else { return Notes(hits: []) }
 
-        var sources: Set<KnowledgeIndex.Source> = [.memory, .profile]
-        if !libraries.isEmpty { sources.insert(.library) }
-        let found = (try? await KnowledgeIndex.shared.search(request, sources: sources, limit: 10)) ?? []
+        var found = (try? await KnowledgeIndex.shared.search(request, sources: [.memory, .profile], limit: 6)) ?? []
+        if !libraries.isEmpty {
+            let libraryHits = (try? await KnowledgeIndex.shared.search(request, sources: [.library], collections: libraries, limit: 6)) ?? []
+            found.append(contentsOf: libraryHits)
+        }
+        found.sort { $0.score > $1.score }
 
         let useful = found.filter { hit in
             switch hit.source {
