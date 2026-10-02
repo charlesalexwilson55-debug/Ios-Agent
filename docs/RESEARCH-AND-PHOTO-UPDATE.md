@@ -24,6 +24,11 @@ Multi-select photo imports have no app-imposed 20-photo limit and are analyzed
 one at a time. Failed/unavailable assets are reported. iCloud originals are only
 downloaded when enabled in Settings > Appearance > Photos.
 
+SQLite keyword matching now qualifies the passage text column: the old table
+name was ambiguous with the document passage-count column and could make recall
+silently return no results. Collection filtering happens before result limits,
+so unrelated or disabled libraries cannot crowd the requested collection out.
+
 The loading indicator is centered, smaller, and moves inside a bounded capsule.
 Answers appear as soon as they arrive, without the previous delayed shake/haptic
 sequence. Activity labels follow actual research/tool/streaming state and can be

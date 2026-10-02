@@ -191,7 +191,7 @@ actor KnowledgeIndex {
             let match = terms.map { "\"\($0)\"" }.joined(separator: " OR ")
             let rows = try query("""
                 SELECT passages.rowid FROM passages JOIN documents d ON d.id = passages.document
-                WHERE passages MATCH ? AND d.source IN (\(sources.map { "'\($0.rawValue)'" }.joined(separator: ",")))\(collectionClause)
+                WHERE passages.text MATCH ? AND d.source IN (\(sources.map { "'\($0.rawValue)'" }.joined(separator: ",")))\(collectionClause)
                 ORDER BY bm25(passages) LIMIT 60
                 """, [.text(match)] + collectionValues)
             for (rank, row) in rows.enumerated() {
