@@ -192,17 +192,17 @@ import Foundation
         precondition(sportsFindings.facts.contains { $0.text.contains("Harbour United") }, "Read sports profiles and retain literal evidence despite broken model extraction")
         precondition(sportsFindings.limitations.contains { $0.contains("timed out") })
 
-        var backlogBudget = ResearchEngine.Budget.normal
-        backlogBudget.firstStepPages = 1
+        let backlogBudget = ResearchEngine.Budget.normal
         var backlogRun = ResearchRun(request: request, budget: backlogBudget)
         backlogRun.plan = plan; backlogRun.stage = .searching
-        backlogRun.pendingSources = (0..<4).map { index in
+        let queuedPages = backlogBudget.firstStepPages + 2
+        backlogRun.pendingSources = (0..<queuedPages).map { index in
             .init(title: source.title, url: URL(string: "https://publisher\(index).example/jane")!, summary: sentence, published: nil, text: sentence, provider: "fixture")
         }
         let backlog = ResearchEngine(request: request, budget: backlogBudget, ask: { _, _ in "[]" }, activity: reporter,
             search: { _ in WebSearch.Response(provider: .tavily, results: []) }, resume: backlogRun)
         let backlogFindings = try await backlog.run()
-        precondition(backlogFindings.run?.pages == 4, "Unread sources must survive a per-round page limit")
+        precondition(backlogFindings.run?.pages == queuedPages, "Unread sources must survive a per-round page limit")
         var cappedBudget = ResearchEngine.Budget.normal
         cappedBudget.rounds = 1
         let capped = ResearchEngine(request: request, budget: cappedBudget, ask: { system, _ in
