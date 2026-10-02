@@ -1,5 +1,10 @@
 import Foundation
 
+private actor ResearchAttemptCounter {
+    private var count = 0
+    func next() -> Int { count += 1; return count }
+}
+
 @main struct ResearchTests {
     @MainActor static func main() async throws {
         let request = "Research Jane Example, doctor in Melbourne at Harbour Clinic"
@@ -177,20 +182,20 @@ import Foundation
         precondition(!failed.limitations.isEmpty && failed.facts.isEmpty, "Retain provider failure, not person-not-found")
         precondition(failed.searches == 1, "Do not repeat charged requests after a quota failure")
 
-        var attempts = 0
+        let attempts = ResearchAttemptCounter()
         let sportsSentence = "Morgan Example plays soccer for Harbour United."
         let sportsSource = WebSearch.Result(title: "Morgan Example player profile", url: URL(string: "https://harbour-united.example/players/morgan")!, site: "harbour-united.example", summary: sportsSentence, published: nil, rawContent: sportsSentence)
         let persistent = ResearchEngine(request: "Morgan Example soccer", budget: .normal, ask: { _, _ in "[]" }, activity: reporter, search: { query in
-            attempts += 1
+            let attempt = await attempts.next()
             precondition(query.contains("\"Morgan Example\""))
-            if attempts == 1 { throw URLError(.timedOut) }
+            if attempt == 1 { throw URLError(.timedOut) }
             // Simulate a provider finding the profile only during recovery.
-            return WebSearch.Response(provider: .tavily, results: attempts > ResearchEngine.Budget.normal.firstStepSearches ? [sportsSource] : [])
+            return WebSearch.Response(provider: .tavily, results: attempt > ResearchEngine.Budget.normal.firstStepSearches ? [sportsSource] : [])
         })
         let sportsFindings = try await persistent.run()
         precondition(sportsFindings.searches > ResearchEngine.Budget.normal.firstStepSearches, "Empty first round must try remaining relevant queries")
         precondition(sportsFindings.facts.contains { $0.text.contains("Harbour United") }, "Read sports profiles and retain literal evidence despite broken model extraction")
-        precondition(sportsFindings.limitations.contains { $0.contains("timed out") })
+        precondition(sportsFindings.limitations.contains(URLError(.timedOut).localizedDescription), "Preserve the provider error independently of its platform wording")
 
         let backlogBudget = ResearchEngine.Budget.normal
         var backlogRun = ResearchRun(request: request, budget: backlogBudget)
