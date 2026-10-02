@@ -22,12 +22,14 @@ struct ModelPickerSheet: View {
     @State private var showingSuggestions = false
     @State private var isCopying = false
     @State private var importError: String?
+    @State private var downloader = Edge0Download.shared
     @AppStorage(ModelColors.storageKey) private var modelColors = ""
 
     var body: some View {
         NavigationStack {
             List {
                 modelsSection
+                edgeDownloads
                 if !catalog.adapters.isEmpty { adaptersSection }
             }
             .scrollContentBackground(.hidden)
@@ -80,6 +82,34 @@ struct ModelPickerSheet: View {
     }
 
     // MARK: - Models
+
+    private var edgeDownloads: some View {
+        Section("Download directly to iPhone") {
+            ForEach(Edge0Download.Tier.allCases) { tier in
+                Button {
+                    downloader.start(tier, catalog: catalog)
+                } label: {
+                    HStack {
+                        Image(systemName: "arrow.down.circle")
+                        Text(tier.rawValue)
+                        Spacer()
+                        Text(tier == .small ? "≈5 GB" : "≈20 GB").foregroundStyle(.secondary)
+                    }
+                }
+                .disabled(downloader.isRunning || catalog.models.contains { $0.architecture == tier.architecture })
+            }
+            if downloader.isRunning {
+                ProgressView(value: downloader.fraction)
+                Text(downloader.status).font(.caption)
+                Button("Pause download", role: .cancel) { downloader.cancel() }
+            } else if !downloader.status.isEmpty {
+                Text(downloader.status).font(.caption)
+            }
+            if let error = downloader.error { Text(error).font(.caption).foregroundStyle(.red) }
+        } footer: {
+            Text("Experimental streaming models. Use Wi-Fi and keep Conduit open. Completed tensors are saved if interrupted. 35B weights are prepared on this iPhone; no computer storage is needed.")
+        }
+    }
 
     private var modelsSection: some View {
         Section {

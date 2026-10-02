@@ -130,6 +130,7 @@ struct RootView: View {
             consumePendingTask()
             startupReady = true
             if !startupEnabled { startupVisible = false }
+            consumeEdge0DownloadRequest()
         }
         .task {
             let warnings = NotificationCenter.default.notifications(
@@ -169,6 +170,7 @@ struct RootView: View {
             case .active:
                 consumePendingTask()
                 checkBatterySaver()
+                consumeEdge0DownloadRequest()
             case .inactive, .background:
                 session?.leavingForeground()
             default: break
@@ -252,6 +254,19 @@ struct RootView: View {
 
     private var appearanceKey: String {
         accentHex + "|" + textSize + "|" + backdrop
+    }
+
+    /// A one-shot request placed through this app's USB document sharing container.
+    /// It contains only a supported tier, never an arbitrary URL or executable command.
+    private func consumeEdge0DownloadRequest() {
+        guard session != nil, !Edge0Download.shared.isRunning else { return }
+        let url = ModelCatalog.documentsRoot.appendingPathComponent("edge0-download-request.json")
+        guard let data = try? Data(contentsOf: url),
+              let request = try? JSONDecoder().decode([String: String].self, from: data),
+              let name = request["tier"], let tier = Edge0Download.Tier(rawValue: name) else { return }
+        try? FileManager.default.removeItem(at: url)
+        page = .models
+        Edge0Download.shared.start(tier, catalog: catalog)
     }
 
     private func selectFromPage(_ model: DiscoveredModel) {

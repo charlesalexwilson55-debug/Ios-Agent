@@ -68,6 +68,8 @@ jobs:
           set -o pipefail
           mkdir -p artifacts build
           {
+            xcrun swiftc -swift-version 5 -parse-as-library App/Model/Edge0Packing.swift App/Model/Edge0Protocol.swift scripts/edge0-tests.swift -o artifacts/edge0-tests
+            artifacts/edge0-tests
             sources=(App/Agent/ResearchPlan.swift App/Agent/ResearchPlanner.swift App/Agent/ResearchCandidate.swift
               App/Agent/ResearchEngine.swift App/Agent/ResearchCoordinator.swift App/Agent/ResearchGraph.swift
               App/Agent/ResearchRun.swift App/Agent/ResearchStore.swift App/Agent/Activity.swift

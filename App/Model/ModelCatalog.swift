@@ -42,6 +42,9 @@ struct DiscoveredModel: Identifiable, Hashable {
     /// out-of-nowhere jetsam kill three tokens into a reply.
     var memoryWarning: String? {
         guard !isAdapter else { return nil }
+        if architecture == "edge0_35b" || architecture == "edge0_8b" {
+            return "Streams experts from storage. Experimental: speed and memory depend on context length and this phone."
+        }
         let gigabytes = Double(sizeBytes) / 1_073_741_824
         let physical = Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824
         // Weights plus cache and workspace; roughly 1.4x the weights in
@@ -195,6 +198,22 @@ final class ModelCatalog {
                 options: [.skipsHiddenFiles]
             )) ?? []
             let names = Set(contents.map(\.lastPathComponent))
+
+            if names.contains("edge0.json"),
+               let marker = try? Data(contentsOf: directory.appendingPathComponent("edge0.json")),
+               let metadata = try? JSONDecoder().decode([String: String].self, from: marker),
+               let architecture = metadata["architecture"],
+               architecture == "edge0_35b" || architecture == "edge0_8b" {
+                if architecture == "edge0_35b" {
+                    guard (try? Edge0Installer.validate35B(directory)) != nil else { return }
+                } else {
+                    guard validWeights(in: directory, names: names) else { return }
+                }
+                seen.insert(directory.path)
+                result.models.append(DiscoveredModel(directory: directory, displayName: directory.lastPathComponent,
+                    sizeBytes: size(of: directory), architecture: architecture, quantBits: 4, isAdapter: false))
+                return
+            }
 
             if names.contains("adapter_config.json"), validWeights(in: directory, names: names) {
                 seen.insert(directory.path)

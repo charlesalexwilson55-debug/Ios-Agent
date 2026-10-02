@@ -8,6 +8,8 @@ options:
     iOS: "26.0"
 
 packages:
+  Edge0:
+    path: Vendor/Edge0
   ZIPFoundation:
     url: https://github.com/weichsel/ZIPFoundation
     exactVersion: 0.9.19
@@ -32,6 +34,8 @@ targets:
     sources:
       - path: App
     dependencies:
+      - package: Edge0
+        product: Edge0MLX
       - package: ZIPFoundation
       - sdk: libsqlite3.tbd
       - package: MLXLM

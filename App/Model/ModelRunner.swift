@@ -10,6 +10,7 @@ import MLXLMCommon
 import MLXHuggingFace
 import Tokenizers
 import os
+import Edge0MLX
 
 /// The only file that touches MLX.
 ///
@@ -57,6 +58,8 @@ actor ModelRunner {
     }
 
     private var container: ModelContainer?
+    private var edgeSmall: Edge0ChatEngine?
+    private var edgeLarge: Edge0ChatEngine35B?
     private var loadedDirectory: String?
 
     /// Bytes of KV cache per generated token for the loaded model, from its
@@ -71,7 +74,7 @@ actor ModelRunner {
     private var lastLoad: (directory: URL, name: String, adapter: URL?)?
     private(set) var isSuspended = false
 
-    var isLoaded: Bool { container != nil }
+    var isLoaded: Bool { container != nil || edgeSmall != nil || edgeLarge != nil }
 
     struct Configuration: Sendable {
         let directory: URL
@@ -152,14 +155,38 @@ actor ModelRunner {
     /// reach the network.
     func load(directory: URL, displayName: String, adapterDirectory: URL? = nil) async throws {
         let signature = directory.path + "|" + (adapterDirectory?.path ?? "")
-        if loadedDirectory == signature, container != nil { return }
+        if loadedDirectory == signature, isLoaded { return }
 
         // Release the previous model first. Two multi-gigabyte models resident
         // at once is an immediate termination on a phone.
         container = nil
+        edgeSmall = nil
+        edgeLarge = nil
         loadedDirectory = nil
         MLX.Memory.clearCache()
         MLX.Memory.cacheLimit = 32 * Self.megabyte
+
+        if let data = try? Data(contentsOf: directory.appendingPathComponent("edge0.json")),
+           let marker = try? JSONDecoder().decode([String: String].self, from: data),
+           let architecture = marker["architecture"] {
+            Diagnostics.begin("load", "streaming=\(architecture) avail=\(Diagnostics.availableMB)MB")
+            do {
+                if architecture == "edge0_35b" {
+                    try Edge0Installer.validate35B(directory)
+                    edgeLarge = try Edge0ChatEngine35B(modelURL: directory, instructions: "")
+                } else if architecture == "edge0_8b" {
+                    edgeSmall = try Edge0ChatEngine(modelURL: directory)
+                } else { throw RunnerError.loadFailed("Unsupported Edge0 architecture.") }
+                loadedDirectory = signature; loadedName = displayName
+                lastLoad = (directory, displayName, nil); isSuspended = false
+                Diagnostics.end("load", "streaming ready avail=\(Diagnostics.availableMB)MB")
+                return
+            } catch {
+                edgeSmall = nil; edgeLarge = nil
+                Diagnostics.end("load", "streaming failed: \(error.localizedDescription)")
+                throw RunnerError.loadFailed(error.localizedDescription)
+            }
+        }
 
         // Refuse up front when the weights alone cannot fit, instead of letting
         // iOS kill the app halfway through loading them.
@@ -236,6 +263,8 @@ actor ModelRunner {
 
     func unload() {
         container = nil
+        edgeSmall = nil
+        edgeLarge = nil
         loadedDirectory = nil
         loadedName = "a local model"
         lastLoad = nil
@@ -245,8 +274,10 @@ actor ModelRunner {
 
     /// Frees the chat model's memory, remembering it for `resume()`.
     func suspend() {
-        guard container != nil else { return }
+        guard isLoaded else { return }
         container = nil
+        edgeSmall = nil
+        edgeLarge = nil
         loadedDirectory = nil
         isSuspended = true
         MLX.Memory.clearCache()
@@ -305,7 +336,11 @@ actor ModelRunner {
         onEvent: @Sendable @escaping (RunnerEvent) -> Void
     ) async throws {
         // A model put aside for the image model comes back on first use.
-        if container == nil, isSuspended { try await resume() }
+        if !isLoaded, isSuspended { try await resume() }
+        if edgeSmall != nil || edgeLarge != nil {
+            try await generateEdge0(messages: messages, tools: tools, thinking: thinking, sampling: sampling, onEvent: onEvent)
+            return
+        }
         guard let container else { throw RunnerError.noModelLoaded }
         if InferencePolicy.shouldStop(for: ProcessInfo.processInfo.thermalState) {
             throw RunnerError.thermalLimit
@@ -439,6 +474,84 @@ actor ModelRunner {
     }
 
     // MARK: - Thinking
+
+    private func generateEdge0(messages: [Message], tools: [ToolDescriptor], thinking: Bool,
+                               sampling: Sampling, onEvent: @Sendable @escaping (RunnerEvent) -> Void) async throws {
+        if InferencePolicy.shouldStop(for: ProcessInfo.processInfo.thermalState) { throw RunnerError.thermalLimit }
+        let mapped = try messages.map { message in
+            Edge0Protocol.Message(role: message.role.rawValue, content: message.content,
+                calls: try message.calls.map { call in
+                    (call.name, String(decoding: try JSONEncoder().encode(call.arguments), as: UTF8.self))
+                })
+        }
+        let schemas = tools.map { $0.functionSchema.mapValues { $0 as Any } }
+        let prompt = try Edge0Protocol.prompt(messages: mapped, schemas: schemas, thinking: thinking, small: edgeSmall != nil)
+        // The experimental backend starts with a bounded context, independent of stored chat history.
+        guard prompt.utf8.count <= 24_000 else {
+            throw RunnerError.insufficientMemory("This Edge0 conversation is too long for the initial phone profile. Start a new chat or use a smaller model.")
+        }
+        var limit = thinking ? 2048 : 1024
+        if case .extraction(let count) = sampling { limit = count }
+        limit = min(limit, InferencePolicy.replyTokens)
+        let output = EdgeOutput(thinking: thinking, emit: onEvent)
+        let battery = await UsageStore.shared.reading()
+        let started = Date()
+        Diagnostics.begin("generate", "edge0=\(loadedName) promptBytes=\(prompt.utf8.count) max=\(limit)")
+        let keepGoing: @Sendable () -> Bool = {
+            !Task.isCancelled && !InferencePolicy.shouldStop(for: ProcessInfo.processInfo.thermalState)
+                && (os_proc_available_memory() == 0 || os_proc_available_memory() > 350 * 1_048_576)
+        }
+        defer { Diagnostics.end("generate", "edge0 seconds=\(Date().timeIntervalSince(started)) avail=\(Diagnostics.availableMB)MB") }
+        let result: Edge0GenerationResult
+        if let edgeLarge {
+            result = try await edgeLarge.reply(to: "Conversation", renderedPrompt: prompt,
+                onRawText: { output.receive($0) }, maxTokens: limit, thinking: thinking, shouldContinue: keepGoing)
+        } else if let edgeSmall {
+            result = try edgeSmall.reply(to: "Conversation", renderedPrompt: prompt,
+                maxTokens: limit, thinking: thinking, onText: { output.receive($0) }, shouldContinue: keepGoing)
+        } else { throw RunnerError.noModelLoaded }
+        try Task.checkCancellation()
+        try output.finish()
+        if !keepGoing() { throw RunnerError.insufficientMemory("Edge0 stopped to protect the phone's available memory or temperature. Try a shorter question.") }
+        let name = loadedName
+        await UsageStore.shared.record(model: name, promptTokens: prompt.utf8.count / 4,
+            generatedTokens: result.generatedTokenCount, seconds: result.elapsedSeconds, start: battery)
+        onEvent(.finished(tokensPerSecond: result.decodeTokensPerSecond))
+    }
+
+    /// Native callbacks report cumulative text. Convert to deltas before protocol parsing.
+    private final class EdgeOutput: @unchecked Sendable {
+        private var parser: Edge0Protocol.Parser
+        private var previous = ""
+        private var failure: Error?
+        private let emit: @Sendable (RunnerEvent) -> Void
+        init(thinking: Bool, emit: @Sendable @escaping (RunnerEvent) -> Void) {
+            parser = .init(thinking: thinking); self.emit = emit
+        }
+        func receive(_ cumulative: String) {
+            // A cumulative decoder may end a chunk with an unfinished UTF-8 character.
+            // Wait for its complete bytes rather than publishing replacement characters.
+            var stable = cumulative
+            while stable.hasSuffix("\u{FFFD}") { stable.removeLast() }
+            guard failure == nil, stable.hasPrefix(previous) else { return }
+            let delta = String(stable.dropFirst(previous.count)); previous = stable
+            do { try deliver(parser.feed(delta)) } catch { failure = error }
+        }
+        func finish() throws {
+            if let failure { throw failure }
+            try deliver(parser.feed("", final: true))
+        }
+        private func deliver(_ pieces: [Edge0Protocol.Piece]) throws {
+            for piece in pieces {
+                switch piece {
+                case .text(let text): emit(.text(text))
+                case .reasoning(let text): emit(.reasoning(text))
+                case .call(let name, let json):
+                    emit(.toolCall(id: nil, name: name, arguments: try JSONDecoder().decode(ArgumentValue.self, from: json)))
+                }
+            }
+        }
+    }
 
     /// Separates `<think>…</think>` output from the answer while it streams.
     /// Tags can be split across chunks, so any trailing text that could be the
