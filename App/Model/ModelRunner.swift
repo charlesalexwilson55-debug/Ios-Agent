@@ -171,6 +171,12 @@ actor ModelRunner {
            let architecture = marker["architecture"] {
             Diagnostics.begin("load", "streaming=\(architecture) avail=\(Diagnostics.availableMB)MB")
             do {
+                if let headroom = Self.availableMemory() {
+                    guard headroom > 800 * Self.megabyte else {
+                        throw RunnerError.insufficientMemory("Not enough memory to start Edge0. Close other apps and try again.")
+                    }
+                    MLX.Memory.memoryLimit = MLX.Memory.activeMemory + max(0, headroom - Self.reserveBytes)
+                }
                 if architecture == "edge0_35b" {
                     try Edge0Installer.validate35B(directory)
                     edgeLarge = try Edge0ChatEngine35B(modelURL: directory, instructions: "")

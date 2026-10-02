@@ -77,6 +77,12 @@ import Foundation
         do { _ = try broken.feed("<tool_call>{", final: true); fatalError("Incomplete tool call accepted") } catch {}
         let prompt = try Edge0Protocol.prompt(messages: [.init(role: "system", content: "Help"), .init(role: "user", content: "Question"), .init(role: "tool", content: "Result")], schemas: [], thinking: false, small: false)
         precondition(prompt.contains("<tool_response>\nResult") && prompt.hasSuffix("<think>\n\n</think>\n\n"))
+        let history = [Edge0Protocol.Message(role: "user", content: "Calculate"),
+            Edge0Protocol.Message(role: "assistant", content: "", calls: [("run_javascript", "{\"code\":\"2 + 2\"}")])]
+        let toolPrompt = try Edge0Protocol.prompt(messages: history, schemas: [["type": "function"]], thinking: false, small: false)
+        precondition(toolPrompt.contains("<function=run_javascript>\n<parameter=code>\n2 + 2\n</parameter>"))
+        let smallPrompt = try Edge0Protocol.prompt(messages: history, schemas: [["type": "function"]], thinking: false, small: true)
+        precondition(smallPrompt.contains("<role>ASSISTANT</role>") && smallPrompt.contains("\"name\":\"run_javascript\""))
         print("Edge0 tests passed: expert layout, invalid shape, tokenizer bytes, fp16 head transpose, split protocol tags, JSON/XML tool calls, incomplete calls, tool history.")
     }
 }

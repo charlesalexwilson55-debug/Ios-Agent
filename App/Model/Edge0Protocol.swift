@@ -12,7 +12,12 @@ enum Edge0Protocol {
         if !schemas.isEmpty {
             let tools = try schemas.map { String(decoding: try JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys]), as: UTF8.self) }.joined(separator: "\n")
             system += "\n# Tools\nYou can use these tools:\n<tools>\n\(tools)\n</tools>\n"
-            system += "To call a tool, output <tool_call>{\"name\":\"tool_name\",\"arguments\":{\"parameter\":\"value\"}}</tool_call>. Required parameters must be supplied. Only use offered tools. Do not claim an action happened until its tool result confirms it."
+            if small {
+                system += "To call a tool, output <tool_call>{\"name\":\"tool_name\",\"arguments\":{\"parameter\":\"value\"}}</tool_call>."
+            } else {
+                system += "To call a tool, output <tool_call>\n<function=tool_name>\n<parameter=parameter_name>\nvalue\n</parameter>\n</function>\n</tool_call>."
+            }
+            system += " Required parameters must be supplied. Only use offered tools. Do not claim an action happened until its tool result confirms it."
         }
         func wrap(_ role: String, _ content: String) -> String {
             if small {
@@ -25,7 +30,21 @@ enum Edge0Protocol {
         for message in messages where message.role != "system" {
             var content = message.content
             if message.role == "assistant" {
-                for call in message.calls { content += "\n<tool_call>{\"name\":\"\(call.name)\",\"arguments\":\(call.json)}</tool_call>" }
+                for call in message.calls {
+                    if small {
+                        content += "\n<tool_call>{\"name\":\"\(call.name)\",\"arguments\":\(call.json)}</tool_call>"
+                    } else {
+                        content += "\n<tool_call>\n<function=\(call.name)>"
+                        let values = try JSONSerialization.jsonObject(with: Data(call.json.utf8)) as? [String: Any] ?? [:]
+                        for key in values.keys.sorted() {
+                            let value: String
+                            if let string = values[key] as? String { value = string }
+                            else { value = String(decoding: try JSONSerialization.data(withJSONObject: values[key]!, options: [.fragmentsAllowed, .sortedKeys]), as: UTF8.self) }
+                            content += "\n<parameter=\(key)>\n\(value)\n</parameter>"
+                        }
+                        content += "\n</function>\n</tool_call>"
+                    }
+                }
             }
             if message.role == "tool" { content = "<tool_response>\n\(content)\n</tool_response>" }
             out += wrap(message.role == "tool" ? "user" : message.role, content)

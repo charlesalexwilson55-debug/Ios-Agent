@@ -69,6 +69,7 @@ enum Edge0Installer {
         config.timeoutIntervalForRequest = 120
         config.timeoutIntervalForResource = 24 * 60 * 60
         config.waitsForConnectivity = true
+        config.allowsCellularAccess = false
         let session = URLSession(configuration: config)
         defer { session.invalidateAndCancel() }
         let listingURL = URL(string: "https://huggingface.co/api/models/\(tier.repo)/tree/\(tier.revision)?recursive=true")!
@@ -84,7 +85,10 @@ enum Edge0Installer {
         // 35B is downloaded as ranges of individual tensors, never entire shards.
         // Allow one large temporary tensor plus conversion workspace and system headroom.
         let progressURL = staging.appendingPathComponent("install-progress.json")
-        var progress = (try? JSONDecoder().decode(Progress.self, from: Data(contentsOf: progressURL))) ?? Progress(revision: tier.revision, completed: [])
+        var progress: Progress
+        if fm.fileExists(atPath: progressURL.path) {
+            progress = try JSONDecoder().decode(Progress.self, from: Data(contentsOf: progressURL))
+        } else { progress = Progress(revision: tier.revision, completed: []) }
         guard progress.revision == tier.revision else { throw Edge0Packing.Failure(message: "This interrupted download belongs to another checkpoint revision.") }
         // Sparse expert files already have their full logical length after their first
         // tensor. Never count that length as downloaded data when checking a resume.
