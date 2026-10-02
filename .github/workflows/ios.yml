@@ -130,6 +130,11 @@ jobs:
           OUTCOME: ${{ steps.build.outcome }}
         run: |
           out="$(mktemp -d)"
+          if [ -f artifacts/package-resolution.log ]; then
+            cat artifacts/package-resolution.log build/xcodebuild.log 2>/dev/null > artifacts/all-build.log || true
+            mkdir -p build
+            cp artifacts/all-build.log build/xcodebuild.log
+          fi
           {
             echo "run      #$RUN_NUMBER ($RUN_ID)"
             echo "commit   $SHA"

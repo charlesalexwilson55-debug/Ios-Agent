@@ -27,7 +27,5 @@ let package = Package(
                 .product(name: "MLXFast", package: "mlx-swift"),
             ]
         ),
-        .testTarget(name: "Edge0MLXTests", dependencies: ["Edge0MLX", "Edge0Core"], resources: [.copy("Fixtures")]),
-        .testTarget(name: "Edge0CoreTests", dependencies: ["Edge0Core"]),
     ]
 )

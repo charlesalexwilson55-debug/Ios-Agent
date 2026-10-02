@@ -46,7 +46,8 @@ xcodegen generate
 echo "==> Resolving Swift packages"
 # Done as its own step so a dependency-resolution failure is distinguishable
 # from a compile failure in the log.
-xcodebuild -resolvePackageDependencies -project "$APP_NAME.xcodeproj" -scheme "$APP_NAME"
+mkdir -p artifacts
+xcodebuild -resolvePackageDependencies -project "$APP_NAME.xcodeproj" -scheme "$APP_NAME" 2>&1 | tee artifacts/package-resolution.log
 
 echo "==> Archiving"
 rm -rf "$BUILD_ROOT"
