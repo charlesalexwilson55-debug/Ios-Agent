@@ -192,7 +192,7 @@ actor KnowledgeIndex {
             let rows = try query("""
                 SELECT passages.rowid FROM passages JOIN documents d ON d.id = passages.document
                 WHERE passages.text MATCH ? AND d.source IN (\(sources.map { "'\($0.rawValue)'" }.joined(separator: ",")))\(collectionClause)
-                ORDER BY bm25(passages) LIMIT 60
+                ORDER BY bm25(passages.passages) LIMIT 60
                 """, [.text(match)] + collectionValues)
             for (rank, row) in rows.enumerated() {
                 if case .int(let id) = row[0] { keywordRanks[id] = rank }
