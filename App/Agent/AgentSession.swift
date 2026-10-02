@@ -324,6 +324,9 @@ final class AgentSession {
     // MARK: - The loop
 
     private func runTurn() async {
+        // Old bulk imports stored only asset references. Repair before retrieval.
+        await LibraryStore.shared.repairGalleryIndexes()
+        guard !Task.isCancelled else { return }
         if PhotoLibraryIndex.isGalleryQuestion(currentRequest) {
             await answerGalleryQuestion()
             return

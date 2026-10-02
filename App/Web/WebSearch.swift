@@ -282,7 +282,7 @@ enum WebSearch {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let body: [String: Any] = [
             "query": query,
-            "search_depth": "basic",
+            "search_depth": research && UserDefaults.standard.string(forKey: "conduit.research.depth") != "basic" ? "advanced" : "basic",
             "max_results": research ? 8 : 5,
             "include_answer": !research,
             "include_raw_content": false,

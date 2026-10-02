@@ -127,7 +127,7 @@ final class ProviderFixtureProtocol: URLProtocol {
         let tavilyRequest = ProviderFixtureProtocol.requests[1]
         precondition(tavilyRequest.url?.absoluteString == "https://api.tavily.com/search")
         let body = try requestBody(tavilyRequest)
-        precondition(body["search_depth"] as? String == "basic")
+        precondition(body["search_depth"] as? String == "advanced")
         precondition(body["include_raw_content"] as? Bool == false)
     }
 

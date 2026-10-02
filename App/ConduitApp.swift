@@ -233,7 +233,7 @@ struct RootView: View {
                 }
             }
         }
-        .safeAreaInset(edge: .bottom) {
+        .safeAreaInset(edge: .bottom, spacing: 16) {
             GlassCommandBar(
                 draft: $draft,
                 thinking: $thinking,

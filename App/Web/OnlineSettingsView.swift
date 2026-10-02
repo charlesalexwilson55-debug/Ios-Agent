@@ -4,6 +4,7 @@ import SwiftUI
 /// the phone.
 struct OnlineSettingsView: View {
     @AppStorage("conduit.online") private var online = true
+    @AppStorage("conduit.research.depth") private var researchDepth = "advanced"
     @State private var connectivity = Connectivity.shared
     @State private var hasExaKey = SearchKeyStore.hasExaKey
     @State private var hasTavilyKey = SearchKeyStore.hasTavilyKey
@@ -60,6 +61,15 @@ struct OnlineSettingsView: View {
                           systemImage: hasExaKey || hasTavilyKey ? "globe" : "exclamationmark.magnifyingglass")
                 } footer: {
                     Text("Exa is the primary discovery provider. Tavily broadens results when both are configured and is used when Exa is unavailable.")
+                }
+
+                Section("Research quality") {
+                    Picker("Tavily discovery", selection: $researchDepth) {
+                        Text("Thorough").tag("advanced")
+                        Text("Standard").tag("basic")
+                    }
+                    Text("Thorough searches retrieve more relevant evidence and use more provider credits. Research keeps full names in each query and never falls back to Wikipedia alone.")
+                        .font(.footnote).foregroundStyle(.secondary)
                 }
 
                 providerSection(

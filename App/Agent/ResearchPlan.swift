@@ -37,7 +37,7 @@ struct ResearchPlan: Codable, Sendable {
         guard let subject else { return [request] }
         let name = "\"\(subject)\""
         let context = keywords.filter { !Self.contains($0, in: subject) }.joined(separator: " ")
-        var result = ["\(name) \(request)", "\(name) \(context)"]
+        var result = ["\(name) \(clues.joined(separator: " "))", name]
         if isMedical {
             // Profession terms guide discovery without guessing the person's country
             // or excluding small practices on ordinary commercial domains.
@@ -51,7 +51,13 @@ struct ResearchPlan: Codable, Sendable {
         }
         // Always keep the subject; dropping clues is useful, dropping the name isn't.
         for clue in clues { result.append("\(name) \(clue)") }
-        result.append(name)
+        if clues.count > 1 {
+            for first in clues.indices {
+                for second in clues.indices where second > first {
+                    result.append("\(name) \(clues[first]) \(clues[second])")
+                }
+            }
+        }
         var seen = Set<String>()
         return result.map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { seen.insert(Self.normalized($0)).inserted }

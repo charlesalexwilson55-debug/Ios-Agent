@@ -26,6 +26,10 @@ struct TranscriptView: View {
                             .id(entry.id)
                             .transition(.opacity.combined(with: .move(edge: .bottom)))
                     }
+                    if isWorking {
+                        ConduitLoader(color: accent, status: activityLabel)
+                            .padding(.vertical, 10)
+                    }
                     // Anchor for auto-scroll. Scrolling to the last entry's own
                     // id stops short while that entry is still growing during
                     // streaming; a zero-height tail anchor always lands at the
@@ -36,18 +40,35 @@ struct TranscriptView: View {
                 }
                 .padding(.horizontal, 18)
                 .padding(.top, 12)
-                .padding(.bottom, 30)
+                .padding(.bottom, 48)
             }
             // The glass bar floats over the top edge of the scroll content;
             // this keeps the system's edge-fade consistent with it.
             .scrollDismissesKeyboard(.interactively)
             .onChange(of: entries.count) { _, _ in scroll(proxy) }
             .onChange(of: entries.last?.text) { _, _ in scroll(proxy) }
+            .onChange(of: entries.last?.reasoning) { _, _ in scroll(proxy) }
+            .onChange(of: isWorking) { _, _ in scroll(proxy) }
         }
         .background(BackdropView())
     }
 
     private static let bottomAnchor = "conduit.transcript.bottom"
+
+    private var activityLabel: String {
+        if let step = entries.reversed().compactMap(\.activity).first?.steps.last(where: { $0.status == .running }) {
+            let title = step.title.lowercased()
+            if title.contains("search") || title.contains("research") { return "Researching" }
+            if title.contains("read") || title.contains("extract") { return "Reading" }
+            if title.contains("writ") { return "Writing" }
+            if title.contains("load") { return "Loading" }
+            if title.contains("resolv") || title.contains("check") { return "Cross-checking" }
+            return "Planning"
+        }
+        if entries.last?.kind == .tool { return "Routing" }
+        if let last = entries.last, last.isStreaming && !last.text.isEmpty { return "Typing" }
+        return "Thinking"
+    }
 
     private func scroll(_ proxy: ScrollViewProxy) {
         withAnimation(.easeOut(duration: 0.22)) {
@@ -119,9 +140,6 @@ private struct AssistantText: View {
     let accent: Color
 
     @AppStorage(Appearance.showReasoningKey) private var showReasoning = true
-    @State private var staged = false
-    @State private var finishingSince: Date?
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -134,13 +152,13 @@ private struct AssistantText: View {
                 StoredImageView(id: id, maxHeight: 340)
             }
 
-            if entry.isStreaming && !staged {
+            if entry.isStreaming {
                 // Parsing the entire growing answer as Markdown for every
                 // token makes long code answers expensive and visually jumpy.
                 Text(entry.text)
                     .font(.system(size: 16 * Appearance.textScale))
                     .textSelection(.enabled)
-            } else if !staged {
+            } else {
                 ForEach(MessageSegment.parse(entry.text)) { segment in
                     switch segment.kind {
                     case .prose(let prose):
@@ -151,29 +169,8 @@ private struct AssistantText: View {
                 }
             }
 
-            if entry.isStreaming || staged {
-                ConduitLoader(color: accent, status: nil, finishingSince: finishingSince)
-                    .padding(.top, 2)
-            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .onAppear { staged = entry.isStreaming && entry.text.isEmpty }
-        .onChange(of: entry.text.isEmpty) { wasEmpty, isEmpty in
-            guard wasEmpty && !isEmpty && staged else { return }
-            finishingSince = Date()
-            Task { @MainActor in
-                if !reduceMotion {
-                    for step in 0..<4 {
-                        try? await Task.sleep(for: .milliseconds(135 + step * 35))
-                        UIImpactFeedbackGenerator(style: step < 2 ? .light : .medium).impactOccurred()
-                    }
-                }
-                try? await Task.sleep(for: .milliseconds(120))
-                staged = false
-                finishingSince = nil
-                if !reduceMotion { UINotificationFeedbackGenerator().notificationOccurred(.success) }
-            }
-        }
     }
 
 }

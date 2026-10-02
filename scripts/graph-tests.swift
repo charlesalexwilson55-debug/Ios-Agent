@@ -43,6 +43,21 @@ import Foundation
         precondition(ResearchSourcePolicy.requestRestriction("Research Jane Example, aged 15, in Melbourne") != nil)
 
         var run = ResearchRun(request: request, budget: .normal)
+        var literal = ResearchGraph()
+        let literalSource = literal.addSource(url: URL(string: "https://profile.example/jane")!, title: "Jane Example",
+            text: "Jane Example\nShe works at Harbour Clinic in Melbourne.\nJohn Other\nHe won a prize.", published: nil, provider: "fixture")!
+        literal.extractLiteral(sourceID: literalSource, plan: plan)
+        literal.resolve(plan: plan)
+        precondition(literal.claims.count == 1 && !literal.claims[0].text.contains("John Other"))
+        precondition(literal.candidates[0].anchors.count == 2)
+        let plain = ResearchPlanner.make(request: "Research Jane Example", reply: "")
+        var withoutClues = ResearchGraph()
+        let plainSource = withoutClues.addSource(url: URL(string: "https://another.example/jane")!, title: "Jane Example",
+            text: "Jane Example works as a doctor at Harbour Clinic.", published: nil, provider: "fixture")!
+        withoutClues.extractLiteral(sourceID: plainSource, plan: plain)
+        withoutClues.resolve(plan: plain)
+        precondition(withoutClues.claims.count == 1 && withoutClues.candidates[0].anchors.isEmpty,
+            "Name-only source information stays available without claiming identity confirmation")
         run.graph = graph
         run.plan = plan
         run.stage = .extracting

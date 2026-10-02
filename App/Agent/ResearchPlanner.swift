@@ -59,7 +59,8 @@ enum ResearchPlanner {
     /// Conservative extraction from the request itself. It need not handle every
     /// natural-language form: unknown forms still produce discovery searches.
     static func requestName(_ request: String) -> String? {
-        for pattern in [#"(?i)\b(?:full name|name|named|called)\s*[:=]?\s+([^,;\n]+)"#,
+        for pattern in [#"(?i)\b(?:full name|name)\s*[:=]\s*([^,;\n]+)"#,
+                        #"(?i)\b(?:full name|name|named|called)\s+(?:is\s+)?([^,;\n]+)"#,
                         #"[“\"]([^”\"]+)[”\"]"#] {
             if let captured = capture(pattern, in: request), let name = cleanName(captured) { return name }
         }

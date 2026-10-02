@@ -15,6 +15,8 @@ struct Library: Identifiable, Codable, Hashable {
     var photoIDs: [UUID]?
     /// Photos assets referenced by this library after an explicit gallery import.
     var galleryAssetIDs: [String]?
+    /// Migrates older gallery references into the same searchable index as documents.
+    var galleryIndexVersion: Int?
     /// nil on older libraries; true when the user picked a cover explicitly.
     var coverPinned: Bool?
 
@@ -112,6 +114,48 @@ final class LibraryStore {
 
     func refresh(_ library: Library) async {
         documents[library.id] = (try? await KnowledgeIndex.shared.documents(collection: library.collection)) ?? []
+    }
+
+    /// Stable IDs make retries replace passages instead of duplicating them.
+    func indexGallery(_ library: Library) async throws {
+        while importing[library.id] != nil {
+            try Task.checkCancellation()
+            try await Task.sleep(for: .milliseconds(150))
+        }
+        guard let library = libraries.first(where: { $0.id == library.id }),
+              library.galleryIndexVersion != 1, let ids = library.galleryAssetIDs, !ids.isEmpty else { return }
+        var progress = ImportProgress(total: ids.count)
+        importing[library.id] = progress
+        defer { importing[library.id] = nil }
+        for id in ids {
+            try Task.checkCancellation()
+            guard libraries.contains(where: { $0.id == library.id }) else { throw CancellationError() }
+            progress.current = "Photo \(progress.done + 1)"
+            importing[library.id] = progress
+            if let photo = PhotoLibraryIndex.shared.record(for: id) {
+                let date = photo.date?.formatted(date: .abbreviated, time: .shortened) ?? "Unknown date"
+                let text = "Photo taken: \(date)\nRecognized text:\n\(photo.text)\nVisual labels: \(photo.labels.joined(separator: ", "))"
+                try await KnowledgeIndex.shared.add(id: library.collection + "/gallery/" + id,
+                    source: .library, collection: library.collection, title: "\(library.name) · Photo · \(date)", text: text)
+            } else {
+                progress.failures.append("Photo \(progress.done + 1) could not be indexed")
+            }
+            progress.done += 1
+            await Task.yield()
+        }
+        if var updated = libraries.first(where: { $0.id == library.id }) {
+            updated.galleryIndexVersion = progress.failures.isEmpty ? 1 : nil
+            update(updated)
+        }
+        lastFailures[library.id] = progress.failures.isEmpty ? nil : progress.failures
+        await refresh(library)
+    }
+
+    func repairGalleryIndexes() async {
+        for library in libraries where library.enabled && library.galleryIndexVersion != 1 {
+            do { try await indexGallery(library) }
+            catch { Diagnostics.log("library.photo-index failed: \(error.localizedDescription)") }
+        }
     }
 
     func removeDocument(_ document: KnowledgeIndex.Document, from library: Library) async {

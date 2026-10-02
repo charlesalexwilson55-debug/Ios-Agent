@@ -110,7 +110,7 @@ import Foundation
             system == ResearchEngine.keywordPrompt ? profile : "SAME: yes\nEVIDENCE: Jane Example works in Sydney at Imaginary Clinic."
         }, activity: reporter, search: { _ in WebSearch.Response(provider: .tavily, results: [source]) })
         let rejected = try await invented.run()
-        precondition(rejected.facts.isEmpty, "A model's yes cannot override absent evidence")
+        precondition(!rejected.facts.isEmpty && rejected.facts.allSatisfy { !$0.text.contains("Imaginary") }, "Invalid model output must fall back to literal source evidence")
         let teamText = "Jane Example works at Harbour Clinic. John Other won the surgical award."
         let team = WebSearch.Result(title: "Jane Example doctor", url: source.url, site: source.site, summary: "Harbour Clinic", published: nil, rawContent: teamText + String(repeating: " Team information.", count: 15))
         let mixed = ResearchEngine(request: request, budget: .normal, ask: { system, _ in
@@ -124,11 +124,11 @@ import Foundation
             return WebSearch.Response(provider: .tavily, results: [source])
         })
         let recovered = try await noName.run()
-        precondition(recovered.searches > 0 && recovered.facts.isEmpty)
-        precondition(recovered.candidates.count == 1 && recovered.candidates[0].status == .possible, "Uncertain source must remain selectable")
+        precondition(recovered.searches > 0 && !recovered.facts.isEmpty, "Readable anchored evidence must survive unstructured model output")
+        precondition(recovered.candidates.count == 1 && recovered.candidates[0].status == .supported)
         let modelFailure = ResearchEngine(request: request, budget: .normal, ask: { _, _ in throw URLError(.cannotDecodeContentData) }, activity: reporter, search: { _ in WebSearch.Response(provider: .tavily, results: [source]) })
         let modelFailed = try await modelFailure.run()
-        precondition(!modelFailed.candidates.isEmpty && modelFailed.searches > 0, "Model failure must not prevent source discovery")
+        precondition(!modelFailed.facts.isEmpty && modelFailed.searches > 0, "Model failure must not prevent literal evidence extraction")
         let cancelled = Task { @MainActor in
             let cancelledEngine = ResearchEngine(request: request, budget: .normal, ask: { _, _ in
                 try Task.checkCancellation()

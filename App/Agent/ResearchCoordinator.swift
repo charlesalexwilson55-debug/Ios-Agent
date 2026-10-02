@@ -97,7 +97,8 @@ import Foundation
     private func plan() async throws {
         let step = activity.begin("Planning", detail: "Name, supplied anchors, exact-name and professional-source searches")
         var reply = ""
-        do { reply = try await model(ResearchEngine.keywordPrompt, state.request) }
+        // Clear names can start discovery without waiting for local generation.
+        do { if ResearchPlanner.requestName(state.request) == nil { reply = try await model(ResearchEngine.keywordPrompt, state.request) } }
         catch {
             try Task.checkCancellation()
             state.limitations.append("Local planning was unavailable; discovery uses your original wording.")
@@ -247,6 +248,9 @@ import Foundation
                                 state.limitations.append("A local extraction failed; its source is retained for inspection.")
                             }
                         }
+                        if state.selection == nil && state.graph.claims.count == before {
+                            state.graph.extractLiteral(sourceID: sourceID, plan: plan)
+                        }
                         activity.updateItem(item, subtitle: "\(state.graph.claims.count - before) grounded claims; source retained separately", status: .done)
                     }
                 } else { activity.updateItem(item, subtitle: "No readable page text; snippets are not identity evidence", status: .skipped) }
@@ -304,7 +308,7 @@ import Foundation
         if providerStopped { state.stopReason = "The search provider was unavailable. Existing evidence has been preserved." }
         else if state.round >= state.budget.rounds { state.stopReason = "The research round budget was reached." }
         else if state.pages >= state.budget.pages || state.searches >= state.budget.searches { state.stopReason = "The search/page budget was reached." }
-        else if state.stagnantRounds >= 1 { state.stopReason = "This round added no new entities or claims, no corroboration and no reduction in unresolved questions." }
+        else if state.stagnantRounds >= 2 { state.stopReason = "Two rounds added no new evidence or corroboration and resolved no identity differences." }
         else if state.pendingQueries.isEmpty { state.stopReason = "No new evidence-grounded queries remain." }
         state.stage = state.stopReason.isEmpty ? .searching : .report
     }
@@ -329,8 +333,14 @@ import Foundation
                 sharedAttributes: displayGroups.first(where: { $0.sourceIDs.contains(source.id) })?.attributes)
         }
         let missing = (state.plan?.clues ?? []).filter { clue in !graph.candidates.contains { $0.anchors.contains(clue) } }
+        let supportedGroups = Dictionary(grouping: graph.candidates.filter { $0.anchors.count >= 2 }, by: \.groupID)
+        let independentMatches = supportedGroups.values.filter { group in
+            Set(graph.sources.filter { source in group.contains { $0.sourceID == source.id } && source.duplicateOf == nil }.map(\.publisher)).count >= 2
+        }.count
         let summary = state.selection != nil
             ? "Your selected profile is not a verified identity match. Other sources remain separate."
+            : independentMatches == 1 && graph.contradictions.isEmpty
+            ? "A strong provisional match: independent sources agree on the full name and multiple supplied details. This is not guaranteed identity verification."
             : "Identity remains provisional. \(Set(graph.candidates.map(\.groupID)).count) separate groups; \(graph.contradictions.count) unresolved differences."
         return .init(facts: facts, keywords: state.plan?.keywords ?? [], searches: state.searches, pagesChecked: state.pages,
             pagesMatched: Set(graph.claims.map(\.subjectID)).count, combinationsSkipped: state.skippedQueries, pagesSkipped: state.skippedPages,

@@ -196,6 +196,7 @@ struct LibraryManageView: View {
     @State private var store = LibraryStore.shared
     @State private var gallery = PhotoLibraryIndex.shared
     @State private var galleryError: String?
+    @State private var galleryImportSummary: String?
     @State private var importing = false
     @State private var photos: [PhotosPickerItem] = []
     @State private var chosenCover: PhotosPickerItem?
@@ -235,16 +236,20 @@ struct LibraryManageView: View {
                 } label: {
                     Label("Write or paste a note", systemImage: "square.and.pencil")
                 }
-                PhotosPicker(selection: $photos, maxSelectionCount: 20, matching: .images) {
+                PhotosPicker(selection: $photos, maxSelectionCount: nil, matching: .images) {
                     Label("Add photos from gallery", systemImage: "photo.on.rectangle")
                 }
                 Button {
                     Task {
                         do {
+                            galleryImportSummary = nil
                             try await gallery.indexAll()
                             if var updated = store.libraries.first(where: { $0.id == library.id }) {
                                 updated.galleryAssetIDs = gallery.allRecords.map(\.assetID)
+                                updated.galleryIndexVersion = nil
                                 store.update(updated)
+                                try await store.indexGallery(updated)
+                                galleryImportSummary = "\(updated.galleryAssetIDs?.count ?? 0) photos added to \(updated.name). \(gallery.failed) could not be read."
                             }
                         }
                         catch { galleryError = error.localizedDescription }
@@ -252,7 +257,10 @@ struct LibraryManageView: View {
                 } label: {
                     Label("Import all photos for search", systemImage: "square.stack.3d.up")
                 }
-                .disabled(gallery.isIndexing)
+                .disabled(gallery.isIndexing || readingPhotos || store.importing[library.id] != nil)
+                if let galleryImportSummary {
+                    Text(galleryImportSummary).font(.footnote).foregroundStyle(.secondary)
+                }
                 if gallery.isIndexing {
                     VStack(alignment: .leading, spacing: 6) {
                         ProgressView(value: Double(gallery.indexed), total: Double(max(gallery.total, 1)))
@@ -357,10 +365,13 @@ struct LibraryManageView: View {
                         updated.photoIDs = updated.readablePhotoIDs + [image.id]
                         if updated.coverPinned != true { updated.coverImageID = image.id }
                         store.update(updated)
-                        if let text = try? await TextExtractor.imageText(data),
-                           !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            try await store.addNote(title: "Photo \(index + 1) · \(Date().formatted(date: .abbreviated, time: .shortened))", text: text, to: library)
-                        }
+                        let analysis = await Task.detached(priority: .utility) { PhotoLibraryIndex.analyze(data) }.value
+                        let description = "Recognized text:\n\(analysis.text)\nVisual labels: \(analysis.labels.joined(separator: ", "))"
+                        ImageStore.shared.setDescription(image.id, description)
+                        try await KnowledgeIndex.shared.add(id: library.collection + "/photo/" + image.id.uuidString,
+                            source: .library, collection: library.collection,
+                            title: "\(library.name) · Photo \(index + 1)", text: description)
+                        await store.refresh(library)
                     } catch {
                         failures.append("Photo \(index + 1): \(error.localizedDescription)")
                     }

@@ -10,6 +10,7 @@ enum Appearance {
     static let backdropKey = "conduit.appearance.backdrop"
     static let textSizeKey = "conduit.appearance.textSize"
     static let showReasoningKey = "conduit.appearance.showReasoning"
+    static let showActivityLabelKey = "conduit.appearance.showActivityLabel"
     static let startupEnabledKey = "conduit.appearance.startupEnabled"
     static let startupOrbKey = "conduit.appearance.startupOrb"
 
@@ -131,6 +132,8 @@ struct AppearanceSettingsView: View {
     @AppStorage(Appearance.backdropKey) private var backdrop = Appearance.Backdrop.aurora.rawValue
     @AppStorage(Appearance.textSizeKey) private var textSize = Appearance.TextSize.standard.rawValue
     @AppStorage(Appearance.showReasoningKey) private var showReasoning = true
+    @AppStorage(Appearance.showActivityLabelKey) private var showActivityLabel = true
+    @AppStorage("conduit.photos.downloadCloud") private var downloadCloudPhotos = false
     @AppStorage(Appearance.startupEnabledKey) private var startupEnabled = true
     @AppStorage(Appearance.startupOrbKey) private var startupOrbHex = AccentPalette.palette[0].hex
     @AppStorage(NavigationStyle.storageKey) private var navigationStyle = NavigationStyle.icons.rawValue
@@ -211,6 +214,7 @@ struct AppearanceSettingsView: View {
 
             Section {
                 Toggle("Show thinking", isOn: $showReasoning)
+                Toggle("Show activity below loading icon", isOn: $showActivityLabel)
             } header: {
                 Text("Reasoning")
             } footer: {
@@ -218,6 +222,11 @@ struct AppearanceSettingsView: View {
                     + "is hidden.")
             }
 
+            Section("Photos") {
+                Toggle("Download iCloud photos when reading", isOn: $downloadCloudPhotos)
+                Text("Allows missing photos to download from iCloud for indexing. Requires internet and may use mobile data. With this off, only photos already on this iPhone can be read.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
             Section {
                 Button("Reset appearance") {
                     theme = Appearance.Theme.system.rawValue
@@ -225,6 +234,7 @@ struct AppearanceSettingsView: View {
                     backdrop = Appearance.Backdrop.aurora.rawValue
                     textSize = Appearance.TextSize.standard.rawValue
                     showReasoning = true
+                    showActivityLabel = true
                     startupEnabled = true
                     startupOrbHex = AccentPalette.palette[0].hex
                 }

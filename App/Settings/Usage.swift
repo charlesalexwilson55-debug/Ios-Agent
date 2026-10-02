@@ -60,7 +60,11 @@ final class UsageStore {
 
     /// Most used first, by time spent generating.
     var ranked: [ModelUsage] {
-        usage.values.sorted { $0.seconds > $1.seconds }
+        usage.values.sorted {
+            if $0.seconds != $1.seconds { return $0.seconds > $1.seconds }
+            if $0.replies != $1.replies { return $0.replies > $1.replies }
+            return $0.model.localizedStandardCompare($1.model) == .orderedAscending
+        }
     }
 
     var totalSeconds: Double {

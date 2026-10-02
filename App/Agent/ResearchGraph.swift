@@ -148,6 +148,18 @@ struct ResearchGraph: Codable, Sendable {
         }
     }
 
+    /// Model formatting must not erase readable, attributable page evidence.
+    mutating func extractLiteral(sourceID: String, plan: ResearchPlan) {
+        guard let source = sources.first(where: { $0.id == sourceID }), plan.subject != nil else { return }
+        let quotes = plan.selectedStatements(source.text).filter { !ResearchSourcePolicy.isSensitive($0) }
+        let rows: [[String: String]] = quotes.map {
+            ["predicate": "statement", "object": $0, "evidence_quote": $0]
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: rows),
+              let output = String(data: data, encoding: .utf8) else { return }
+        extract(output, sourceID: sourceID, plan: plan, selected: false)
+    }
+
     mutating func resolve(plan: ResearchPlan) {
         candidates = sources.map { source in
             let person = "person:" + source.id
@@ -227,6 +239,13 @@ struct ResearchGraph: Codable, Sendable {
         for clue in plan.clues where !seenClues.contains(clue) {
             queries.append(ResearchQuery(text: plan.anchor(clue + " professional profile"), purpose: "Check supplied detail: " + clue))
         }
+        if !claims.isEmpty {
+            let anchors = plan.clues.filter { seenClues.contains($0) }.joined(separator: " ")
+            for category in ["biography career", "education publications", "official profile"] {
+                queries.append(ResearchQuery(text: plan.anchor(anchors + " " + category),
+                    purpose: "Expand public professional information while keeping the same identity anchors"))
+            }
+        }
         return queries
     }
 
@@ -243,9 +262,11 @@ struct ResearchGraph: Codable, Sendable {
         var groups: [DisplayGroup] = []
         for candidate in candidates {
             let name = entities.first { $0.id == candidate.entityID }?.label ?? ""
-            let attributes = Set(claims.filter {
+            var attributes = Set(claims.filter {
                 $0.subjectID == candidate.entityID && ["role", "organisation", "location", "education"].contains($0.predicate)
             }.map { $0.objectID })
+            // Presentation groups do not assert identity; fallback quotes carry anchors too.
+            attributes.formUnion(candidate.anchors.map { "supplied detail:" + ResearchPlan.normalized($0) })
             if !name.isEmpty, let index = groups.indices.first(where: {
                 ResearchPlan.normalized(groups[$0].name) == ResearchPlan.normalized(name)
                     && !Set(groups[$0].attributes).isDisjoint(with: attributes)

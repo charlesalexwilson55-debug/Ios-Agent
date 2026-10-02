@@ -71,6 +71,7 @@ final class PhotoLibraryIndex {
             while isIndexing && !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(200))
             }
+            try Task.checkCancellation()
             return records.count
         }
 
@@ -82,7 +83,7 @@ final class PhotoLibraryIndex {
 
         var liveIDs = Set<String>()
         for position in 0..<fetch.count {
-            if Task.isCancelled { break }
+            try Task.checkCancellation()
             let asset = fetch.object(at: position)
             let id = asset.localIdentifier
             liveIDs.insert(id)
@@ -166,19 +167,40 @@ final class PhotoLibraryIndex {
 
     private static func thumbnailData(for asset: PHAsset, size: CGFloat = 1200) async -> Data? {
         await withCheckedContinuation { continuation in
+            let response = PhotoResponse(continuation)
             let options = PHImageRequestOptions()
             options.deliveryMode = .highQualityFormat
             options.resizeMode = .fast
-            options.isNetworkAccessAllowed = false
-            PHImageManager.default().requestImage(for: asset, targetSize: CGSize(width: size, height: size),
+            options.isNetworkAccessAllowed = UserDefaults.standard.bool(forKey: "conduit.photos.downloadCloud")
+            let manager = PHImageManager.default()
+            let request = manager.requestImage(for: asset, targetSize: CGSize(width: size, height: size),
                                                   contentMode: .aspectFit, options: options) { image, info in
                 if info?[PHImageResultIsDegradedKey] as? Bool == true { return }
-                continuation.resume(returning: image?.jpegData(compressionQuality: 0.78))
+                response.resolve(image?.jpegData(compressionQuality: 0.78))
+            }
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(30))
+                if response.resolve(nil) { manager.cancelImageRequest(request) }
             }
         }
     }
 
-    nonisolated private static func analyze(_ data: Data) -> (text: String, labels: [String]) {
+    /// PhotoKit may call back more than once or leave an iCloud request pending.
+    private final class PhotoResponse: @unchecked Sendable {
+        private let lock = NSLock()
+        private var continuation: CheckedContinuation<Data?, Never>?
+        init(_ continuation: CheckedContinuation<Data?, Never>) { self.continuation = continuation }
+        @discardableResult func resolve(_ data: Data?) -> Bool {
+            lock.lock()
+            let pending = continuation
+            continuation = nil
+            lock.unlock()
+            pending?.resume(returning: data)
+            return pending != nil
+        }
+    }
+
+    nonisolated static func analyze(_ data: Data) -> (text: String, labels: [String]) {
         let textRequest = VNRecognizeTextRequest()
         textRequest.recognitionLevel = .accurate
         textRequest.usesLanguageCorrection = true

@@ -13,8 +13,8 @@ struct StartupSplash: View {
     @State private var finaleStarted: Date?
     @State private var extraCrossings = 0
 
-    private let launchEnd = 0.72
-    private let crossingTime = 0.27
+    private let launchEnd = 0.42
+    private let crossingTime = 0.18
 
     var body: some View {
         GeometryReader { geometry in
@@ -22,16 +22,12 @@ struct StartupSplash: View {
                 LinearGradient(colors: [Color(white: 0.035), Color(white: 0.10), Color(white: 0.025)],
                                startPoint: .topLeading, endPoint: .bottomTrailing)
                     .ignoresSafeArea()
-                VStack(spacing: 25) {
+                VStack(spacing: 0) {
                     TimelineView(.periodic(from: .now, by: 1.0 / 30.0)) { context in
                         let state = sample(at: context.date)
-                        conduit(width: min(geometry.size.width * 0.72, 310), state: state)
+                        conduit(width: min(geometry.size.width * 0.52, 205), state: state)
                     }
-                    .frame(height: 118)
-                    Text("Conduit")
-                        .font(.system(size: 19, weight: .medium, design: .rounded))
-                        .tracking(5)
-                        .foregroundStyle(.white.opacity(0.88))
+                    .frame(height: 74)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -57,17 +53,15 @@ struct StartupSplash: View {
     private func sample(at date: Date) -> Frame {
         if reduceMotion { return Frame(position: 0.5) }
         guard let finaleStarted else {
-            let phase = date.timeIntervalSince(appeared).truncatingRemainder(dividingBy: 1.8)
-            let across = phase < 0.9 ? phase / 0.9 : (1.8 - phase) / 0.9
-            return Frame(position: 1 - 0.9 * across)
+            return Frame(position: ConduitMotion.position(at: date.timeIntervalSince(appeared)))
         }
         let t = max(0, date.timeIntervalSince(finaleStarted))
-        if t < 0.37 {
-            let progress = t / 0.37
+        if t < 0.2 {
+            let progress = t / 0.2
             return Frame(position: 0.8 + 0.2 * progress, stretch: progress)
         }
         if t < launchEnd {
-            let progress = (t - 0.37) / (launchEnd - 0.37)
+            let progress = (t - 0.2) / (launchEnd - 0.2)
             let fast = 1 - pow(1 - progress, 3)
             return Frame(position: 1 - 0.95 * fast, stretch: 1 - fast, trail: min(progress * 2, 1))
         }
@@ -79,12 +73,12 @@ struct StartupSplash: View {
             let position = step.isMultiple(of: 2) ? 0.05 + 0.9 * eased : 0.95 - 0.9 * eased
             return Frame(position: position, trail: 0.65)
         }
-        return Frame(position: 0.05, blast: min((t - impact) / 0.5, 1))
+        return Frame(position: 0.05, blast: min((t - impact) / 0.2, 1))
     }
 
     private func conduit(width: CGFloat, state: Frame) -> some View {
-        let height: CGFloat = 76
-        let orb: CGFloat = 24
+        let height: CGFloat = 48
+        let orb: CGFloat = 16
         let x: CGFloat = 20 + (width - 40 - orb) * CGFloat(state.position)
         return ZStack(alignment: .leading) {
             Capsule()
@@ -97,13 +91,13 @@ struct StartupSplash: View {
                 .overlay {
                     Capsule()
                         .fill(Color(white: 0.045))
-                        .padding(11)
+                        .padding(7)
                         .overlay {
-                            Capsule().strokeBorder(.white.opacity(0.28), lineWidth: 1).padding(11)
+                            Capsule().strokeBorder(.white.opacity(0.28), lineWidth: 1).padding(7)
                         }
                 }
                 .frame(width: width, height: height)
-                .scaleEffect(x: CGFloat(1 + 0.17 * state.stretch), anchor: .leading)
+                .scaleEffect(x: CGFloat(1 + 0.06 * state.stretch), anchor: .center)
                 .shadow(color: .white.opacity(0.2), radius: 20)
 
             if state.trail > 0 && state.blast == 0 {
@@ -136,7 +130,7 @@ struct StartupSplash: View {
                 }
             }
         }
-        .frame(width: width * 1.18, height: height, alignment: .leading)
+        .frame(width: width, height: height, alignment: .leading)
         .shadow(color: color.opacity(state.blast > 0 ? 0.7 * (1 - state.blast) : 0.18),
                 radius: state.blast > 0 ? 38 : 12)
     }
@@ -145,7 +139,7 @@ struct StartupSplash: View {
         guard finaleStarted == nil else { return }
         extraCrossings = Int.random(in: 0..<10) == 0 ? 4 : 0
         finaleStarted = Date()
-        let duration = reduceMotion ? 0.2 : launchEnd + Double(extraCrossings) * crossingTime + 0.52
+        let duration = reduceMotion ? 0.15 : launchEnd + Double(extraCrossings) * crossingTime + 0.22
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
             onComplete()

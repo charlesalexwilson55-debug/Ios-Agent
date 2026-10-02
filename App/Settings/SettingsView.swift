@@ -117,7 +117,15 @@ struct SettingsView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Edit profile")
-            ModelBadge(model: usage.ranked.first?.model, held: $badgeHeld)
+            ModelBadge(usage: usage.ranked.first, held: $badgeHeld)
+            if !usage.ranked.isEmpty {
+                VStack(spacing: 5) {
+                    ForEach(Array(usage.ranked.prefix(3))) { item in
+                        Text("\(item.model) · \(item.replies) generations · \(Int(item.seconds / max(usage.totalSeconds, 1) * 100))% of AI time")
+                            .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 20)
@@ -160,22 +168,20 @@ struct SettingsView: View {
 }
 
 private struct ModelBadge: View {
-    let model: String?
+    let usage: ModelUsage?
     @Binding var held: Bool
     @State private var tiltX = 0.0
     @State private var tiltY = 0.0
 
     private var tier: (name: String, color: Color) {
-        let name = (model ?? "").lowercased()
-        if name.contains("9b") || name.contains("8b") { return ("Advanced", .purple) }
-        if name.contains("4b") || name.contains("3b") { return ("Versatile", .blue) }
-        return ("Local model", .teal)
+        let level = UsageRank.level(replies: usage?.replies ?? 0)
+        return ("\(UsageRank.names[level]) · Rank \(level + 1)/15", Color(hue: Double(level) / 18 + 0.08, saturation: 0.65, brightness: 0.95))
     }
 
     var body: some View {
         HStack(spacing: 5) {
             Image(systemName: "sparkle")
-            Text(model.map { "\(tier.name) · \($0)" } ?? "No model used yet")
+            Text(usage.map { "\(tier.name) · \($0.model)" } ?? "No model used yet")
                 .lineLimit(1)
         }
         .font(.caption.weight(.semibold))
@@ -204,7 +210,7 @@ private struct ModelBadge: View {
                 }
             })
         .onDisappear { held = false }
-        .accessibilityLabel(model.map { "Most used model: \($0), \(tier.name) tier" } ?? "No model usage yet")
+        .accessibilityLabel(usage.map { "Most used model: \($0.model), \(tier.name), \($0.replies) recorded generations" } ?? "No model usage yet")
     }
 }
 

@@ -33,7 +33,7 @@ struct GlassCommandBar: View {
             TextField(isModelLoaded ? "Ask anything, or tell Conduit what to do" : "Choose a model from the menu", text: $draft, axis: .vertical)
                 .font(.system(size: 17))
                 .lineLimit(1...6)
-                .padding(.vertical, 11)
+                .padding(.vertical, 10)
                 .focused($focused)
                 .submitLabel(.send)
                 .onSubmit { send() }
@@ -52,8 +52,8 @@ struct GlassCommandBar: View {
             .disabled(!isWorking && !canSend)
             .accessibilityLabel(isWorking ? "Stop" : "Send")
         }
-        .padding(6)
-        .frame(maxWidth: .infinity, minHeight: 56)
+        .padding(5)
+        .frame(maxWidth: .infinity, minHeight: 54)
         .glassEffect(.regular, in: .rect(cornerRadius: 28))
         .overlay(alignment: .bottomLeading) {
             if menuOpen {
