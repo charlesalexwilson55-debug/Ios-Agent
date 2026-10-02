@@ -86,6 +86,12 @@ public final class Edge0ChatEngine35B: @unchecked Sendable {
         guard maxTokens > 0 else { throw Edge035BFailure.invalid("maxTokens must be positive") }
 
         let continuing = renderedPrompt == nil && !processed.isEmpty
+        // Conduit supplies full chat/tool history. Cache its fixed system/tools prefix
+        // too, so later tool steps do not prefill the same instructions from flash.
+        let prefixTokens: [Int32]
+        if let renderedPrompt, let opening = renderedPrompt.range(of: ChatTemplate.userOpening) {
+            prefixTokens = tokenizer.encode(String(renderedPrompt[..<opening.upperBound]))
+        } else { prefixTokens = systemPrefix }
         let ids: [Int32]
         if let renderedPrompt {
             reset()
@@ -126,8 +132,8 @@ public final class Edge0ChatEngine35B: @unchecked Sendable {
         model.profile.reset()
         // An older cache may contain only the system message. Restore it, compute just
         // the newly-added user opening, then atomically replace it with the longer cache.
-        let capturePoint = !continuing && start < systemPrefix.count
-            && ids.starts(with: systemPrefix) ? systemPrefix.count : nil
+        let capturePoint = !continuing && start < prefixTokens.count
+            && ids.starts(with: prefixTokens) ? prefixTokens.count : nil
         var index = start
         while index < ids.count {
             guard shouldContinue() else { return try cancelled() }
@@ -144,7 +150,7 @@ public final class Edge0ChatEngine35B: @unchecked Sendable {
             index += size
 
             if let capturePoint, index == capturePoint {
-                let captured = PrefixCache(tokens: systemPrefix, state: state.snapshot())
+                let captured = PrefixCache(tokens: prefixTokens, state: state.snapshot())
                 cachedPrefix = captured
                 captured.write(to: Self.prefixURL(
                     directory: directory, fingerprint: model.configuration.fingerprint))
