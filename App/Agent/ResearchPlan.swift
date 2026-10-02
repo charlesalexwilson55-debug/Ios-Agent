@@ -23,6 +23,9 @@ struct ResearchPlan: Codable, Sendable {
     private static let medical = ["doctor", "physician", "surgeon", "gp", "dentist", "cardiologist", "psychiatrist"]
     private static let roles = Set(medical + ["dr", "professor", "researcher", "scientist", "lawyer", "solicitor", "architect", "engineer", "software", "teacher", "author", "nurse", "a", "an", "the"])
     private var isMedical: Bool { Self.words(request).contains { Self.medical.contains($0) } }
+    var sports: [String] {
+        Self.words(request).filter { ["soccer", "football", "basketball", "netball", "cricket", "rugby", "tennis", "hockey", "volleyball"].contains($0) }
+    }
 
     var clues: [String] {
         identityClues.filter { key in
@@ -37,8 +40,20 @@ struct ResearchPlan: Codable, Sendable {
         guard let subject else { return [request] }
         let name = "\"\(subject)\""
         let context = keywords.filter { !Self.contains($0, in: subject) }.joined(separator: " ")
-        var result = ["\(name) \(clues.joined(separator: " "))", name]
-        if isMedical {
+        var result = ["\(name) \(context)", "\(name) \(clues.joined(separator: " "))", name]
+        if !sports.isEmpty {
+            let sport = sports.joined(separator: " ")
+            let location = clues.joined(separator: " ")
+            result += ["\(name) \(sport) player profile \(location)",
+                       "\(name) \(sport) club roster \(location)",
+                       "\(name) \(sport) team results \(location)",
+                       "\(name) \(sport) league statistics \(location)",
+                       "\(name) \(sport) match report \(location)",
+                       "\(name) \(sport) association registration \(location)"]
+            if sports.contains("soccer") {
+                result += ["\(name) football player \(location)", "\(name) football club squad \(location)"]
+            }
+        } else if isMedical {
             // Profession terms guide discovery without guessing the person's country
             // or excluding small practices on ordinary commercial domains.
             result += ["\(name) doctor hospital clinic \(clues.joined(separator: " "))",
@@ -58,6 +73,9 @@ struct ResearchPlan: Codable, Sendable {
                 }
             }
         }
+        // Discovery recovery is grounded in the original request, even when no
+        // page has yielded evidence yet. Every variant preserves the full name.
+        result += ["\(name) \(context) official profile", "\(name) \(context) news article", "\(name) \(context) interview"]
         var seen = Set<String>()
         return result.map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { seen.insert(Self.normalized($0)).inserted }
@@ -145,11 +163,13 @@ struct ResearchPlan: Codable, Sendable {
         // Keep an official directory as a lower-priority lead when its snippet
         // omits the name, but reject partial-name attractions and unrelated pages.
         if subject != nil && !hasSubject(in: text) {
-            let directory = ["staff", "team", "directory", "practitioners", "faculty", "register"].contains { normalized.contains($0) }
-            return directory && !matchedClues(in: text).isEmpty ? 0 : -100
+            let directory = ["staff", "team", "directory", "practitioners", "faculty", "register", "roster", "squad", "players", "results"].contains { normalized.contains($0) }
+            let suppliedContext = !matchedClues(in: text).isEmpty || sports.contains { Self.contains($0, in: text) }
+            return directory && suppliedContext ? 0 : -100
         }
         var score = subject == nil ? 0 : (hasSubject(in: text) ? 20 : -5)
         score += matchedClues(in: text).count * 5
+        if !sports.isEmpty && sports.contains(where: { Self.contains($0, in: text) }) { score += 8 }
         if isMedical && ["hospital", "clinic", "practitioner", "physician", "surgeon", "medical"].contains(where: { normalized.contains($0) }) { score += 8 }
         if host.hasSuffix(".gov") || host.contains(".gov.") || host.hasSuffix(".edu") || host.contains(".edu.") { score += 3 }
         return score

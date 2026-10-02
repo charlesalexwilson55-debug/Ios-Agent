@@ -111,7 +111,8 @@ import Foundation
             state.pendingSources.append(.init(title: selection.title, url: selection.url, summary: selection.snippet,
                 published: nil, text: selection.sourceText, provider: "Selected profile"))
         }
-        state.skippedQueries = max(0, queries.count - state.budget.firstStepSearches)
+        // Remaining variants are revisited after extraction, not discarded.
+        state.skippedQueries = 0
         state.pendingQueries = queries.prefix(state.budget.firstStepSearches).map { ResearchQuery(text: $0, purpose: "Initial discovery") }
         state.stage = .searching
         activity.finish(step, detail: "\(state.pendingQueries.count) focused queries; identity is checked after reading")
@@ -159,8 +160,9 @@ import Foundation
                 updateSearch(record.id, status: "failed", error: error.localizedDescription)
                 state.limitations.append(error.localizedDescription)
                 activity.updateItem(item, subtitle: error.localizedDescription, status: .failed)
-                // Stop repeated charged requests after a provider/key/allowance failure.
-                providerStopped = true; break
+                // Credential/quota failures stop charged work. A timeout or
+                // temporary server failure must not erase the other queries.
+                if Self.isTerminalSearchFailure(error) { providerStopped = true; break }
             }
             try checkpoint()
         }
@@ -176,10 +178,23 @@ import Foundation
             if b.url == selectedURL { return false }
             return (rankingPlan?.score(title: a.title, summary: a.summary, url: a.url) ?? 0) > (rankingPlan?.score(title: b.title, summary: b.summary, url: b.url) ?? 0)
         }
-        let count = min(state.budget.pages - state.pages, state.round == 0 ? state.budget.firstStepPages : 6)
-        state.skippedPages += max(0, state.pendingSources.count - count)
-        state.pendingSources = Array(state.pendingSources.prefix(max(0, count)))
         state.stage = .extracting
+    }
+
+    private static func isTerminalSearchFailure(_ error: Error) -> Bool {
+        if let searchError = error as? WebSearch.SearchError {
+            switch searchError {
+            case .researchNeedsKey, .providerNeedsKey: return true
+            case .http(let status): return [400, 401, 402, 403, 429, 432, 433].contains(status)
+            case .providersFailed(let detail):
+                // The provider facade preserves error descriptions when both
+                // services fail. Do not hide credential or allowance errors.
+                let lower = detail.lowercased()
+                return ["key was rejected", "usage limit", "rate", "quota", "allowance", "401", "402", "403", "429", "432", "433"].contains { lower.contains($0) }
+            case .badResponse: return false
+            }
+        }
+        return false
     }
     private func updateSearch(_ id: String, status: String, provider: String = "", urls: [URL] = [], error: String? = nil) {
         guard let i = state.searchesLog.firstIndex(where: { $0.id == id }) else { return }
@@ -188,9 +203,11 @@ import Foundation
     }
 
     private func extractSources() async throws {
-        let step = activity.begin("Extracting \(state.pendingSources.count) selected sources", detail: "Quotations and relationships, one local generation at a time", cancellable: true)
+        let batchLimit = max(0, min(state.budget.pages - state.pages, state.round == 0 ? state.budget.firstStepPages : 6))
+        let startingPages = state.pages
+        let step = activity.begin("Extracting \(min(batchLimit, state.pendingSources.count)) selected sources", detail: "Quotations and relationships, one local generation at a time; unread leads stay queued", cancellable: true)
         defer { activity.finish(step) }
-        while !state.pendingSources.isEmpty && !activity.isStopped(step) && limitReason == nil {
+        while !state.pendingSources.isEmpty && state.pages - startingPages < batchLimit && !activity.isStopped(step) && limitReason == nil {
             try Task.checkCancellation()
             var page = state.pendingSources[0]
             let item = activity.addItem(step, page.title, url: page.url, cancellable: true)
@@ -301,16 +318,17 @@ import Foundation
         state.previousCorroborated = corroborated; state.previousUnresolved = unresolved
         state.round += 1
         var seen = Set(state.usedQueries)
-        let proposals = state.graph.gaps(plan: plan) + state.pendingQueries
+        let recovery = plan.queries.map { ResearchQuery(text: $0, purpose: "Try remaining name and supplied-context searches") }
+        let proposals = state.graph.gaps(plan: plan) + state.pendingQueries + recovery
         state.pendingQueries = Array(proposals.filter {
             !PrivateDetail.isPrivateSearch($0.text) && seen.insert(ResearchPlan.normalized($0.text)).inserted
         }.prefix(min(4, max(0, state.budget.searches - state.searches))))
         if providerStopped { state.stopReason = "The search provider was unavailable. Existing evidence has been preserved." }
         else if state.round >= state.budget.rounds { state.stopReason = "The research round budget was reached." }
-        else if state.pages >= state.budget.pages || state.searches >= state.budget.searches { state.stopReason = "The search/page budget was reached." }
-        else if state.stagnantRounds >= 2 { state.stopReason = "Two rounds added no new evidence or corroboration and resolved no identity differences." }
-        else if state.pendingQueries.isEmpty { state.stopReason = "No new evidence-grounded queries remain." }
-        state.stage = state.stopReason.isEmpty ? .searching : .report
+        else if state.pages >= state.budget.pages || (state.searches >= state.budget.searches && state.pendingSources.isEmpty) { state.stopReason = "The search/page budget was reached." }
+        else if state.pendingQueries.isEmpty && state.pendingSources.isEmpty { state.stopReason = "No unused name/context queries or unread source leads remain." }
+        if !state.stopReason.isEmpty { state.stage = .report }
+        else { state.stage = state.pendingQueries.isEmpty ? .extracting : .searching }
     }
 
     private func findings() -> ResearchEngine.Findings {

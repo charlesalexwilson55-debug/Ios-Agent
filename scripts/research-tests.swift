@@ -89,6 +89,18 @@ import Foundation
         precondition(topic.accepts(evidence: ["The model uses four-bit weights."], text: "The model uses four-bit weights."), "Explicit topic research must still produce source evidence")
         print("Research planning recovery regression tests passed")
 
+        let athlete = ResearchPlanner.make(request: "research Morgan Example soccer in Melbourne", reply: "")
+        precondition(athlete.subject == "Morgan Example", "A sport is context, not part of a name")
+        precondition(athlete.keywords.contains("soccer"))
+        precondition(athlete.queries.first?.contains("soccer") == true)
+        precondition(athlete.queries.contains { $0.contains("roster") })
+        precondition(athlete.queries.allSatisfy { $0.contains("\"Morgan Example\"") })
+        precondition(ResearchPlanner.requestName("Morgan Alex Example soccer") == "Morgan Alex Example")
+        precondition(ResearchPlanner.requestName("Jane Example scientist") == "Jane Example")
+        precondition(!athlete.hasSubject(in: "Morgan Track with Example Club"))
+        let sportOnly = ResearchPlanner.make(request: "Morgan Example soccer", reply: "")
+        precondition(sportOnly.subject == "Morgan Example" && sportOnly.clues.isEmpty)
+
         let profile = "  **NAME:** Jane Example\nLOCATION: Melbourne\nORGANISATION: Harbour Clinic\nKEYWORD: Jane Example\nKEYWORD: doctor\nKEYWORD: Melbourne\nKEYWORD: Harbour Clinic"
         let sentence = "Jane Example is a doctor at Harbour Clinic in Melbourne."
         let source = WebSearch.Result(title: "Jane Example doctor", url: URL(string: "https://harbour-clinic.example/team/jane")!, site: "harbour-clinic.example", summary: sentence, published: nil, rawContent: sentence + String(repeating: " Practice information.", count: 15))
@@ -163,6 +175,34 @@ import Foundation
         let unavailable = ResearchEngine(request: request, budget: .normal, ask: { _, _ in profile }, activity: reporter, search: { _ in throw WebSearch.SearchError.http(429) })
         let failed = try await unavailable.run()
         precondition(!failed.limitations.isEmpty && failed.facts.isEmpty, "Retain provider failure, not person-not-found")
+        precondition(failed.searches == 1, "Do not repeat charged requests after a quota failure")
+
+        var attempts = 0
+        let sportsSentence = "Morgan Example plays soccer for Harbour United."
+        let sportsSource = WebSearch.Result(title: "Morgan Example player profile", url: URL(string: "https://harbour-united.example/players/morgan")!, site: "harbour-united.example", summary: sportsSentence, published: nil, rawContent: sportsSentence)
+        let persistent = ResearchEngine(request: "Morgan Example soccer", budget: .normal, ask: { _, _ in "[]" }, activity: reporter, search: { query in
+            attempts += 1
+            precondition(query.contains("\"Morgan Example\""))
+            if attempts == 1 { throw URLError(.timedOut) }
+            // Simulate a provider finding the profile only during recovery.
+            return WebSearch.Response(provider: .tavily, results: attempts > ResearchEngine.Budget.normal.firstStepSearches ? [sportsSource] : [])
+        })
+        let sportsFindings = try await persistent.run()
+        precondition(sportsFindings.searches > ResearchEngine.Budget.normal.firstStepSearches, "Empty first round must try remaining relevant queries")
+        precondition(sportsFindings.facts.contains { $0.text.contains("Harbour United") }, "Read sports profiles and retain literal evidence despite broken model extraction")
+        precondition(sportsFindings.limitations.contains { $0.contains("timed out") })
+
+        var backlogBudget = ResearchEngine.Budget.normal
+        backlogBudget.firstStepPages = 1
+        var backlogRun = ResearchRun(request: request, budget: backlogBudget)
+        backlogRun.plan = plan; backlogRun.stage = .searching
+        backlogRun.pendingSources = (0..<4).map { index in
+            .init(title: source.title, url: URL(string: "https://publisher\(index).example/jane")!, summary: sentence, published: nil, text: sentence, provider: "fixture")
+        }
+        let backlog = ResearchEngine(request: request, budget: backlogBudget, ask: { _, _ in "[]" }, activity: reporter,
+            search: { _ in WebSearch.Response(provider: .tavily, results: []) }, resume: backlogRun)
+        let backlogFindings = try await backlog.run()
+        precondition(backlogFindings.run?.pages == 4, "Unread sources must survive a per-round page limit")
         var cappedBudget = ResearchEngine.Budget.normal
         cappedBudget.rounds = 1
         let capped = ResearchEngine(request: request, budget: cappedBudget, ask: { system, _ in

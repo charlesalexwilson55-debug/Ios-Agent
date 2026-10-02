@@ -3,6 +3,9 @@ import Foundation
 /// Model planning is an optional enhancement. The user's request remains the
 /// source of truth and remains searchable when structured generation fails.
 enum ResearchPlanner {
+    // Context terms end an unquoted name, but are retained as query keywords.
+    // Do not shorten arbitrary three- or four-part names to their first two words.
+    static let contextTerms: Set<String> = ["soccer", "football", "basketball", "netball", "cricket", "rugby", "tennis", "hockey", "volleyball", "athlete", "player", "doctor", "physician", "surgeon", "dentist", "professor", "researcher", "scientist", "lawyer", "solicitor", "architect", "engineer", "teacher", "author", "nurse"]
     static func make(request: String, reply: String) -> ResearchPlan {
         var fields: [String: [String]] = [:]
         func add(_ label: String, _ value: String) {
@@ -45,8 +48,11 @@ enum ResearchPlanner {
         let name = explicitTopic ? nil : (fallbackName ?? explicitName)
         let clues = values(["location", "locations", "city", "town", "employer", "organisation", "organization", "company", "institution"])
             + requestClues(request)
+        let contextKeywords = ResearchPlan.words(request).filter { term in
+            contextTerms.contains(term) && !(name.map { ResearchPlan.contains(term, in: $0) } ?? false)
+        }
         let keywords = values(["keyword", "keywords", "occupation", "profession", "role"])
-            + (name.map { [$0] } ?? []) + clues
+            + (name.map { [$0] } ?? []) + clues + contextKeywords
         // NONE is not permission to relax person matching. Unknown subject stays
         // discovery-only, using the complete request, until the user picks a page.
         var seen = Set<String>()
@@ -70,7 +76,9 @@ enum ResearchPlanner {
 
     private static func cleanName(_ value: String) -> String? {
         let untitled = value.replacingOccurrences(of: #"(?i)^(?:dr\.?|doctor|prof\.?|professor)\s+"#, with: "", options: .regularExpression)
-        let trimmed = untitled.replacingOccurrences(of: #"(?i)\s+(?:who|aged|age|is|was|works|working|from|in|at|based|the|a|an)\b.*$"#,
+        let context = contextTerms.sorted().joined(separator: "|")
+        let withoutContext = untitled.replacingOccurrences(of: "(?i)\\s+(?:" + context + ")\\b.*$", with: "", options: .regularExpression)
+        let trimmed = withoutContext.replacingOccurrences(of: #"(?i)\s+(?:who|aged|age|is|was|works|working|from|in|at|based|the|a|an)\b.*$"#,
                                                   with: "", options: .regularExpression)
             .components(separatedBy: CharacterSet(charactersIn: ",;\n")).first ?? value
         let name = trimmed.trimmingCharacters(in: .whitespacesAndNewlines)

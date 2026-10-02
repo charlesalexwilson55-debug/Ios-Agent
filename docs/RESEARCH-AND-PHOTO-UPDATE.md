@@ -7,6 +7,16 @@ defaults to advanced discovery; Settings > Web Searching offers a standard mode.
 Exa and Tavily remain the full-web providers. Missing credentials produce an
 explicit configuration error, never an encyclopedia-only substitute.
 
+Sport and profession suffixes are now separated from the person's name. A request
+such as "Morgan Example soccer" searches for "Morgan Example" with soccer context,
+then tries player profiles, club rosters, team results, league statistics and match
+reports. Compound names remain intact. Public roster directories can be read even
+when their search snippet omits the name; the actual page must contain the name.
+Empty first-round results trigger unused request-grounded discovery variants.
+Unread pages remain queued across rounds. Temporary provider failures continue
+with other queries; credential and quota failures stop with an explicit reason.
+All searches remain bounded by the existing search, page, round and time budgets.
+
 Sources are read before identity matching. Literal attributable source statements
 survive malformed model extraction. A name alone remains a possible profile;
 independent sources with multiple supplied anchors provide stronger provisional
