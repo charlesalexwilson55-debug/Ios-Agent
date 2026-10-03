@@ -658,6 +658,7 @@ final class AgentSession {
         }
         researchOriginalModel = await runner.configuration()
         unavailableResearchModels = []
+        let researchRunner = runner
 
         let engine = ResearchEngine(
             request: request,
@@ -667,7 +668,15 @@ final class AgentSession {
                 return try await self.ask(system: system, user: user)
             },
             activity: reporter,
+            search: { query in
+                await researchRunner.suspend()
+                return try await WebSearch.research(query)
+            },
             selection: selection?.candidate,
+            read: { url in
+                await researchRunner.suspend()
+                return try await PageReader.read(url).text
+            },
             extract: { try await WebSearch.extract($0) },
             store: store,
             resume: resume
@@ -965,6 +974,9 @@ final class AgentSession {
         let label = registry.spec(named: name)?.name ?? name
         transcript.append(TranscriptEntry(kind: .tool, text: "Running \(label)…"))
 
+        if name == "web_search" || name == "read_page" {
+            await runner.suspend()
+        }
         let outcome = await registry.run(name, arguments: call.arguments)
 
         if transcript.indices.contains(index) {
