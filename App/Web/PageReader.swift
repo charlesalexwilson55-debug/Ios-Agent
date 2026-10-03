@@ -20,6 +20,7 @@ final class PageReader: NSObject {
     struct Link {
         let title: String
         let url: URL
+        var summary: String = ""
     }
 
     enum ReadError: LocalizedError {
@@ -51,7 +52,7 @@ final class PageReader: NSObject {
                           URLQueryItem(name: "num", value: "10")]
         let page = try await PageReader().load(url.url!, search: true)
         return page.links.map { link in
-            WebSearch.Result(title: link.title, url: link.url, site: link.url.host ?? "", summary: "",
+            WebSearch.Result(title: link.title, url: link.url, site: link.url.host ?? "", summary: link.summary,
                              published: nil, provider: .browser)
         }
     }
@@ -125,7 +126,8 @@ final class PageReader: NSObject {
         let links = (object["links"] as? [[String: String]] ?? []).compactMap { item -> Link? in
             guard let raw = item["url"], let url = URL(string: raw),
                   ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil else { return nil }
-            return Link(title: String((item["title"] ?? raw).prefix(120)), url: url)
+            return Link(title: String((item["title"] ?? raw).prefix(240)), url: url,
+                        summary: String((item["summary"] ?? "").prefix(1200)))
         }
         let boundedLinks = Array(links.prefix(20))
         if Self.pendingLinks.count >= 12 { Self.pendingLinks.removeAll() }
@@ -206,7 +208,21 @@ final class PageReader: NSObject {
             if (!/^https?:$/.test(target.protocol) || /(^|\.)(google\.[a-z.]+|googleusercontent\.com|gstatic\.com)$/i.test(target.hostname)) continue;
             const title = (heading.innerText || heading.textContent || '').replace(/\s+/g, ' ').trim();
             if (!title || seen.has(target.href)) continue;
-            seen.add(target.href); links.push({title, url: target.href});
+            // A headline often omits the searched name, while the snippet
+            // includes an attributable photo caption. Keep one result's text,
+            // never an ancestor containing multiple result headings.
+            let summary = '';
+            let node = heading.parentElement;
+            for (let depth = 0; node && depth < 6; depth++, node = node.parentElement) {
+              const headings = node.querySelectorAll ? node.querySelectorAll('h3').length : 1;
+              if (headings > 1) break;
+              const content = (node.innerText || node.textContent || '').replace(/\s+/g, ' ').trim();
+              if (content.length > 2500) break;
+              if (content.length > title.length + 10) summary = content.replace(title, '').trim().slice(0, 1200);
+            }
+            const link = {title, url: target.href};
+            if (summary) link.summary = summary;
+            seen.add(target.href); links.push(link);
             if (links.length >= 10) break;
           }
           return JSON.stringify({title: document.title || '', url: location.href,

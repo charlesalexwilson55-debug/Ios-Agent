@@ -15,6 +15,18 @@ private actor ResearchAttemptCounter {
         precondition(queries.contains { $0.contains("hospital") || $0.contains("clinic") }, "Search relevant professional sources")
         precondition(!queries.contains("doctor"), "Do not search unrelated keywords alone")
         precondition(!plan.hasSubject(in: "Jane Examples is a doctor"), "Name boundary must match")
+        let captionPlan = ResearchPlanner.make(request: "Morgan Example, Harbour NSW, soccer", reply: "")
+        let captionURL = URL(string: "https://news.example/harbour-soccer-teams")!
+        precondition(captionPlan.score(title: "Harbour United launches three soccer teams", summary: "", url: captionURL) >= 0,
+            "Read a relevant title-only article before rejecting a name that occurs in its caption")
+        let captionText = "Morgan Example practises with Harbour United. All photos supplied.\nThe club announced three new soccer teams in Harbour."
+        let captionEngine = ResearchEngine(request: captionPlan.request, budget: .normal, ask: { _, _ in "[]" }, activity: ActivityReporter { _ in },
+            search: { _ in .init(provider: .browser, results: [.init(title: "Harbour United launches three soccer teams", url: captionURL, site: "news.example", summary: "", published: nil)]) },
+            read: { _ in captionText })
+        let captionFindings = try await captionEngine.run()
+        precondition(captionFindings.candidates.contains { $0.url == captionURL }, "Caption source survives title-only discovery")
+        precondition(captionFindings.facts.contains { $0.text.contains("Morgan Example practises") }, "Retain literal caption evidence even when model extraction fails")
+        precondition(!ResearchPresentation.closing(captionFindings, selected: false).contains("Identity remains provisional"))
         precondition(plan.hasSubject(in: "Dr Jane A. Example, Melbourne"), "Allow a middle initial")
         precondition(!plan.accepts(evidence: ["Jane Example is a doctor in Melbourne."], text: "John Example is a doctor in Melbourne."), "Invented evidence must fail")
         precondition(!plan.accepts(evidence: ["Jane Example is a doctor."], text: "Jane Example is a doctor."), "A common profession alone must not establish identity")
@@ -209,6 +221,8 @@ private actor ResearchAttemptCounter {
         let unavailable = ResearchEngine(request: request, budget: .normal, ask: { _, _ in profile }, activity: reporter, search: { _ in throw WebSearch.SearchError.http(429) })
         let failed = try await unavailable.run()
         precondition(!failed.limitations.isEmpty && failed.facts.isEmpty, "Retain provider failure, not person-not-found")
+        precondition(ResearchPresentation.empty(failed, hasCandidates: false).contains("That doesn't mean there are no relevant results"))
+        precondition(!ResearchPresentation.empty(failed, hasCandidates: false).contains("separate groups"))
         precondition(failed.searches == 1, "Do not repeat charged requests after a quota failure")
 
         let attempts = ResearchAttemptCounter()

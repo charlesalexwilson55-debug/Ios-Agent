@@ -30,7 +30,7 @@ article.innerText = 'x'.repeat(25000);
 assert.equal(JSON.parse(vm.runInNewContext(script, { document, location: { href: page.url } })).text.length, 20000);
 console.log('Public-page extraction, navigable links, deduplication and text bounds passed');
 const searchScript = source.match(/private static let searchExtractor = #"""([\s\S]*?)"""#/)[1];
-const heading = (title, href) => ({innerText: title, closest: () => ({href})});
+const heading = (title, href, summary = '') => ({innerText: title, closest: () => ({href}), parentElement: {innerText: title + '\n' + summary, parentElement: null}});
 const searchDocument = {
   title: 'Search results',
   querySelectorAll: () => [
@@ -47,6 +47,9 @@ assert.deepEqual(search.links, [
   {title: 'Jane Example — clinic', url: 'https://clinic.example/jane'},
   {title: 'Publications', url: 'https://journal.example/jane'},
 ]);
+searchDocument.querySelectorAll = () => [heading('Harbour United launches soccer teams', 'https://news.example/soccer', 'Morgan Example practises with Harbour United.')];
+const captionResult = JSON.parse(vm.runInNewContext(searchScript, {document: searchDocument, location: {href: 'https://www.google.com/search'}, URL}));
+assert.match(captionResult.links[0].summary || '', /Morgan Example/);
 searchDocument.querySelectorAll = () => [];
 assert.equal(JSON.parse(vm.runInNewContext(searchScript, {document: searchDocument, location: {href: 'https://www.google.com/search'}, URL})).links.length, 0);
 console.log('Rendered search extraction, redirects, duplicate and non-web URL rejection passed');

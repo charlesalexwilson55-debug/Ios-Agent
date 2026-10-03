@@ -160,12 +160,17 @@ struct ResearchPlan: Codable, Sendable {
         guard ["https", "http"].contains(url.scheme?.lowercased() ?? ""), !host.isEmpty else { return -100 }
         if ["domain.com", "wix.com", "godaddy.com", "squarespace.com"].contains(host.replacingOccurrences(of: "www.", with: "")) && !hasSubject(in: text) { return -100 }
         if ["domain for sale", "buy this domain", "parked domain", "website builder", "access denied", "just a moment"].contains(where: { normalized.contains($0) }) && !hasSubject(in: text) { return -100 }
-        // Keep an official directory as a lower-priority lead when its snippet
-        // omits the name, but reject partial-name attractions and unrelated pages.
+        // Search metadata is a lead, not the source. Read title-only results
+        // before rejecting them: a person's name may occur only in a caption.
         if subject != nil && !hasSubject(in: text) {
             let directory = ["staff", "team", "directory", "practitioners", "faculty", "register", "roster", "squad", "players", "results"].contains { normalized.contains($0) }
             let suppliedContext = !matchedClues(in: text).isEmpty || sports.contains { Self.contains($0, in: text) }
-            return directory && suppliedContext ? 0 : -100
+            let terms = Set(keywords.flatMap(Self.words))
+                .subtracting(Set(Self.words(subject ?? "")))
+            let contextMatches = terms.intersection(Set(Self.words(text + " " + url.path))).count
+            let partialName = Self.words(subject ?? "").contains { Self.contains($0, in: text) }
+            let sparseMetadata = summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            return (directory && suppliedContext) || contextMatches >= 2 || (sparseMetadata && !partialName) ? 0 : -100
         }
         var score = subject == nil ? 0 : (hasSubject(in: text) ? 20 : -5)
         score += matchedClues(in: text).count * 5

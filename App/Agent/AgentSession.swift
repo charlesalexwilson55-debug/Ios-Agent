@@ -771,14 +771,7 @@ final class AgentSession {
         }
 
         guard !findings.facts.isEmpty else {
-            let reply = findings.limitations.isEmpty
-                ? (selection != nil
-                    ? "No reliable extract was available from the selected profile. Its source link is above so you can inspect the page. "
-                    : findings.candidates.isEmpty
-                    ? "The searches returned no readable, relevant profiles. "
-                    : "I found potential sources above. Choose ‘Research this profile’ to narrow the search. ")
-                    + findings.identitySummary
-                : "Research was incomplete: " + findings.limitations.joined(separator: " ")
+            let reply = ResearchPresentation.empty(findings, hasCandidates: !candidates.isEmpty)
             transcript.append(TranscriptEntry(kind: .assistant, text: reply))
             history.append(.assistant(reply))
             return
@@ -792,12 +785,7 @@ final class AgentSession {
             return run.graph.report(sourceIDs: allowed)
         }
             ?? findings.facts.map { "- \($0.text) [\($0.site)](\($0.url.absoluteString))" }.joined(separator: "\n")
-        replyText += "\n\n" + findings.identitySummary + "\n" + findings.stopReason
-        if findings.combinationsSkipped > 0 || findings.pagesSkipped > 0 {
-            replyText += "\nBudget omitted \(findings.combinationsSkipped) queries and \(findings.pagesSkipped) discovered pages."
-        }
-        if !findings.limitations.isEmpty { replyText += "\nSearch limitations: " + findings.limitations.joined(separator: " ") }
-        replyText += "\n\nSources, dates, relationships and search history are saved in Settings → Research Archive."
+        replyText += "\n\n" + ResearchPresentation.closing(findings, selected: selection != nil)
         reporter.finish(writing)
         transcript.append(TranscriptEntry(kind: .assistant, text: replyText))
         history.append(.assistant(replyText))

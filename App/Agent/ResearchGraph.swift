@@ -323,7 +323,7 @@ struct ResearchGraph: Codable, Sendable {
             guard let source = sources.first(where: { $0.id == candidate.sourceID }) else { continue }
             let items = claims.filter { $0.subjectID == candidate.entityID }
             guard !items.isEmpty else { continue }
-            paragraphs.append("**[\(source.title)](\(source.url.absoluteString))** — \(candidate.reason). Identity remains provisional.")
+            paragraphs.append("**[\(source.title)](\(source.url.absoluteString))**")
             var seenQuotes = Set<String>()
             for claim in items {
                 guard seenQuotes.insert(ResearchPlan.normalized(claim.text)).inserted else { continue }

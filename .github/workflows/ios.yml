@@ -77,7 +77,7 @@ jobs:
             artifacts/library-tests
             sources=(App/Agent/ResearchPlan.swift App/Agent/ResearchPlanner.swift App/Agent/ResearchCandidate.swift
               App/Agent/ResearchEngine.swift App/Agent/ResearchCoordinator.swift App/Agent/ResearchGraph.swift
-              App/Agent/ResearchRun.swift App/Agent/ResearchStore.swift App/Agent/ResearchClarification.swift App/Agent/Activity.swift
+              App/Agent/ResearchRun.swift App/Agent/ResearchStore.swift App/Agent/ResearchClarification.swift App/Agent/ResearchPresentation.swift App/Agent/Activity.swift
               App/Web/WebSearch.swift App/Web/BrowserSearch.swift scripts/research-test-support.swift)
             xcrun swiftc -swift-version 5 -parse-as-library "${sources[@]}" scripts/research-tests.swift -o artifacts/research-tests
             artifacts/research-tests

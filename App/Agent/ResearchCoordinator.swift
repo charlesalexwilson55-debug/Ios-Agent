@@ -220,7 +220,12 @@ import Foundation
                                let text = match.rawContent, text.count >= 20 { return text }
                         } catch { try Task.checkCancellation() }
                     }
-                    return try? await self.read(page.url)
+                    do { return try await self.read(page.url) }
+                    catch {
+                        try Task.checkCancellation()
+                        self.state.limitations.append("Could not read \(page.url.host ?? "source"): \(error.localizedDescription)")
+                        return nil
+                    }
                 }
                 try Task.checkCancellation()
                 if let outer = result, let text = outer, let plan = state.plan {
