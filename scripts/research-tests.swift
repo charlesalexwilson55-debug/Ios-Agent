@@ -110,6 +110,9 @@ private actor ResearchAttemptCounter {
         precondition(labelled.clues.contains("Melbourne"))
         precondition(labelled.keywords.contains("18") && labelled.keywords.contains("musician"))
         precondition(labelled.queries.first?.contains("18") == true, "Use supplied adult age as discovery context, not identity proof")
+        let titleFields = ResearchPlanner.make(request: "Name: Morgan Example Job title: musician City: Melbourne", reply: "")
+        precondition(titleFields.subject == "Morgan Example" && titleFields.clues.contains("Melbourne"))
+        precondition(titleFields.keywords.contains("musician"))
 
         let profile = "  **NAME:** Jane Example\nLOCATION: Melbourne\nORGANISATION: Harbour Clinic\nKEYWORD: Jane Example\nKEYWORD: doctor\nKEYWORD: Melbourne\nKEYWORD: Harbour Clinic"
         let sentence = "Jane Example is a doctor at Harbour Clinic in Melbourne."

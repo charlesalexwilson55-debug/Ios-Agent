@@ -65,7 +65,7 @@ enum ResearchPlanner {
     /// Conservative extraction from the request itself. It need not handle every
     /// natural-language form: unknown forms still produce discovery searches.
     static func requestName(_ request: String) -> String? {
-        for pattern in [#"(?i)\b(?:full name|name)\s*[:=]\s*([^,;\n]+?)(?=\s+(?:city|town|location|age|job|title|profession|employer|sport)\s*[:=]|[,;\n]|$)"#,
+        for pattern in [#"(?i)\b(?:full name|name)\s*[:=]\s*([^,;\n]+?)(?=\s+(?:city|town|location|age|job title|job|title|occupation|profession|role|employer|sport)\s*[:=]|[,;\n]|$)"#,
                         #"(?i)\b(?:full name|name|named|called)\s+(?:is\s+)?([^,;\n]+)"#,
                         #"[“\"]([^”\"]+)[”\"]"#] {
             if let captured = capture(pattern, in: request), let name = cleanName(captured) { return name }
@@ -92,7 +92,7 @@ enum ResearchPlanner {
 
     static func requestClues(_ request: String) -> [String] {
         let patterns = [
-            #"(?i)\b(?:city|town|location|employer|organisation|organization|company)\s*[:=]\s*([^,;\n]+?)(?=\s+(?:name|city|town|location|age|job|title|profession|employer|sport)\s*[:=]|[,;\n]|$)"#,
+            #"(?i)\b(?:city|town|location|employer|organisation|organization|company)\s*[:=]\s*([^,;\n]+?)(?=\s+(?:full name|name|city|town|location|age|job title|job|title|occupation|profession|role|employer|sport)\s*[:=]|[,;\n]|$)"#,
             #"(?i)\b(?:in|from|at|based in|works at|working at)\s+([^,;\n]+?)(?=\s+(?:at|in|who|aged|age|works|working)\b|[,;\n]|$)"#
         ]
         var seen = Set<String>()
@@ -118,7 +118,7 @@ enum ResearchPlanner {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty && $0.count <= 120 }
         let patterns = [
-            #"(?i)\b(?:job|job title|title|occupation|profession|role|sport|additional detail)\s*[:=]\s*([^,;\n]+?)(?=\s+(?:name|city|town|location|age|job|title|profession|employer|sport)\s*[:=]|[,;\n]|$)"#,
+            #"(?i)\b(?:job title|job|title|occupation|profession|role|sport|additional detail)\s*[:=]\s*([^,;\n]+?)(?=\s+(?:full name|name|city|town|location|age|job title|job|title|occupation|profession|role|employer|sport)\s*[:=]|[,;\n]|$)"#,
             #"(?i)\b(?:age[d]?\s*[:=]?\s*)(\d{1,3})\b"#,
             #"(?i)\b(\d{1,3})\s*(?:years? old|year[- ]old)\b"#
         ]
