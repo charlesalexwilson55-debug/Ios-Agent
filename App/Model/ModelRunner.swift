@@ -309,9 +309,14 @@ actor ModelRunner {
 
     /// Brings back a suspended chat model.
     func resume() async throws {
-        guard isSuspended, let lastLoad else { return }
-        try await load(directory: lastLoad.directory, displayName: lastLoad.name,
-                       adapterDirectory: lastLoad.adapter)
+        try await inferenceGate.acquire()
+        do {
+            if isSuspended, let lastLoad {
+                try await loadExclusive(directory: lastLoad.directory, displayName: lastLoad.name,
+                                        adapterDirectory: lastLoad.adapter)
+            }
+            await inferenceGate.release()
+        } catch { await inferenceGate.release(); throw error }
     }
 
     /// HTTP search needs little extra memory. A rendered page gets a larger

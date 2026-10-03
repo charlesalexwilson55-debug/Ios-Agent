@@ -18,7 +18,7 @@ enum ResearchTurnRouter {
         if lower.range(of: explicit, options: .regularExpression) != nil { return .research(text) }
         let correction = #"^(?:(?:actually|correction|no|nope)[,:]?\s+)?(?:(?:he|she|they|it|[\p{L}'’-]+(?:\s+[\p{L}'’-]+){0,4})\s+(?:is|isn't|is not|are|aren't|was|wasn't|lives in|works at|uses)\s+(?:(?:a|an|the)\s+)?(?:boy|girl|man|woman|male|female|he|she|they|not|from|based|called|named)\b|(?:he|she|they)\s+(?:lives in|works at)\b)"#
         if lower.range(of: correction, options: .regularExpression) != nil
-            || lower.hasPrefix("actually ") || lower.hasPrefix("correction:")
+            || lower.hasPrefix("actually ") || lower.hasPrefix("actually,") || lower.hasPrefix("correction:")
             || lower.hasPrefix("i meant ") || lower.hasPrefix("that's wrong") {
             return .correction
         }
