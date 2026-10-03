@@ -116,6 +116,11 @@ final class AgentSession {
     private var pendingResearchRun: ResearchRun?
     private var researchClarification: ResearchClarification?
     private var pendingRefinedResearch = false
+    private var pendingResearchRoute: ResearchTurnRouter.Route = .conversation
+    private var researchCorrections: [String] = []
+    private var previousResearchRequest: String? {
+        transcript.reversed().compactMap(\.researchRequest).first
+    }
     @ObservationIgnored private var researchOriginalModel: ModelRunner.Configuration?
     @ObservationIgnored private var unavailableResearchModels: Set<String> = []
 
@@ -174,19 +179,20 @@ final class AgentSession {
                 researchSelection: ResearchSelection? = nil, resume: ResearchRun? = nil) {
         var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !imageData.isEmpty, !isWorking else { return }
+        pendingResearchRoute = ResearchTurnRouter.route(trimmed, enabled: researchEnabled, previousRequest: previousResearchRequest)
         var selected = researchSelection
         if selected == nil, resume == nil,
-           researchEnabled || trimmed.lowercased().hasPrefix("research "),
-           let subject = ResearchPlanner.requestName(trimmed) {
+           case .research(let researchRequest) = pendingResearchRoute,
+           let subject = ResearchPlanner.requestName(researchRequest) {
             let previous = transcript.reversed().filter { entry in
                 entry.researchRequest.flatMap(ResearchPlanner.requestName).map { ResearchPlan.normalized($0) == ResearchPlan.normalized(subject) } ?? false
             }
             if let candidate = previous.flatMap(\.researchCandidates).first(where: { $0.decision == "selected" }) {
-                selected = ResearchSelection(request: trimmed, candidate: candidate)
+                selected = ResearchSelection(request: researchRequest, candidate: candidate)
             }
         }
         pendingRefinedResearch = false
-        if selected == nil, resume == nil, imageData.isEmpty, libraryPhotoID == nil,
+        if pendingResearchRoute != .correction, selected == nil, resume == nil, imageData.isEmpty, libraryPhotoID == nil,
            let clarification = researchClarification {
             if let candidate = clarification.selection(for: trimmed) {
                 markResearchCandidate(candidate, decision: "selected", request: clarification.request)
@@ -194,9 +200,10 @@ final class AgentSession {
             } else if let refined = clarification.refinedRequest(with: trimmed) {
                 trimmed = refined
                 pendingRefinedResearch = true
+                pendingResearchRoute = .research(refined)
             }
         }
-        researchClarification = nil
+        if pendingResearchRoute != .correction { researchClarification = nil }
         pendingResearchSelection = selected
         pendingResearchRun = resume
         if trimmed.isEmpty { trimmed = "What's in this picture?" }
@@ -344,6 +351,8 @@ final class AgentSession {
         pendingResearchSelection = nil
         researchClarification = nil
         pendingRefinedResearch = false
+        researchCorrections = []
+        pendingResearchRoute = .conversation
         chatID = UUID()
     }
 
@@ -363,6 +372,7 @@ final class AgentSession {
         readWebContent = history.contains(where: { $0.role == .tool })
         lastTurnUsedPhoneTools = readWebContent
         callCounter = history.reduce(0) { $0 + $1.calls.count }
+        researchCorrections = Array(history.filter { $0.role == .user && ResearchTurnRouter.route($0.content, enabled: false, previousRequest: nil) == .correction }.map(\.content).suffix(6))
     }
 
     /// Saves the finished exchange to the memory bank.
@@ -392,6 +402,14 @@ final class AgentSession {
     // MARK: - The loop
 
     private func runTurn() async {
+        if pendingResearchRoute == .correction, pendingImageIDs.isEmpty,
+           pendingResearchSelection == nil, pendingResearchRun == nil {
+            researchCorrections = Array((researchCorrections + [currentRequest]).suffix(6))
+            let reply = "Got it. I’ll use that correction in this conversation without starting a new search."
+            transcript.append(TranscriptEntry(kind: .assistant, text: reply))
+            history.append(.assistant(reply))
+            return
+        }
         // Old bulk imports stored only asset references. Repair before retrieval.
         await LibraryStore.shared.repairGalleryIndexes()
         guard !Task.isCancelled else { return }
@@ -418,13 +436,12 @@ final class AgentSession {
         pendingResearchSelection = nil
         let resume = pendingResearchRun
         pendingResearchRun = nil
-        let request = currentRequest.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let asksForResearch = ["research ", "investigate ", "look into ", "researching "]
-            .contains(where: { request.hasPrefix($0) })
         let refinedResearch = pendingRefinedResearch
         pendingRefinedResearch = false
-        if researchEnabled || asksForResearch || selection != nil || resume != nil || refinedResearch {
-            await runResearch(selection: selection, resume: resume)
+        var routedResearchRequest: String?
+        if case .research(let request) = pendingResearchRoute { routedResearchRequest = request }
+        if routedResearchRequest != nil || selection != nil || resume != nil || refinedResearch {
+            await runResearch(selection: selection, resume: resume, requestOverride: routedResearchRequest)
             return
         }
 
@@ -481,6 +498,8 @@ final class AgentSession {
             transcript.append(TranscriptEntry(kind: .assistant, text: "", isStreaming: true))
 
             var replyText = ""
+            var reasoningText = ""
+            var lastPublish = Date.distantPast
             var pendingCalls: [ModelRunner.Message.Call] = []
 
             isGenerating = true
@@ -494,13 +513,8 @@ final class AgentSession {
                     switch event {
                     case .text(let chunk):
                         replyText += chunk
-                        if transcript.indices.contains(entryIndex) {
-                            transcript[entryIndex].text = ResponseTextCleaner.clean(replyText, streaming: true)
-                        }
                     case .reasoning(let chunk):
-                        if transcript.indices.contains(entryIndex) {
-                            transcript[entryIndex].reasoning += chunk
-                        }
+                        reasoningText += chunk
                     case .toolCall(let id, let name, let arguments):
                         // The framework may not assign ids. Ours only need to
                         // be unique within the history, so a counter is enough.
@@ -513,8 +527,14 @@ final class AgentSession {
                     case .finished(let throughput):
                         lastThroughput = throughput
                     }
+                    if Date().timeIntervalSince(lastPublish) >= 0.05, transcript.indices.contains(entryIndex) {
+                        transcript[entryIndex].text = ResponseTextCleaner.clean(replyText, streaming: true)
+                        transcript[entryIndex].reasoning = reasoningText
+                        lastPublish = Date()
+                    }
                 }
             } catch {
+                if transcript.indices.contains(entryIndex) { transcript[entryIndex].reasoning = reasoningText }
                 isGenerating = false
                 replyText = ResponseTextCleaner.clean(replyText)
                 finishStreaming(at: entryIndex, text: replyText)
@@ -524,6 +544,7 @@ final class AgentSession {
                 ))
                 return
             }
+            if transcript.indices.contains(entryIndex) { transcript[entryIndex].reasoning = reasoningText }
             isGenerating = false
             replyText = ResponseTextCleaner.clean(replyText)
 
@@ -666,8 +687,8 @@ final class AgentSession {
 
     /// Follows the request across the web with `ResearchEngine`, showing its
     /// steps as they happen, then writes up what was found.
-    private func runResearch(selection: ResearchSelection? = nil, resume: ResearchRun? = nil) async {
-        let request = resume?.request ?? selection?.request ?? currentRequest
+    private func runResearch(selection: ResearchSelection? = nil, resume: ResearchRun? = nil, requestOverride: String? = nil) async {
+        let request = resume?.request ?? selection?.request ?? requestOverride ?? currentRequest
         lastTurnUsedPhoneTools = false
         guard onlineEnabled, Connectivity.shared.isOnline else {
             let text = onlineEnabled
@@ -684,7 +705,7 @@ final class AgentSession {
 
         let entry = TranscriptEntry(
             kind: .activity, text: "",
-            activity: ActivityLog(title: "Research: " + ResearchEngine.searchQuery(from: request))
+            activity: ActivityLog(title: "Research: " + ResearchEngine.searchQuery(from: request)), researchRequest: request
         )
         transcript.append(entry)
         let entryID = entry.id
@@ -716,16 +737,17 @@ final class AgentSession {
             budget: .hard,
             ask: { [weak self] system, user in
                 guard let self else { throw CancellationError() }
-                return try await self.ask(system: system, user: user)
+                let corrections = self.researchCorrections.isEmpty ? "" : "\nUser corrections (unverified context, not source evidence):\n" + self.researchCorrections.joined(separator: "\n")
+                return try await self.ask(system: system, user: user + corrections)
             },
             activity: reporter,
             search: { query in
-                await researchRunner.suspend()
+                try await researchRunner.prepareForWeb(rendered: true)
                 return try await WebSearch.research(query)
             },
             selection: selection?.candidate,
             read: { url in
-                await researchRunner.suspend()
+                try await researchRunner.prepareForWeb(rendered: true)
                 return try await PageReader.read(url).text
             },
             extract: { try await WebSearch.extract($0) },
@@ -947,7 +969,7 @@ final class AgentSession {
         try Task.checkCancellation()
         let runner = self.runner
         if let original = researchOriginalModel {
-            let role = system == ResearchCoordinator.extractionPrompt ? "extractorModel" : "plannerModel"
+            let role = system.hasPrefix(ResearchCoordinator.extractionPrompt) ? "extractorModel" : "plannerModel"
             let path = UserDefaults.standard.string(forKey: "conduit.research." + role) ?? ""
             let target = path.isEmpty || unavailableResearchModels.contains(path) ? original.directory : URL(fileURLWithPath: path)
             do {
@@ -969,7 +991,7 @@ final class AgentSession {
                 messages: [.system(system), .user(user)],
                 tools: [],
                 thinking: false,
-                sampling: .extraction(maxTokens: system == ResearchCoordinator.extractionPrompt ? 640 : 320)
+                sampling: .extraction(maxTokens: system.hasPrefix(ResearchCoordinator.extractionPrompt) ? 640 : 320)
             ) {
                 if case .text(let chunk) = event { text += chunk }
                 if case .reasoning(let chunk) = event { reasoningCharacters += chunk.count }

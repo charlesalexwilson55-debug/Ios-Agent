@@ -99,6 +99,7 @@ import Foundation
 
     nonisolated static let keywordPrompt = """
     Pick out the search keywords from the user's research request.
+    Start with TYPE: person or TYPE: topic. For a topic add TOPIC: its words copied exactly from the request.
     If this is a person, start with NAME: their full name copied exactly from the request.
     Otherwise start with NAME: none. Never invent or change a name.
     Copy any supplied city/region on a LOCATION: line, and employer/institution on an ORGANISATION: line.

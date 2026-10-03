@@ -58,6 +58,7 @@ actor ModelRunner {
     }
 
     private var container: ModelContainer?
+    private let inferenceGate = InferenceGate()
     private var edgeSmall: Edge0ChatEngine?
     private var edgeLarge: Edge0ChatEngine35B?
     private var loadedDirectory: String?
@@ -154,6 +155,14 @@ actor ModelRunner {
     /// Loads a model from a local directory with the overload that cannot
     /// reach the network.
     func load(directory: URL, displayName: String, adapterDirectory: URL? = nil) async throws {
+        try await inferenceGate.acquire()
+        do {
+            try await loadExclusive(directory: directory, displayName: displayName, adapterDirectory: adapterDirectory)
+            await inferenceGate.release()
+        } catch { await inferenceGate.release(); throw error }
+    }
+
+    private func loadExclusive(directory: URL, displayName: String, adapterDirectory: URL? = nil) async throws {
         let signature = directory.path + "|" + (adapterDirectory?.path ?? "")
         if loadedDirectory == signature, isLoaded { return }
 
@@ -267,7 +276,8 @@ actor ModelRunner {
         return json["peft_type"] != nil
     }
 
-    func unload() {
+    func unload() async {
+        guard (try? await inferenceGate.acquire()) != nil else { return }
         container = nil
         edgeSmall = nil
         edgeLarge = nil
@@ -276,10 +286,17 @@ actor ModelRunner {
         lastLoad = nil
         isSuspended = false
         MLX.Memory.clearCache()
+        await inferenceGate.release()
     }
 
     /// Frees the chat model's memory, remembering it for `resume()`.
-    func suspend() {
+    func suspend() async {
+        guard (try? await inferenceGate.acquire()) != nil else { return }
+        suspendExclusive()
+        await inferenceGate.release()
+    }
+
+    private func suspendExclusive() {
         guard isLoaded else { return }
         container = nil
         edgeSmall = nil
@@ -295,6 +312,15 @@ actor ModelRunner {
         guard isSuspended, let lastLoad else { return }
         try await load(directory: lastLoad.directory, displayName: lastLoad.name,
                        adapterDirectory: lastLoad.adapter)
+    }
+
+    /// HTTP search needs little extra memory. A rendered page gets a larger
+    /// reserve, but neither forces a multi-gigabyte reload when RAM is ample.
+    func prepareForWeb(rendered: Bool) async throws {
+        try await inferenceGate.acquire()
+        let required = (rendered ? 900 : 600) * Self.megabyte
+        if let available = Self.availableMemory(), available < required { suspendExclusive() }
+        await inferenceGate.release()
     }
 
     // MARK: - Generation
@@ -341,8 +367,21 @@ actor ModelRunner {
         sampling: Sampling,
         onEvent: @Sendable @escaping (RunnerEvent) -> Void
     ) async throws {
+        let queuedAt = Date()
+        try await inferenceGate.acquire()
+        Diagnostics.log("inference.admitted waitMs=\(Int(Date().timeIntervalSince(queuedAt) * 1000)) lanes=1")
+        do {
+            try await generateExclusive(messages: messages, tools: tools, thinking: thinking, sampling: sampling, onEvent: onEvent)
+            await inferenceGate.release()
+        } catch { await inferenceGate.release(); throw error }
+    }
+
+    private func generateExclusive(messages: [Message], tools: [ToolDescriptor], thinking: Bool,
+                                   sampling: Sampling, onEvent: @Sendable @escaping (RunnerEvent) -> Void) async throws {
         // A model put aside for the image model comes back on first use.
-        if !isLoaded, isSuspended { try await resume() }
+        if !isLoaded, isSuspended, let lastLoad {
+            try await loadExclusive(directory: lastLoad.directory, displayName: lastLoad.name, adapterDirectory: lastLoad.adapter)
+        }
         if edgeSmall != nil || edgeLarge != nil {
             try await generateEdge0(messages: messages, tools: tools, thinking: thinking, sampling: sampling, onEvent: onEvent)
             return
@@ -368,7 +407,8 @@ actor ModelRunner {
         }
         requestedTokens = min(requestedTokens, InferencePolicy.replyTokens)
 
-        MLX.Memory.clearCache()
+        let preparationStarted = Date()
+        if let available = Self.availableMemory(), available < Self.reserveBytes * 2 { MLX.Memory.clearCache() }
         let prepared = try await container.prepare(input: input)
         let promptTokens = prepared.text.tokens.size
         let maxTokens = try budgetTokens(promptTokens: promptTokens, requested: requestedTokens)
@@ -394,6 +434,8 @@ actor ModelRunner {
 
         var splitter = ThinkSplitter(startsInReasoning: startsInReasoning)
         var generated = 0
+        var actualTokens: Int?
+        var firstToken = true
         func emit(_ pieces: [ThinkSplitter.Piece]) {
             for piece in pieces where !piece.text.isEmpty {
                 onEvent(piece.isReasoning ? .reasoning(piece.text) : .text(piece.text))
@@ -413,7 +455,7 @@ actor ModelRunner {
             + "active=\(Diagnostics.megabytes(MLX.Memory.activeMemory))MB "
             + "avail=\(Diagnostics.availableMB)MB")
         defer {
-            let chunks = generated
+            let chunks = actualTokens ?? generated
             let seconds = Date().timeIntervalSince(startedAt)
             Task { @MainActor in
                 UsageStore.shared.record(model: modelName, promptTokens: promptTokens,
@@ -434,6 +476,10 @@ actor ModelRunner {
                 }
                 switch event {
                 case .chunk(let text):
+                    if firstToken {
+                        firstToken = false
+                        Diagnostics.log("inference.first-token ms=\(Int(Date().timeIntervalSince(preparationStarted) * 1000))")
+                    }
                     generated += 1
                     emit(splitter.feed(text))
                 case .toolCall(let call):
@@ -444,6 +490,8 @@ actor ModelRunner {
                         arguments: Self.convert(call.function.arguments)
                     ))
                 case .info(let info):
+                    actualTokens = info.generationTokenCount
+                    Diagnostics.log("inference.complete promptTokens=\(info.promptTokenCount) generatedTokens=\(info.generationTokenCount) prefillSeconds=\(info.promptTime) tokensPerSecond=\(info.tokensPerSecond)")
                     emit(splitter.flush())
                     onEvent(.finished(tokensPerSecond: info.tokensPerSecond))
                 default:
@@ -456,7 +504,7 @@ actor ModelRunner {
             if let runnerError = error as? RunnerError { throw runnerError }
             throw RunnerError.generationFailed(error.localizedDescription)
         }
-        MLX.Memory.clearCache()
+        if let available = Self.availableMemory(), available < Self.reserveBytes * 2 { MLX.Memory.clearCache() }
     }
 
     /// How many tokens this turn may generate without running out of memory.

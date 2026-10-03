@@ -39,8 +39,12 @@ enum ResearchPlanner {
         let personWords: Set<String> = ["person", "someone", "named", "called", "aged", "doctor", "dr", "surgeon", "professor", "employer"]
         let looksLikePerson = ResearchPlan.words(request).contains { personWords.contains($0) } || fallbackName != nil
         let topicSignals: Set<String> = ["models", "algorithms", "weather", "climate", "history", "technology", "physics", "compare", "best"]
-        let explicitTopic = (fields["name"] ?? []).contains { $0.lowercased() == "none" }
-            && !looksLikePerson && ResearchPlan.words(request).contains { topicSignals.contains($0) }
+        let groundedTopic = (fields["type"] ?? []).contains { $0.lowercased() == "topic" }
+            && !values(["topic"]).isEmpty
+            && requestClues(request).isEmpty && requestDetails(request).isEmpty
+            && !ResearchPlan.words(request).contains { personWords.contains($0) || contextTerms.contains($0) }
+        let explicitTopic = groundedTopic || ((fields["name"] ?? []).contains { $0.lowercased() == "none" }
+            && !looksLikePerson && ResearchPlan.words(request).contains { topicSignals.contains($0) })
         // A model may truncate a longer supplied name. Prefer the recovered
         // request name when the proposed name is only a subset of it.
         // User words outrank model extraction. A small model once converted
@@ -51,7 +55,7 @@ enum ResearchPlanner {
         let contextKeywords = ResearchPlan.words(request).filter { term in
             contextTerms.contains(term) && !(name.map { ResearchPlan.contains(term, in: $0) } ?? false)
         }
-        let keywords = values(["keyword", "keywords", "occupation", "profession", "role"])
+        let keywords = values(["keyword", "keywords", "occupation", "profession", "role", "topic"])
             + (name.map { [$0] } ?? []) + clues + contextKeywords + requestDetails(request)
         // NONE is not permission to relax person matching. Unknown subject stays
         // discovery-only, using the complete request, until the user picks a page.
@@ -125,7 +129,7 @@ enum ResearchPlanner {
         // an unlabelled town, club, title or adult age supplied after the name.
         var details = request.components(separatedBy: CharacterSet(charactersIn: ",;\n")).dropFirst()
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty && $0.count <= 120 }
+            .filter { !$0.isEmpty && $0.count <= 120 && !$0.lowercased().hasPrefix("research goal:") }
         let patterns = [
             #"(?i)\b(?:job title|job|title|occupation|profession|role|sport|additional detail)\s*[:=]\s*([^,;\n]+?)(?=\s+(?:full name|name|city|town|location|age|job title|job|title|occupation|profession|role|employer|sport)\s*[:=]|[,;\n]|$)"#,
             #"(?i)\b(?:age[d]?\s*[:=]?\s*)(\d{1,3})\b"#,

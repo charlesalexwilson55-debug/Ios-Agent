@@ -69,6 +69,8 @@ jobs:
           mkdir -p artifacts build
           {
             node scripts/page-reader-tests.js
+            xcrun swiftc -swift-version 5 -parse-as-library App/Model/InferenceGate.swift App/Agent/ResearchPlan.swift App/Agent/ResearchTurnRouter.swift scripts/inference-tests.swift -o artifacts/inference-tests
+            artifacts/inference-tests
             xcrun swiftc -swift-version 5 -parse-as-library App/Model/Edge0Packing.swift App/Model/Edge0Protocol.swift scripts/edge0-tests.swift -o artifacts/edge0-tests
             artifacts/edge0-tests
             xcrun swiftc -swift-version 5 -parse-as-library App/Settings/UsageRank.swift App/UI/ConduitMotion.swift scripts/experience-tests.swift -o artifacts/experience-tests

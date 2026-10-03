@@ -97,7 +97,11 @@ import Foundation
         let step = activity.begin("Planning", detail: "Name, supplied anchors, exact-name and professional-source searches")
         var reply = ""
         // Clear names can start discovery without waiting for local generation.
-        do { if ResearchPlanner.requestName(state.request) == nil { reply = try await model(ResearchEngine.keywordPrompt, state.request) } }
+        let words = ResearchPlan.words(state.request)
+        let ambiguousBareSubject = ResearchPlanner.requestClues(state.request).isEmpty
+            && ResearchPlanner.requestDetails(state.request).isEmpty
+            && !words.contains(where: { ResearchPlanner.contextTerms.contains($0) })
+        do { if ResearchPlanner.requestName(state.request) == nil || ambiguousBareSubject { reply = try await model(ResearchEngine.keywordPrompt, state.request) } }
         catch {
             try Task.checkCancellation()
             state.limitations.append("Local planning was unavailable; discovery uses your original wording.")
@@ -120,49 +124,33 @@ import Foundation
     private func discover() async throws {
         let step = activity.begin("Searching round \(state.round + 1)", detail: "Broad discovery before selective extraction", cancellable: true)
         defer { activity.finish(step) }
-        while !state.pendingQueries.isEmpty && !activity.isStopped(step) {
+        while !state.pendingQueries.isEmpty && !activity.isStopped(step) && !providerStopped {
             try Task.checkCancellation()
             if limitReason != nil || state.searches >= state.budget.searches { break }
-            let query = state.pendingQueries.removeFirst()
-            let key = ResearchPlan.normalized(query.text)
-            guard !state.usedQueries.contains(key), !PrivateDetail.isPrivateSearch(query.text) else { continue }
-            state.usedQueries.append(key); state.searches += 1
-            let record = ResearchRun.Search(id: UUID().uuidString, query: query, date: Date())
-            state.searchesLog.append(record)
-            // Queries interrupted after dispatch are marked as attempted, not invisibly repeated.
-            try checkpoint()
-            let item = activity.addItem(step, query.text, subtitle: query.purpose, cancellable: true)
-            do {
-                guard let response = try await activity.run(item, { try await self.search(query.text) }) else {
-                    updateSearch(record.id, status: "skipped"); continue
-                }
-                if let limitation = response.limitation { state.limitations.append(limitation) }
-                updateSearch(record.id, status: "done", provider: response.provider.rawValue, urls: response.results.map(\.url))
-                for result in response.results {
-                    if let plan = state.plan, ResearchSourcePolicy.isMinorProfile(result.rawContent ?? result.summary, plan: plan) {
-                        state.limitations.append("A profile identified the subject as a minor and was excluded.")
-                        continue
-                    }
-                    guard let url = ResearchSourcePolicy.canonical(result.url),
-                          !state.visitedURLs.contains(url.absoluteString),
-                          !state.pendingSources.contains(where: { ResearchSourcePolicy.canonical($0.url) == url }),
-                          (state.plan?.score(title: result.title, summary: result.summary, url: url) ?? 0) >= 0,
-                          ResearchSourcePolicy.rejectReason(result.title + " " + result.summary) == nil,
-                          !Self.blockedPublisher(url) else { continue }
-                    state.pendingSources.append(.init(title: ResearchSourcePolicy.publicText(result.title), url: url,
-                        summary: ResearchSourcePolicy.publicText(result.summary), published: result.published,
-                        text: result.rawContent.flatMap { ResearchSourcePolicy.rejectReason($0) == nil ? ResearchSourcePolicy.publicText($0) : nil }, provider: response.provider.rawValue))
-                }
-                activity.updateItem(item, subtitle: "\(response.results.count) results · \(response.provider.rawValue)", status: .done)
-            } catch {
-                try Task.checkCancellation()
-                updateSearch(record.id, status: "failed", error: error.localizedDescription)
-                state.limitations.append(error.localizedDescription)
-                activity.updateItem(item, subtitle: error.localizedDescription, status: .failed)
-                // Credential/quota failures stop charged work. A timeout or
-                // temporary server failure must not erase the other queries.
-                if Self.isTerminalSearchFailure(error) { providerStopped = true; break }
+            // Probe once before parallel dispatch, so rejected credentials or
+            // a quota failure do not launch a batch of charged requests.
+            let width = state.searches == 0 ? 1 : 2
+            var batch: [(ResearchRun.Search, UUID)] = []
+            while batch.count < width && !state.pendingQueries.isEmpty && state.searches < state.budget.searches {
+                let query = state.pendingQueries.removeFirst()
+                let key = ResearchPlan.normalized(query.text)
+                guard !state.usedQueries.contains(key), !PrivateDetail.isPrivateSearch(query.text) else { continue }
+                state.usedQueries.append(key); state.searches += 1
+                let record = ResearchRun.Search(id: UUID().uuidString, query: query, date: Date())
+                state.searchesLog.append(record)
+                let item = activity.addItem(step, query.text, subtitle: query.purpose, cancellable: true)
+                batch.append((record, item))
             }
+            try checkpoint()
+            await withTaskGroup(of: Bool.self) { group in
+                for (record, item) in batch {
+                    group.addTask { @MainActor in await self.searchOne(record, item: item) }
+                }
+                for await terminalFailure in group {
+                    if terminalFailure { providerStopped = true; group.cancelAll() }
+                }
+            }
+            try Task.checkCancellation()
             try checkpoint()
         }
         state.skippedQueries += state.pendingQueries.count
@@ -180,6 +168,44 @@ import Foundation
         state.stage = .extracting
     }
 
+    private func searchOne(_ record: ResearchRun.Search, item: UUID) async -> Bool {
+        do {
+            try Task.checkCancellation()
+            guard let response = try await activity.run(item, { try await self.search(record.query.text) }) else {
+                updateSearch(record.id, status: "skipped"); return false
+            }
+            if let limitation = response.limitation { state.limitations.append(limitation) }
+            updateSearch(record.id, status: "done", provider: response.provider.rawValue, urls: response.results.map(\.url))
+            for result in response.results {
+                if let plan = state.plan, ResearchSourcePolicy.isMinorProfile(result.rawContent ?? result.summary, plan: plan) {
+                    state.limitations.append("A profile identified the subject as a minor and was excluded.")
+                    continue
+                }
+                guard let url = ResearchSourcePolicy.canonical(result.url),
+                      !state.visitedURLs.contains(url.absoluteString),
+                      !state.pendingSources.contains(where: { ResearchSourcePolicy.canonical($0.url) == url }),
+                      (state.plan?.score(title: result.title, summary: result.summary, url: url) ?? 0) >= 0,
+                      ResearchSourcePolicy.rejectReason(result.title + " " + result.summary) == nil,
+                      !Self.blockedPublisher(url) else { continue }
+                state.pendingSources.append(.init(title: ResearchSourcePolicy.publicText(result.title), url: url,
+                    summary: ResearchSourcePolicy.publicText(result.summary), published: result.published,
+                    text: result.rawContent.flatMap { ResearchSourcePolicy.rejectReason($0) == nil ? ResearchSourcePolicy.publicText($0) : nil }, provider: response.provider.rawValue))
+            }
+            activity.updateItem(item, subtitle: "\(response.results.count) results · \(response.provider.rawValue)", status: .done)
+            return false
+        } catch {
+            if Task.isCancelled || error is CancellationError {
+                updateSearch(record.id, status: "skipped")
+                activity.updateItem(item, status: .stopped)
+                return false
+            }
+            updateSearch(record.id, status: "failed", error: error.localizedDescription)
+            state.limitations.append(error.localizedDescription)
+            activity.updateItem(item, subtitle: error.localizedDescription, status: .failed)
+            return Self.isTerminalSearchFailure(error)
+        }
+    }
+
     private static func isTerminalSearchFailure(_ error: Error) -> Bool {
         if let searchError = error as? WebSearch.SearchError {
             switch searchError {
@@ -189,7 +215,7 @@ import Foundation
                 // The provider facade preserves error descriptions when both
                 // services fail. Do not hide credential or allowance errors.
                 let lower = detail.lowercased()
-                return ["key was rejected", "usage limit", "rate", "quota", "allowance", "401", "402", "403", "429", "432", "433"].contains { lower.contains($0) }
+                return ["key was rejected", "usage limit", "rate limit", "rate-limit", "quota", "allowance", "401", "402", "403", "429", "432", "433"].contains { lower.contains($0) }
             case .badResponse: return false
             }
         }
@@ -274,7 +300,8 @@ import Foundation
                         } else if state.selection == nil || focusCompatible(page.text ?? "", plan: plan) {
                             do {
                                 let prompt = "Subject: \(plan.subject ?? state.request)\nSource: \(page.url.absoluteString)\nPAGE DATA:\n\(page.text ?? "")"
-                                if let output = try await activity.run(item, { try await self.model(Self.extractionPrompt, prompt) }) {
+                                let instructions = Self.extractionPrompt + (plan.isTopic ? "\nThis is topic research. Extract relevant factual statements; no person's name is required. Keep literal source quotations." : "")
+                                if let output = try await activity.run(item, { try await self.model(instructions, prompt) }) {
                                     state.graph.extract(output, sourceID: sourceID, plan: plan, selected: false)
                                 }
                             } catch {
@@ -286,7 +313,7 @@ import Foundation
                             state.graph.extractLiteral(sourceID: sourceID, plan: plan)
                         }
                         activity.updateItem(item, subtitle: "\(state.graph.claims.count - before) grounded claims; source retained separately", status: .done)
-                        if state.selection == nil, state.graph.claims.count > before,
+                        if state.selection == nil, !plan.wantsAdditionalInformation, state.graph.claims.count > before,
                            plan.matchesSuppliedContext(in: text + "\n" + page.title),
                            plan.selectedStatements(text).contains(where: { !plan.attributedEvidence($0, text: text).isEmpty }) {
                             state.graph.resolve(plan: plan)

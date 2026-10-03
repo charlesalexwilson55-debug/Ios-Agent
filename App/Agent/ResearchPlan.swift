@@ -23,6 +23,9 @@ struct ResearchPlan: Codable, Sendable {
     private static let medical = ["doctor", "physician", "surgeon", "gp", "dentist", "cardiologist", "psychiatrist"]
     private static let roles = Set(medical + ["dr", "professor", "researcher", "scientist", "lawyer", "solicitor", "architect", "engineer", "software", "teacher", "author", "nurse", "a", "an", "the"])
     private var isMedical: Bool { Self.words(request).contains { Self.medical.contains($0) } }
+    var wantsAdditionalInformation: Bool {
+        ["more", "additional", "extra", "everything", "background", "history"].contains { Self.words(request).contains($0) }
+    }
     var sports: [String] {
         Self.words(request).filter { ["soccer", "football", "basketball", "netball", "cricket", "rugby", "tennis", "hockey", "volleyball"].contains($0) }
     }

@@ -5,8 +5,31 @@ private actor ResearchAttemptCounter {
     func next() -> Int { count += 1; return count }
 }
 
+private actor SearchConcurrencyProbe {
+    private var active = 0
+    private var peak = 0
+    func enter() { active += 1; peak = max(peak, active) }
+    func leave() { active -= 1 }
+    func check() { precondition(peak == 2 && active == 0, "Independent searches must overlap without exceeding two requests") }
+}
+
 @main struct ResearchTests {
     @MainActor static func main() async throws {
+        let searchProbe = SearchConcurrencyProbe()
+        let parallelEngine = ResearchEngine(request: "Morgan Example, Harbour NSW, soccer", budget: .normal,
+            ask: { _, _ in "[]" }, activity: ActivityReporter { _ in }, search: { _ in
+                await searchProbe.enter()
+                try await Task.sleep(for: .milliseconds(15))
+                await searchProbe.leave()
+                return .init(provider: .browser, results: [])
+            })
+        _ = try await parallelEngine.run()
+        await searchProbe.check()
+        let topicPlan = ResearchPlanner.make(request: "research quantum computing", reply: "TYPE: topic\nTOPIC: quantum computing\nNAME: none")
+        precondition(topicPlan.isTopic && topicPlan.subject == nil, "A grounded topic must not become a person's name")
+        precondition(ResearchGraph().gaps(plan: topicPlan).allSatisfy { $0.text.contains("quantum computing") && !$0.text.contains("biography") })
+        let morePlan = ResearchPlanner.make(request: "Morgan Example, Harbour NSW, soccer\nResearch goal: find additional public information and independent sources.", reply: "")
+        precondition(morePlan.wantsAdditionalInformation && !morePlan.keywords.contains { $0.contains("Research goal") })
         let request = "Research Jane Example, doctor in Melbourne at Harbour Clinic"
         let plan = ResearchPlan(request: request, subject: "Jane Example",
                                 keywords: ["Jane Example", "doctor", "Melbourne", "Harbour Clinic"], identityClues: ["Melbourne", "Harbour Clinic"])

@@ -239,6 +239,11 @@ struct ResearchGraph: Codable, Sendable {
     }
 
     func gaps(plan: ResearchPlan) -> [ResearchQuery] {
+        if plan.isTopic {
+            return ["evidence and limitations", "independent comparison", "latest developments"].map {
+                ResearchQuery(text: plan.request + " " + $0, purpose: "Expand the original topic with relevant evidence")
+            }
+        }
         var queries: [ResearchQuery] = []
         for conflict in contradictions.prefix(2) {
             for claim in claims where conflict.claimIDs.contains(claim.id) {

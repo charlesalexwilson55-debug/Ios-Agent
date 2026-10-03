@@ -12,6 +12,7 @@ struct ResearchClarification: Sendable {
     let choices: [Choice]
 
     static func make(request: String, candidates: [ResearchCandidate], graph: ResearchGraph) -> Self? {
+        guard !graph.entities.contains(where: { $0.kind == "topic" }) else { return nil }
         let groups = Dictionary(grouping: graph.candidates, by: \.groupID)
         let supported = groups.values.filter { group in
             let sources = graph.sources.filter { source in
