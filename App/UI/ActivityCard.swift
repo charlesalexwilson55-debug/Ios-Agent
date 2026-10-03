@@ -13,18 +13,18 @@ struct ActivityCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let running = log.steps.last(where: { $0.status == .running }) {
-                ConduitLoader(color: accent, status: running.title)
-            } else {
-                VStack(spacing: 6) {
-                    Capsule().strokeBorder(.primary.opacity(0.65), lineWidth: 1.2)
-                        .frame(width: 38, height: 13)
-                        .overlay { Circle().fill(accent).frame(width: 7, height: 7) }
-                    Text(log.steps.last?.title ?? "Preparing research")
-                        .font(.caption2.weight(.medium)).foregroundStyle(.secondary)
-                }.frame(maxWidth: .infinity)
-            }
-            DisclosureGroup("Sources and activity", isExpanded: $showingDetails) {
+            header
+                .overlay(alignment: .trailing) {
+                    Button { withAnimation(.snappy(duration: 0.2)) { showingDetails.toggle() } } label: {
+                        Image(systemName: showingDetails ? "chevron.up" : "chevron.down")
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 32, height: 32)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(showingDetails ? "Hide research sources and activity" : "Show research sources and activity")
+                }
+            if showingDetails {
                 ForEach(log.steps) { step in
                     stepRow(step)
                     if expanded.contains(step.id) || step.status == .running {
@@ -32,11 +32,23 @@ struct ActivityCard: View {
                     }
                 }
             }
-            .font(.caption)
-            .tint(.secondary)
         }
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder private var header: some View {
+        if let running = log.steps.last(where: { $0.status == .running }) {
+            ConduitLoader(color: accent, status: running.title)
+        } else {
+            VStack(spacing: 6) {
+                Capsule().strokeBorder(.primary.opacity(0.65), lineWidth: 1.2)
+                    .frame(width: 38, height: 13)
+                    .overlay { Circle().fill(accent).frame(width: 7, height: 7) }
+                Text(log.steps.last?.title ?? "Preparing research")
+                    .font(.caption2.weight(.medium)).foregroundStyle(.secondary)
+            }.frame(maxWidth: .infinity)
+        }
     }
 
     private var progressText: String {
