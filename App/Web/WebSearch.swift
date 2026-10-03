@@ -125,7 +125,7 @@ enum WebSearch {
                     var fallback = try await tavily(query, key: tavilyKey, research: true, session: session)
                     fallback.limitation = "Exa discovery failed (\(failureDetail(exaError))); Tavily results are shown instead."
                     return fallback
-                } catch let tavilyError {
+                } catch {
                     try Task.checkCancellation()
                     var fallback = try await BrowserSearch.search(query, session: session)
                     fallback.limitation = "Exa and Tavily failed; public web search was used."

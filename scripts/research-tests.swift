@@ -34,13 +34,13 @@ private actor ResearchAttemptCounter {
         precondition(invalid.subject == nil, "Never invent the subject")
         precondition(plan.excerpt(String(repeating: "Navigation menu ", count: 700) + "Jane Example is a doctor at Harbour Clinic in Melbourne.", limit: 300).contains("Harbour Clinic"), "Read the relevant passage, not just the page beginning")
         print("Research policy regression tests passed")
-        let source = URL(string: "https://clinic.example/team/jane")!
+        let leadSourceURL = URL(string: "https://clinic.example/team/jane")!
         let linked = ResearchCoordinator.sourceLeads([
             .init(title: "Jane Example publications", url: URL(string: "https://journal.example/jane-example")!),
             .init(title: "Publications", url: URL(string: "https://clinic.example/jane/papers")!),
             .init(title: "John Other", url: URL(string: "https://other.example/john")!),
             .init(title: "Log in", url: URL(string: "https://clinic.example/login")!)
-        ], from: source, text: "Jane Example works at Harbour Clinic Melbourne.", plan: plan)
+        ], from: leadSourceURL, text: "Jane Example works at Harbour Clinic Melbourne.", plan: plan)
         precondition(linked.count == 2, "Follow grounded profile links, not unrelated people or login pages")
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [SearchFixtureProtocol.self]
