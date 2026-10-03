@@ -51,7 +51,7 @@ TOOLS_PATH = HERE / "tools.json"
 # lists it, per the task brief.
 REGISTRY_FILES = [
     "PeopleTools.swift", "CalendarTools.swift", "DeviceTools.swift",
-    "CodeTools.swift", "WebTools.swift",
+    "CodeTools.swift", "WebTools.swift", "CreationTools.swift",
 ]
 
 
@@ -64,7 +64,7 @@ class TaskRouterMirror:
     (TaskRouter.webToolNames withheld): only the two tools that need no
     network survive.
     """
-    answer_tool_names = {"get_current_time", "run_javascript", "web_search", "read_page", "get_weather"}
+    answer_tool_names = {"get_current_time", "run_javascript", "web_search", "read_page", "get_weather", "create_image", "create_3d_object"}
     web_tool_names = {"web_search", "read_page", "get_weather"}
     offline_answer_tool_names = answer_tool_names - web_tool_names
 
@@ -82,7 +82,7 @@ def swift_tool_names() -> set[str]:
     a bad model rather than a stale dataset. Cheap to check, so it is checked.
     """
     names: set[str] = set()
-    pattern = re.compile(r'ToolDescriptor\(\s*name:\s*"([a-z_]+)"')
+    pattern = re.compile(r'ToolDescriptor\(\s*name:\s*"([a-z_0-9]+)"')
     for path in SWIFT_TOOL_DIR.glob("*Tools.swift"):
         names |= set(pattern.findall(path.read_text(encoding="utf-8")))
     return names
@@ -356,7 +356,7 @@ def _parse_tool_descriptors(path: Path) -> list[dict]:
         end = _balanced(text, m.end() - 1)
         block = text[m.end():end - 1]
 
-        name = re.search(r'name:\s*"([a-z_]+)"', block).group(1)
+        name = re.search(r'name:\s*"([a-z_0-9]+)"', block).group(1)
 
         desc_start = block.index("description:") + len("description:")
         depth, j, params_key_pos = 0, desc_start, None

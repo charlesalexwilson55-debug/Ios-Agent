@@ -111,7 +111,7 @@ struct ResearchGraph: Codable, Sendable {
             }
         }
         let entityID = "person:" + sourceID
-        let predicates: Set<String> = ["organisation", "location", "role", "education", "associated_with", "public_url", "statement"]
+        let predicates: Set<String> = ["organisation", "location", "role", "age", "education", "associated_with", "public_url", "statement"]
         for row in rows.prefix(6) {
             let quote = row.evidence_quote.trimmingCharacters(in: .whitespacesAndNewlines)
             guard (15...900).contains(quote.count), predicates.contains(row.predicate),

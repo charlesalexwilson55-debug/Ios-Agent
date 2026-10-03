@@ -36,6 +36,7 @@ final class ToolRegistry {
             DeviceTools(),
             CodeTools(),
             WebTools(),
+            CreationTools(),
         ], dynamicProviders: [
         ])
     }

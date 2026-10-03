@@ -14,6 +14,7 @@ enum TaskRouter {
     /// Tools offered when answering a question.
     static let answerToolNames: Set<String> = [
         "get_current_time", "run_javascript", "web_search", "read_page", "get_weather",
+        "create_3d_object", "create_image",
     ]
 
     /// Tools that reach the internet. Withheld when the user has switched

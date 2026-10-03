@@ -6,7 +6,7 @@ struct ResearchClarification: Sendable {
         let candidate: ResearchCandidate
         let details: [String]
         let fields: [String]
-        var label: String { details.isEmpty ? candidate.title : details.joined(separator: " · ") }
+        var label: String { candidate.profileLabel }
     }
     let request: String
     let choices: [Choice]
@@ -23,6 +23,7 @@ struct ResearchClarification: Sendable {
         var choices: [Choice] = []
         var seen = Set<String>()
         for candidate in candidates {
+            guard candidate.decision == nil else { continue }
             guard let source = graph.sources.first(where: { $0.url == candidate.url }), source.duplicateOf == nil,
                   let person = graph.candidates.first(where: { $0.sourceID == source.id }),
                   seen.insert(person.groupID).inserted else { continue }

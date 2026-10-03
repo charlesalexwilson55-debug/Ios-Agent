@@ -29,6 +29,7 @@ struct TranscriptEntry: Identifiable, Codable {
     /// Source choices are kept out of the model's history until selected.
     var researchCandidates: [ResearchCandidate] = []
     var researchRequest: String?
+    var objectID: String?
 
     enum Outcome: String, Codable {
         case done
@@ -55,7 +56,7 @@ struct TranscriptEntry: Identifiable, Codable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, kind, text, toolOutcome, isStreaming, reasoning, activity, imageIDs, researchCandidates, researchRequest
+        case id, kind, text, toolOutcome, isStreaming, reasoning, activity, imageIDs, researchCandidates, researchRequest, objectID
     }
 
     init(from decoder: Decoder) throws {
@@ -70,6 +71,7 @@ struct TranscriptEntry: Identifiable, Codable {
         imageIDs = try c.decodeIfPresent([UUID].self, forKey: .imageIDs) ?? []
         researchCandidates = try c.decodeIfPresent([ResearchCandidate].self, forKey: .researchCandidates) ?? []
         researchRequest = try c.decodeIfPresent(String.self, forKey: .researchRequest)
+        objectID = try c.decodeIfPresent(String.self, forKey: .objectID)
     }
 }
 
@@ -173,6 +175,16 @@ final class AgentSession {
         var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !imageData.isEmpty, !isWorking else { return }
         var selected = researchSelection
+        if selected == nil, resume == nil,
+           researchEnabled || trimmed.lowercased().hasPrefix("research "),
+           let subject = ResearchPlanner.requestName(trimmed) {
+            let previous = transcript.reversed().filter { entry in
+                entry.researchRequest.flatMap(ResearchPlanner.requestName).map { ResearchPlan.normalized($0) == ResearchPlan.normalized(subject) } ?? false
+            }
+            if let candidate = previous.flatMap(\.researchCandidates).first(where: { $0.decision == "selected" }) {
+                selected = ResearchSelection(request: trimmed, candidate: candidate)
+            }
+        }
         pendingRefinedResearch = false
         if selected == nil, resume == nil, imageData.isEmpty, libraryPhotoID == nil,
            let clarification = researchClarification {
@@ -213,13 +225,48 @@ final class AgentSession {
         guard !isWorking,
               let entry = transcript.first(where: { $0.id == entryID }),
               let request = entry.researchRequest,
-              let candidate = entry.researchCandidates.first(where: { $0.id == candidateID }) else { return }
+              let candidate = entry.researchCandidates.first(where: { $0.id == candidateID }), candidate.decision == nil else { return }
         let focusedRequest = researchClarification?.request(for: candidate) ?? request
-        if let index = transcript.firstIndex(where: { $0.id == entryID }) {
-            transcript[index].researchCandidates = [candidate]
-        }
-        submit("Research this profile: \(candidate.url.absoluteString)",
+        markResearchCandidate(candidate, decision: "selected", request: request)
+        submit("Research \(candidate.profileLabel)",
                researchSelection: ResearchSelection(request: focusedRequest, candidate: candidate))
+    }
+
+    private func markResearchCandidate(_ candidate: ResearchCandidate, decision: String, request: String) {
+        for index in transcript.indices where transcript[index].researchRequest == request {
+            for item in transcript[index].researchCandidates.indices {
+                let other = transcript[index].researchCandidates[item]
+                if other.id == candidate.id || other.identityKey == candidate.identityKey {
+                    transcript[index].researchCandidates[item].decision = decision
+                }
+            }
+        }
+    }
+
+    func rejectResearchCandidate(_ candidateID: String, in entryID: UUID) {
+        guard !isWorking, let entry = transcript.first(where: { $0.id == entryID }),
+              let request = entry.researchRequest,
+              let candidate = entry.researchCandidates.first(where: { $0.id == candidateID }),
+              candidate.decision != "rejected" else { return }
+        markResearchCandidate(candidate, decision: "rejected", request: request)
+        researchClarification = nil
+        // A new bounded batch retains visited pages and queries. Rejection is
+        // not an instruction to search the same profile indefinitely.
+        if let store = try? ResearchStore.open(),
+           let previous = try? store.list().first(where: { $0.request == request }) {
+            var next = ResearchRun(request: request, budget: .hard)
+            next.plan = previous.plan
+            next.graph = previous.graph
+            next.usedQueries = previous.usedQueries
+            next.visitedURLs = previous.visitedURLs
+            next.searchesLog = previous.searchesLog
+            next.stage = .gapAnalysis
+            next.previousClaims = previous.graph.claims.count
+            next.previousEntities = previous.graph.entities.count
+            submit("Not this person. Continue researching \(ResearchEngine.searchQuery(from: request)).", resume: next)
+        } else {
+            submit(request)
+        }
     }
 
     func resumeResearch(_ run: ResearchRun) {
@@ -397,6 +444,9 @@ final class AgentSession {
             + "compare evidence, and write your own answer. Search snippets are leads, not verified facts. "
             + "Prefer clear paragraphs. Avoid excessive emphasis, decorative asterisks, XML wrappers and invented answer tags. "
             + "Do not narrate routine context retrieval unless the user asks."
+            + " Use concise Markdown links with meaningful labels instead of bare URLs. Use paragraph breaks instead of em dashes. "
+            + "Put requested code, copy-ready drafts, exact text and ASCII art inside fenced blocks with a language label such as text. "
+            + "For simple 3D objects use create_3d_object. Compose the object from boxes and spheres; do not claim to produce detailed sculpted assets."
         if let profile = ProfileStore.shared.promptSection {
             systemPrompt += "\n\n" + profile
         }
@@ -699,8 +749,10 @@ final class AgentSession {
         readWebContent = true
         Diagnostics.log("research searches=\(findings.searches) pages=\(findings.pagesChecked) "
             + "matched=\(findings.pagesMatched) facts=\(findings.facts.count)")
-        if selection == nil, let graph = findings.run?.graph,
-           let clarification = ResearchClarification.make(request: request, candidates: findings.candidates, graph: graph) {
+        let earlier = transcript.filter { $0.researchRequest == request }.flatMap(\.researchCandidates)
+        let candidates = ResearchCandidate.visible(findings.candidates, earlier: earlier, selectedID: selection?.candidate.id)
+        if selection == nil, !candidates.contains(where: { $0.decision == "selected" }), let graph = findings.run?.graph,
+           let clarification = ResearchClarification.make(request: request, candidates: candidates, graph: graph) {
             researchClarification = clarification
             var question = TranscriptEntry(kind: .assistant, text: clarification.question)
             question.researchCandidates = clarification.choices.map(\.candidate)
@@ -710,9 +762,9 @@ final class AgentSession {
             reporter.finish(reporter.begin("Waiting for your profile choice", detail: "Tell me which job, city or organisation matches"))
             return
         }
-        if !findings.candidates.isEmpty {
+        if !candidates.isEmpty {
             var choices = TranscriptEntry(kind: .assistant, text: "Sources to inspect")
-            choices.researchCandidates = selection.map { selected in findings.candidates.filter { $0.url == selected.candidate.url } } ?? findings.candidates
+            choices.researchCandidates = candidates
             choices.researchRequest = request
             transcript.append(choices)
         }
@@ -732,7 +784,12 @@ final class AgentSession {
         }
 
         let writing = reporter.begin("Writing evidence report", detail: "Keeping each source profile and its quotations separate")
-        var replyText = findings.run.map { run in run.graph.report(sourceIDs: run.graph.focusedSourceIDs(selection: run.selection)) }
+        let rejectedURLs = Set(earlier.filter { $0.decision == "rejected" }.map(\.url))
+        var replyText = findings.run.map { run in
+            let focus = run.graph.focusedSourceIDs(selection: run.selection)
+            let allowed = Set(run.graph.sources.filter { !rejectedURLs.contains($0.url) && (focus?.contains($0.id) ?? true) }.map(\.id))
+            return run.graph.report(sourceIDs: allowed)
+        }
             ?? findings.facts.map { "- \($0.text) [\($0.site)](\($0.url.absoluteString))" }.joined(separator: "\n")
         replyText += "\n\n" + findings.identitySummary + "\n" + findings.stopReason
         if findings.combinationsSkipped > 0 || findings.pagesSkipped > 0 {
@@ -981,6 +1038,10 @@ final class AgentSession {
 
         if transcript.indices.contains(index) {
             transcript[index].text = outcome.summary
+            if outcome.ok {
+                transcript[index].objectID = outcome.detail["object_id"]
+                if let value = outcome.detail["image_id"], let id = UUID(uuidString: value) { transcript[index].imageIDs = [id] }
+            }
             if outcome.ok {
                 switch outcome.completion {
                 case .completed: transcript[index].toolOutcome = .done

@@ -159,8 +159,8 @@ def reply_names_source(reply: str, payload: dict) -> bool:
 # answer-mode row (system prompt == system_prompt_answer.md) only ever calls
 # an answer tool, and that its "tools" field is exactly one of the two
 # subsets the app actually offers in that mode.
-ANSWER_TOOL_NAMES = {"get_current_time", "run_javascript", "web_search", "read_page", "get_weather"}
-OFFLINE_ANSWER_TOOL_NAMES = {"get_current_time", "run_javascript"}
+ANSWER_TOOL_NAMES = {"get_current_time", "run_javascript", "web_search", "read_page", "get_weather", "create_image", "create_3d_object"}
+OFFLINE_ANSWER_TOOL_NAMES = {"get_current_time", "run_javascript", "create_image", "create_3d_object"}
 HERE = Path(__file__).resolve().parent
 _answer_prompt_path = HERE / "system_prompt_answer.md"
 ANSWER_PROMPT_TEXT = (_answer_prompt_path.read_text(encoding="utf-8").strip()

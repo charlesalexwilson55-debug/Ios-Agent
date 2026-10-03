@@ -12,5 +12,9 @@ struct Tests {
         assert(ResponseTextCleaner.displayProse("* First\n- Second\n## Title") == "• First\n• Second\n**Title**")
         assert(ResponseTextCleaner.displayProse("2 * 3 = 6 and **bold** with `x * y`") == "2 * 3 = 6 and **bold** with `x * y`")
         print("Response cleaner OK")
+        assert(ResponseTextCleaner.displayProse("Read https://example.com/a?b=2.") == "Read [example.com](https://example.com/a?b=2).")
+        assert(ResponseTextCleaner.displayProse("[Source](https://example.com/a) and `https://example.com/b`") == "[Source](https://example.com/a) and `https://example.com/b`")
+        assert(ResponseTextCleaner.displayProse("First — second") == "First\n\nsecond")
+        assert(ResponseTextCleaner.displayProse("`x — y`") == "`x — y`")
     }
 }

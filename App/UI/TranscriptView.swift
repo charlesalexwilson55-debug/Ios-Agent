@@ -16,6 +16,7 @@ struct TranscriptView: View {
     var onCancelActivity: (UUID, UUID) -> Void = { _, _ in }
     var isWorking: Bool = false
     var onSelectResearchCandidate: (String, UUID) -> Void = { _, _ in }
+    var onRejectResearchCandidate: (String, UUID) -> Void = { _, _ in }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -98,15 +99,17 @@ struct TranscriptView: View {
             VStack(alignment: .leading, spacing: 10) {
                 AssistantText(entry: entry, accent: accent)
                 if !entry.researchCandidates.isEmpty {
-                    ResearchCandidatesView(candidates: entry.researchCandidates, isWorking: isWorking) { candidate in
-                        onSelectResearchCandidate(candidate.id, entry.id)
-                    }
+                    ResearchCandidatesView(candidates: entry.researchCandidates, isWorking: isWorking,
+                        onSelect: { onSelectResearchCandidate($0.id, entry.id) },
+                        onReject: { onRejectResearchCandidate($0.id, entry.id) })
                 }
             }
         case .tool:
             // Older saved chats can contain recall chips from prior builds.
             if entry.text.range(of: #"^Found \d+ notes?: "#, options: .regularExpression) == nil {
                 ToolChip(text: entry.text, outcome: entry.toolOutcome)
+                if let id = entry.objectID { ObjectPreview(id: id) }
+                ForEach(entry.imageIDs, id: \.self) { id in StoredImageView(id: id, maxHeight: 340) }
             }
         case .activity:
             if let log = entry.activity {
@@ -266,9 +269,9 @@ private struct CodeBlockView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text(language.isEmpty ? "code" : language)
+                Text(language.isEmpty ? "Text" : language)
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.white.opacity(0.65))
                 Spacer()
                 Button {
                     UIPasteboard.general.string = code
@@ -298,9 +301,11 @@ private struct CodeBlockView: View {
                     .textSelection(.enabled)
                     .fixedSize(horizontal: true, vertical: true)
                     .padding(12)
+                    .foregroundStyle(.white.opacity(0.92))
             }
         }
-        .background(Color.black.opacity(0.25), in: .rect(cornerRadius: 12))
+        .background(Color.black.opacity(0.7), in: .rect(cornerRadius: 12))
+        .glassEffect(.regular.tint(.black.opacity(0.65)), in: .rect(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.white.opacity(0.08)))
     }
 }

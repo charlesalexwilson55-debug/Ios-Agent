@@ -7,6 +7,7 @@ struct ResearchCandidatesView: View {
     let candidates: [ResearchCandidate]
     let isWorking: Bool
     let onSelect: (ResearchCandidate) -> Void
+    var onReject: (ResearchCandidate) -> Void = { _ in }
 
     var body: some View {
         LazyVStack(alignment: .leading, spacing: 10) {
@@ -19,7 +20,12 @@ struct ResearchCandidatesView: View {
                         Text("Shared attributes are not proof of the same identity.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
-                    ForEach(members) { candidate in candidateCard(candidate) }
+                    if let candidate = members.first { candidateCard(candidate) }
+                    if members.count > 1 {
+                        ForEach(members.dropFirst()) { candidate in
+                            Link(candidate.url.host ?? "Source", destination: candidate.url).font(.caption)
+                        }
+                    }
                 }
             }
         }
@@ -35,7 +41,7 @@ struct ResearchCandidatesView: View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(candidate.title)
+                    Text(candidate.profileLabel)
                         .font(.system(size: 15, weight: .semibold))
                         .lineLimit(2)
                     Text(domain(for: candidate.url))
@@ -82,13 +88,17 @@ struct ResearchCandidatesView: View {
 
                 Spacer(minLength: 0)
 
-                Button("Choose this profile") {
-                    onSelect(candidate)
+                if candidate.decision == "selected" {
+                    Label("Selected", systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(.green)
+                } else if candidate.decision == nil {
+                    Button("This person") { onSelect(candidate) }
+                        .buttonStyle(.borderedProminent).controlSize(.small)
+                        .tint(Color.conduitAccent).disabled(isWorking)
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-                .tint(Color.conduitAccent)
-                .disabled(isWorking)
+                if candidate.decision != "rejected" {
+                    Button("Not this person") { onReject(candidate) }
+                        .buttonStyle(.bordered).controlSize(.small).disabled(isWorking)
+                }
             }
         }
         .padding(12)

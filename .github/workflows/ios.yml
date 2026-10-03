@@ -87,6 +87,8 @@ jobs:
             artifacts/provider-tests
             xcrun swiftc -swift-version 5 -parse-as-library App/Model/ResponseTextCleaner.swift scripts/output-cleaner-tests.swift -o artifacts/output-cleaner-tests
             artifacts/output-cleaner-tests
+            xcrun swiftc -swift-version 5 -parse-as-library App/Images/MeshAsset.swift scripts/mesh-tests.swift -o artifacts/mesh-tests
+            artifacts/mesh-tests
           } 2>&1 | tee build/xcodebuild.log
           bash scripts/build-ios.sh
 

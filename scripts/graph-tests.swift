@@ -2,6 +2,16 @@ import Foundation
 
 @main struct GraphTests {
     @MainActor static func main() throws {
+        var chosen = ResearchCandidate(title: "Old title", url: URL(string: "https://example.org/a")!, snippet: "", status: .possible, reason: "", matchedClues: [], displayGroupID: "same", profileFields: ["John Example", "31", "Pambula", "Teacher"], decision: "selected")
+        precondition(chosen.profileLabel == "John Example, 31, Pambula, Teacher")
+        var duplicate = chosen
+        duplicate.decision = nil
+        duplicate = ResearchCandidate(title: "Other source", url: URL(string: "https://example.net/b")!, snippet: "", status: .possible, reason: "", matchedClues: [], displayGroupID: "same")
+        precondition(ResearchCandidate.visible([duplicate], earlier: [chosen]).first?.decision == "selected")
+        chosen.decision = "rejected"
+        precondition(ResearchCandidate.visible([duplicate], earlier: [chosen]).isEmpty)
+        let restored = try JSONDecoder().decode(ResearchCandidate.self, from: JSONEncoder().encode(chosen))
+        precondition(restored.decision == "rejected" && restored.profileLabel == chosen.profileLabel)
         let request = "Research Jane Example, a doctor in Melbourne at Harbour Clinic"
         let plan = ResearchPlan(request: request, subject: "Jane Example", keywords: ["Jane Example"], identityClues: ["Melbourne", "Harbour Clinic"])
         var graph = ResearchGraph()

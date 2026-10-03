@@ -214,7 +214,8 @@ struct RootView: View {
                 accent: Color(hex: ModelColors.hex(for: catalog.selectedModelID, in: modelColors)) ?? .blue,
                 onCancelActivity: { id, entryID in session?.cancelActivity(id, in: entryID) },
                 isWorking: session?.isWorking ?? false,
-                onSelectResearchCandidate: { id, entryID in session?.selectResearchCandidate(id, in: entryID) }
+                onSelectResearchCandidate: { id, entryID in session?.selectResearchCandidate(id, in: entryID) },
+                onRejectResearchCandidate: { id, entryID in session?.rejectResearchCandidate(id, in: entryID) }
             )
             // A tap anywhere above the bar closes the plus menu.
             .overlay {

@@ -584,5 +584,52 @@
         "required": []
       }
     }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "create_3d_object",
+      "description": "Create a simple local 3D object with interactive preview and exportable OBJ mesh. Compose up to 32 boxes and spheres. This is procedural geometry, not detailed sculpting. Use dimensions in metres; Y is up.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "Short object name"
+          },
+          "parts": {
+            "type": "string",
+            "description": "JSON array: [{\"kind\":\"box\",\"size\":[1,1,1],\"position\":[0,0,0]}]. kind is box or sphere; size is full width/height/depth; position is centre. Each size is 0–20; position is -50–50."
+          }
+        },
+        "required": [
+          "title",
+          "parts"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "create_image",
+      "description": "Generate an image locally using Apple Image Playground. Requires Apple Intelligence and its downloaded image model. Supports illustration, sketch and animation; no online service.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "description": "Description of the image"
+          },
+          "style": {
+            "type": "string",
+            "description": "animation, illustration or sketch"
+          }
+        },
+        "required": [
+          "prompt"
+        ]
+      }
+    }
   }
 ]
