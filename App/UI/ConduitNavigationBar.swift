@@ -33,6 +33,8 @@ struct ConduitNavigationBar: View {
         .padding(.horizontal, 16)
         .padding(.top, 4)
         .padding(.bottom, 3)
+        .onChange(of: selected) { _, _ in dragLocation = nil }
+        .onChange(of: style) { _, _ in dragLocation = nil }
     }
 
     private func iconBar(showText: Bool) -> some View {
@@ -63,28 +65,28 @@ struct ConduitNavigationBar: View {
 
     private var compactBar: some View {
         GeometryReader { geometry in
+            let width = geometry.size.width
+            let lightWidth = CGFloat(NavigationLight.width(in: Double(width)))
             ZStack(alignment: .leading) {
-                Capsule().fill(Color.secondary.opacity(0.35)).frame(height: 3)
+                Capsule().fill(Color.secondary.opacity(0.35)).frame(width: width, height: 3)
                 Capsule()
                     .fill(.white)
-                    .frame(width: 24, height: 3)
+                    .frame(width: lightWidth, height: 3)
                     .shadow(color: Color.conduitAccent.opacity(0.9), radius: 8)
-                    .offset(x: min(max((dragLocation ?? (geometry.size.width - 24)
-                        * CGFloat(activeIndex) / CGFloat(max(pages.count - 1, 1))), 0), geometry.size.width - 24))
+                    .offset(x: CGFloat(NavigationLight.offset(in: Double(width), index: activeIndex,
+                        count: pages.count, drag: dragLocation.map { Double($0) })))
             }
-            .frame(maxHeight: .infinity)
+            .frame(width: width, height: geometry.size.height, alignment: .leading)
             .contentShape(.rect)
             .onTapGesture { location in
-                let fraction = min(max(location.x / max(geometry.size.width, 1), 0), 1)
-                choose(pages[Int((fraction * CGFloat(pages.count - 1)).rounded())])
+                choose(pages[NavigationLight.index(at: Double(location.x), width: Double(width), count: pages.count)])
             }
             .gesture(DragGesture(minimumDistance: 4)
                 .onChanged { value in
-                    dragLocation = min(max(value.location.x - 12, 0), geometry.size.width - 24)
+                    dragLocation = value.location.x - lightWidth / 2
                 }
                 .onEnded { value in
-                    let fraction = min(max(value.location.x / max(geometry.size.width, 1), 0), 1)
-                    choose(pages[Int((fraction * CGFloat(pages.count - 1)).rounded())])
+                    choose(pages[NavigationLight.index(at: Double(value.location.x), width: Double(width), count: pages.count)])
                     dragLocation = nil
                 })
             .accessibilityLabel("Compact navigation, \(selected.rawValue) selected. Swipe to change page.")

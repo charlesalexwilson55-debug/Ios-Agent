@@ -33,8 +33,10 @@ struct GlassCommandBar: View {
             TextField(isModelLoaded ? "Ask anything, or tell Conduit what to do" : "Choose a model from the menu", text: $draft, axis: .vertical)
                 .font(.system(size: 17))
                 .lineLimit(1...6)
+                .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
                 .padding(.vertical, 10)
                 .focused($focused)
+                .accessibilityIdentifier("chat.composer")
                 .submitLabel(.send)
                 .onSubmit { send() }
             Button {

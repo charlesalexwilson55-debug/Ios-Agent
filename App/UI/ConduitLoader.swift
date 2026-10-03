@@ -29,6 +29,7 @@ struct ConduitLoader: View {
         .frame(maxWidth: .infinity, alignment: .center)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(status ?? "Working")
+        .allowsHitTesting(false)
     }
 
     static func position(at time: TimeInterval) -> Double { ConduitMotion.position(at: time) }

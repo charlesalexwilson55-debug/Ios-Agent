@@ -78,8 +78,27 @@ struct RootView: View {
                     .environment(catalog)
             }
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            ConduitNavigationBar(selected: $page, onSettings: { showingSettings = true })
+        .safeAreaInset(edge: .bottom, spacing: 16) {
+            // One layout owner reserves space for both controls. Nesting another
+            // bottom inset inside NavigationStack made the composer overlap tabs.
+            VStack(spacing: 4) {
+                if page == .chat {
+                    GlassCommandBar(
+                        draft: $draft,
+                        thinking: $thinking,
+                        online: $online,
+                        research: $research,
+                        menuOpen: $menuOpen,
+                        isWorking: session?.isWorking ?? false,
+                        isModelLoaded: isReady,
+                        onSend: send,
+                        onStop: { session?.cancel() }
+                    )
+                    .zIndex(1)
+                }
+                ConduitNavigationBar(selected: $page, onSettings: { showingSettings = true })
+            }
+            .frame(maxWidth: .infinity)
         }
         .overlay {
             if startupEnabled && startupVisible {
@@ -195,7 +214,6 @@ struct RootView: View {
             .overlay {
                 if menuOpen {
                     Color.black.opacity(0.06)
-                        .ignoresSafeArea()
                         .contentShape(.rect)
                         .onTapGesture { menuOpen = false }
                         .accessibilityHidden(true)
@@ -231,19 +249,6 @@ struct RootView: View {
                     .disabled(session?.transcript.isEmpty ?? true)
                     .accessibilityLabel("New conversation")
                 }
-            }
-            .safeAreaInset(edge: .bottom, spacing: 16) {
-                GlassCommandBar(
-                    draft: $draft,
-                    thinking: $thinking,
-                    online: $online,
-                    research: $research,
-                    menuOpen: $menuOpen,
-                    isWorking: session?.isWorking ?? false,
-                    isModelLoaded: isReady,
-                    onSend: send,
-                    onStop: { session?.cancel() }
-                )
             }
         }
         .id(appearanceKey)
