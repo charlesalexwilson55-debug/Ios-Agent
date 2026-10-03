@@ -9,33 +9,34 @@ struct ActivityCard: View {
     let onCancel: (UUID) -> Void
 
     @State private var expanded: Set<UUID> = []
+    @State private var showingDetails = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                Image(systemName: "list.bullet.rectangle")
-                    .foregroundStyle(accent)
-                Text(log.title)
-                    .font(.system(size: 14, weight: .semibold))
-                    .lineLimit(2)
-                Spacer(minLength: 0)
-                Text(progressText)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
+        VStack(alignment: .leading, spacing: 10) {
+            if let running = log.steps.last(where: { $0.status == .running }) {
+                ConduitLoader(color: accent, status: running.title)
+            } else {
+                VStack(spacing: 6) {
+                    Capsule().strokeBorder(.primary.opacity(0.65), lineWidth: 1.2)
+                        .frame(width: 38, height: 13)
+                        .overlay { Circle().fill(accent).frame(width: 7, height: 7) }
+                    Text(log.steps.last?.title ?? "Preparing research")
+                        .font(.caption2.weight(.medium)).foregroundStyle(.secondary)
+                }.frame(maxWidth: .infinity)
             }
-            .padding(.bottom, 8)
-
-            ForEach(log.steps) { step in
-                stepRow(step)
-                if expanded.contains(step.id) || step.status == .running {
-                    itemList(step)
+            DisclosureGroup("Sources and activity", isExpanded: $showingDetails) {
+                ForEach(log.steps) { step in
+                    stepRow(step)
+                    if expanded.contains(step.id) || step.status == .running {
+                        itemList(step)
+                    }
                 }
             }
+            .font(.caption)
+            .tint(.secondary)
         }
-        .padding(12)
+        .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassEffect(.regular, in: .rect(cornerRadius: 16))
     }
 
     private var progressText: String {

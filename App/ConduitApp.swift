@@ -232,19 +232,19 @@ struct RootView: View {
                     .accessibilityLabel("New conversation")
                 }
             }
-        }
-        .safeAreaInset(edge: .bottom, spacing: 16) {
-            GlassCommandBar(
-                draft: $draft,
-                thinking: $thinking,
-                online: $online,
-                research: $research,
-                menuOpen: $menuOpen,
-                isWorking: session?.isWorking ?? false,
-                isModelLoaded: isReady,
-                onSend: send,
-                onStop: { session?.cancel() }
-            )
+            .safeAreaInset(edge: .bottom, spacing: 16) {
+                GlassCommandBar(
+                    draft: $draft,
+                    thinking: $thinking,
+                    online: $online,
+                    research: $research,
+                    menuOpen: $menuOpen,
+                    isWorking: session?.isWorking ?? false,
+                    isModelLoaded: isReady,
+                    onSend: send,
+                    onStop: { session?.cancel() }
+                )
+            }
         }
         .id(appearanceKey)
         .onChange(of: page) { _, _ in

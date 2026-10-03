@@ -143,6 +143,10 @@ final class WebTools: ToolProviding {
         if truncated {
             detail["truncated"] = "Only the start of the page is included."
         }
+        if !page.links.isEmpty {
+            detail["links"] = page.links.map { "\($0.title): \($0.url.absoluteString)" }.joined(separator: "\n")
+            detail["note"] = Self.untrusted + " Name this site when you use it. Follow relevant links with read_page to investigate further."
+        }
         return .success("read_page", "Read \(page.url.host ?? "page")", detail: detail)
     }
 

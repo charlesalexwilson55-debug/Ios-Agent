@@ -14,6 +14,12 @@ final class PageReader: NSObject {
         let title: String
         let url: URL
         let text: String
+        let links: [Link]
+    }
+
+    struct Link {
+        let title: String
+        let url: URL
     }
 
     enum ReadError: LocalizedError {
@@ -102,7 +108,12 @@ final class PageReader: NSObject {
             throw ReadError.noText
         }
         let finalURL = (object["url"] as? String).flatMap { URL(string: $0) } ?? url
-        return Page(title: object["title"] as? String ?? "", url: finalURL, text: text)
+        let links = (object["links"] as? [[String: String]] ?? []).compactMap { item -> Link? in
+            guard let raw = item["url"], let url = URL(string: raw),
+                  ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil else { return nil }
+            return Link(title: String((item["title"] ?? raw).prefix(120)), url: url)
+        }
+        return Page(title: object["title"] as? String ?? "", url: finalURL, text: text, links: Array(links.prefix(20)))
     }
 
     private func navigationEnded(error: String?) {
@@ -139,6 +150,13 @@ final class PageReader: NSObject {
           let text = textOf(document.querySelector('article') ||
             document.querySelector('main') || document.querySelector('[role="main"]'));
           if (text.trim().length < 400) text = textOf(document.body);
+          const seen = new Set();
+          const links = Array.from(document.querySelectorAll('a[href]')).map(a => ({
+            title: (a.innerText || a.textContent || '').replace(/\s+/g, ' ').trim(), url: a.href
+          })).filter(link => {
+            if (!link.title || !/^https?:\/\//i.test(link.url) || seen.has(link.url)) return false;
+            seen.add(link.url); return true;
+          }).slice(0, 20);
           text = text.split('\n')
             .map((line) => line.replace(/\s+/g, ' ').trim())
             .filter((line) => line.length > 1)
@@ -146,7 +164,8 @@ final class PageReader: NSObject {
           return JSON.stringify({
             title: document.title || '',
             text: text.slice(0, 20000),
-            url: location.href
+            url: location.href,
+            links
           });
         })()
         """#

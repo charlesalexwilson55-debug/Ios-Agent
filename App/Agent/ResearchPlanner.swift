@@ -5,7 +5,7 @@ import Foundation
 enum ResearchPlanner {
     // Context terms end an unquoted name, but are retained as query keywords.
     // Do not shorten arbitrary three- or four-part names to their first two words.
-    static let contextTerms: Set<String> = ["soccer", "football", "basketball", "netball", "cricket", "rugby", "tennis", "hockey", "volleyball", "athlete", "player", "doctor", "physician", "surgeon", "dentist", "professor", "researcher", "scientist", "lawyer", "solicitor", "architect", "engineer", "teacher", "author", "nurse"]
+    static let contextTerms: Set<String> = ["soccer", "football", "basketball", "netball", "cricket", "rugby", "tennis", "hockey", "volleyball", "athlete", "player", "doctor", "physician", "surgeon", "dentist", "professor", "researcher", "scientist", "lawyer", "solicitor", "architect", "engineer", "teacher", "author", "nurse", "musician", "bartender", "singer", "actor", "artist", "designer"]
     static func make(request: String, reply: String) -> ResearchPlan {
         var fields: [String: [String]] = [:]
         func add(_ label: String, _ value: String) {
@@ -52,7 +52,7 @@ enum ResearchPlanner {
             contextTerms.contains(term) && !(name.map { ResearchPlan.contains(term, in: $0) } ?? false)
         }
         let keywords = values(["keyword", "keywords", "occupation", "profession", "role"])
-            + (name.map { [$0] } ?? []) + clues + contextKeywords
+            + (name.map { [$0] } ?? []) + clues + contextKeywords + requestDetails(request)
         // NONE is not permission to relax person matching. Unknown subject stays
         // discovery-only, using the complete request, until the user picks a page.
         var seen = Set<String>()
@@ -65,7 +65,7 @@ enum ResearchPlanner {
     /// Conservative extraction from the request itself. It need not handle every
     /// natural-language form: unknown forms still produce discovery searches.
     static func requestName(_ request: String) -> String? {
-        for pattern in [#"(?i)\b(?:full name|name)\s*[:=]\s*([^,;\n]+)"#,
+        for pattern in [#"(?i)\b(?:full name|name)\s*[:=]\s*([^,;\n]+?)(?=\s+(?:city|town|location|age|job|title|profession|employer|sport)\s*[:=]|[,;\n]|$)"#,
                         #"(?i)\b(?:full name|name|named|called)\s+(?:is\s+)?([^,;\n]+)"#,
                         #"[“\"]([^”\"]+)[”\"]"#] {
             if let captured = capture(pattern, in: request), let name = cleanName(captured) { return name }
@@ -78,7 +78,8 @@ enum ResearchPlanner {
         let untitled = value.replacingOccurrences(of: #"(?i)^(?:dr\.?|doctor|prof\.?|professor)\s+"#, with: "", options: .regularExpression)
         let context = contextTerms.sorted().joined(separator: "|")
         let withoutContext = untitled.replacingOccurrences(of: "(?i)\\s+(?:" + context + ")\\b.*$", with: "", options: .regularExpression)
-        let trimmed = withoutContext.replacingOccurrences(of: #"(?i)\s+(?:who|aged|age|is|was|works|working|from|in|at|based|the|a|an)\b.*$"#,
+        let withoutAge = withoutContext.replacingOccurrences(of: #"\s+\d{1,3}\b.*$"#, with: "", options: .regularExpression)
+        let trimmed = withoutAge.replacingOccurrences(of: #"(?i)\s+(?:who|aged|age|is|was|works|working|from|in|at|based|the|a|an)\b.*$"#,
                                                   with: "", options: .regularExpression)
             .components(separatedBy: CharacterSet(charactersIn: ",;\n")).first ?? value
         let name = trimmed.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -91,7 +92,7 @@ enum ResearchPlanner {
 
     static func requestClues(_ request: String) -> [String] {
         let patterns = [
-            #"(?i)\b(?:city|town|location|employer|organisation|organization|company)\s*[:=]\s*([^,;\n]+)"#,
+            #"(?i)\b(?:city|town|location|employer|organisation|organization|company)\s*[:=]\s*([^,;\n]+?)(?=\s+(?:name|city|town|location|age|job|title|profession|employer|sport)\s*[:=]|[,;\n]|$)"#,
             #"(?i)\b(?:in|from|at|based in|works at|working at)\s+([^,;\n]+?)(?=\s+(?:at|in|who|aged|age|works|working)\b|[,;\n]|$)"#
         ]
         var seen = Set<String>()
@@ -105,6 +106,31 @@ enum ResearchPlanner {
             }
         }
         return result
+    }
+
+    /// Public context supplied by the user. Age never proves identity and is
+    /// relaxed in later query variants. Private addresses remain excluded by
+    /// the research source policy, independently of model planning.
+    static func requestDetails(_ request: String) -> [String] {
+        // Preserve compact comma-separated context rather than silently losing
+        // an unlabelled town, club, title or adult age supplied after the name.
+        var details = request.components(separatedBy: CharacterSet(charactersIn: ",;\n")).dropFirst()
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && $0.count <= 120 }
+        let patterns = [
+            #"(?i)\b(?:job|job title|title|occupation|profession|role|sport|additional detail)\s*[:=]\s*([^,;\n]+?)(?=\s+(?:name|city|town|location|age|job|title|profession|employer|sport)\s*[:=]|[,;\n]|$)"#,
+            #"(?i)\b(?:age[d]?\s*[:=]?\s*)(\d{1,3})\b"#,
+            #"(?i)\b(\d{1,3})\s*(?:years? old|year[- ]old)\b"#
+        ]
+        let source = request as NSString
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            for match in regex.matches(in: request, range: NSRange(location: 0, length: source.length)) {
+                let detail = source.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !detail.isEmpty { details.append(detail) }
+            }
+        }
+        return details
     }
 
     private static func capture(_ pattern: String, in text: String) -> String? {

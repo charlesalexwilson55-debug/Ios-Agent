@@ -152,8 +152,24 @@ struct ResearchGraph: Codable, Sendable {
     mutating func extractLiteral(sourceID: String, plan: ResearchPlan) {
         guard let source = sources.first(where: { $0.id == sourceID }), plan.subject != nil else { return }
         let quotes = plan.selectedStatements(source.text).filter { !ResearchSourcePolicy.isSensitive($0) }
-        let rows: [[String: String]] = quotes.map {
+        var rows: [[String: String]] = quotes.map {
             ["predicate": "statement", "object": $0, "evidence_quote": $0]
+        }
+        // Recover an explicit role when the model returned malformed output.
+        // Only direct name/role grammar qualifies, not a nearby person's job.
+        if let subject = plan.subject {
+            let sports: Set<String> = ["soccer", "football", "basketball", "netball", "cricket", "rugby", "tennis", "hockey", "volleyball"]
+            let roles = ResearchPlanner.contextTerms.subtracting(sports).sorted().joined(separator: "|")
+            let pattern = "(?i)" + NSRegularExpression.escapedPattern(for: subject)
+                + #"\s*(?:,\s*|\s+(?:is|works as)\s+)(?:an?\s+)?(?:professional\s+)?("# + roles + #")\b"#
+            if let regex = try? NSRegularExpression(pattern: pattern) {
+                for quote in quotes {
+                    let text = quote as NSString
+                    if let match = regex.firstMatch(in: quote, range: NSRange(location: 0, length: text.length)) {
+                        rows.append(["predicate": "role", "object": text.substring(with: match.range(at: 1)), "evidence_quote": quote])
+                    }
+                }
+            }
         }
         guard let data = try? JSONSerialization.data(withJSONObject: rows),
               let output = String(data: data, encoding: .utf8) else { return }
@@ -287,18 +303,30 @@ struct ResearchGraph: Codable, Sendable {
         }
     }
 
-    func report() -> String {
+    func focusedSourceIDs(selection: ResearchCandidate?) -> Set<String>? {
+        guard let selection else { return nil }
+        guard let source = sources.first(where: { ResearchSourcePolicy.canonical($0.url) == ResearchSourcePolicy.canonical(selection.url) }),
+              let candidate = candidates.first(where: { $0.sourceID == source.id }) else { return [] }
+        return Set(candidates.filter { $0.groupID == candidate.groupID }.map(\.sourceID))
+    }
+
+    func report(sourceIDs: Set<String>? = nil) -> String {
         var paragraphs: [String] = []
         for group in displayGroups() {
-            if group.sourceIDs.count > 1 {
+            let shown = group.sourceIDs.filter { sourceIDs?.contains($0) ?? true }
+            if shown.isEmpty { continue }
+            if shown.count > 1 {
                 paragraphs.append("**Sources sharing \(group.name) and \(group.attributes.joined(separator: ", "))**\n\nShared details organise these sources; they do not prove the profiles are the same person.")
             }
             for candidate in candidates.filter({ group.sourceIDs.contains($0.sourceID) }) {
+            if let sourceIDs, !sourceIDs.contains(candidate.sourceID) { continue }
             guard let source = sources.first(where: { $0.id == candidate.sourceID }) else { continue }
             let items = claims.filter { $0.subjectID == candidate.entityID }
             guard !items.isEmpty else { continue }
             paragraphs.append("**[\(source.title)](\(source.url.absoluteString))** — \(candidate.reason). Identity remains provisional.")
+            var seenQuotes = Set<String>()
             for claim in items {
+                guard seenQuotes.insert(ResearchPlan.normalized(claim.text)).inserted else { continue }
                 let label = claim.status == .corroborated ? "Corroborated across distinct, nonduplicate sites" : claim.status == .disputed ? "Unresolved difference" : "Reported by this source"
                 paragraphs.append("- \(claim.text) — *\(label)* [source](\(source.url.absoluteString))")
             }

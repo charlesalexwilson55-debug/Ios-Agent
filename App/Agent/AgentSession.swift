@@ -112,6 +112,8 @@ final class AgentSession {
     private var pendingImageIDs: [UUID] = []
     private var pendingResearchSelection: ResearchSelection?
     private var pendingResearchRun: ResearchRun?
+    private var researchClarification: ResearchClarification?
+    private var pendingRefinedResearch = false
     @ObservationIgnored private var researchOriginalModel: ModelRunner.Configuration?
     @ObservationIgnored private var unavailableResearchModels: Set<String> = []
 
@@ -170,7 +172,19 @@ final class AgentSession {
                 researchSelection: ResearchSelection? = nil, resume: ResearchRun? = nil) {
         var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !imageData.isEmpty, !isWorking else { return }
-        pendingResearchSelection = researchSelection
+        var selected = researchSelection
+        pendingRefinedResearch = false
+        if selected == nil, resume == nil, imageData.isEmpty, libraryPhotoID == nil,
+           let clarification = researchClarification {
+            if let candidate = clarification.selection(for: trimmed) {
+                selected = ResearchSelection(request: clarification.request(for: candidate), candidate: candidate)
+            } else if let refined = clarification.refinedRequest(with: trimmed) {
+                trimmed = refined
+                pendingRefinedResearch = true
+            }
+        }
+        researchClarification = nil
+        pendingResearchSelection = selected
         pendingResearchRun = resume
         if trimmed.isEmpty { trimmed = "What's in this picture?" }
         pendingImageIDs = imageData.compactMap { ImageStore.shared.addPhoto($0, prompt: trimmed)?.id }
@@ -200,8 +214,12 @@ final class AgentSession {
               let entry = transcript.first(where: { $0.id == entryID }),
               let request = entry.researchRequest,
               let candidate = entry.researchCandidates.first(where: { $0.id == candidateID }) else { return }
+        let focusedRequest = researchClarification?.request(for: candidate) ?? request
+        if let index = transcript.firstIndex(where: { $0.id == entryID }) {
+            transcript[index].researchCandidates = [candidate]
+        }
         submit("Research this profile: \(candidate.url.absoluteString)",
-               researchSelection: ResearchSelection(request: request, candidate: candidate))
+               researchSelection: ResearchSelection(request: focusedRequest, candidate: candidate))
     }
 
     func resumeResearch(_ run: ResearchRun) {
@@ -276,6 +294,8 @@ final class AgentSession {
         lastTurnUsedPhoneTools = false
         readWebContent = false
         pendingResearchSelection = nil
+        researchClarification = nil
+        pendingRefinedResearch = false
         chatID = UUID()
     }
 
@@ -353,7 +373,9 @@ final class AgentSession {
         let request = currentRequest.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let asksForResearch = ["research ", "investigate ", "look into ", "researching "]
             .contains(where: { request.hasPrefix($0) })
-        if researchEnabled || asksForResearch || selection != nil || resume != nil {
+        let refinedResearch = pendingRefinedResearch
+        pendingRefinedResearch = false
+        if researchEnabled || asksForResearch || selection != nil || resume != nil || refinedResearch {
             await runResearch(selection: selection, resume: resume)
             return
         }
@@ -363,6 +385,13 @@ final class AgentSession {
         let tools = TaskRouter.tools(from: registry.specs, mode: mode, online: online)
 
         var systemPrompt = SystemPrompt.build(tools: tools, mode: mode)
+        if online {
+            let searchStatus = SearchKeyStore.hasResearchKey
+                ? "Full-web search provider keys are configured; report any provider failure."
+                : "General web search has no provider key; web_search is limited to Wikipedia, but read_page can still read public URLs."
+            systemPrompt += "\n\nInternet is connected. read_page returns public page text and links you can follow with read_page. "
+                + searchStatus + " Check available tools before claiming you have no access."
+        }
         if let profile = ProfileStore.shared.promptSection {
             systemPrompt += "\n\n" + profile
         }
@@ -652,9 +681,20 @@ final class AgentSession {
         readWebContent = true
         Diagnostics.log("research searches=\(findings.searches) pages=\(findings.pagesChecked) "
             + "matched=\(findings.pagesMatched) facts=\(findings.facts.count)")
+        if selection == nil, let graph = findings.run?.graph,
+           let clarification = ResearchClarification.make(request: request, candidates: findings.candidates, graph: graph) {
+            researchClarification = clarification
+            var question = TranscriptEntry(kind: .assistant, text: clarification.question)
+            question.researchCandidates = clarification.choices.map(\.candidate)
+            question.researchRequest = request
+            transcript.append(question)
+            history.append(.assistant(clarification.question))
+            reporter.finish(reporter.begin("Waiting for your profile choice", detail: "Tell me which job, city or organisation matches"))
+            return
+        }
         if !findings.candidates.isEmpty {
             var choices = TranscriptEntry(kind: .assistant, text: "Sources to inspect")
-            choices.researchCandidates = findings.candidates
+            choices.researchCandidates = selection.map { selected in findings.candidates.filter { $0.url == selected.candidate.url } } ?? findings.candidates
             choices.researchRequest = request
             transcript.append(choices)
         }
@@ -674,7 +714,8 @@ final class AgentSession {
         }
 
         let writing = reporter.begin("Writing evidence report", detail: "Keeping each source profile and its quotations separate")
-        var replyText = findings.run?.graph.report() ?? findings.facts.map { "- \($0.text) [\($0.site)](\($0.url.absoluteString))" }.joined(separator: "\n")
+        var replyText = findings.run.map { run in run.graph.report(sourceIDs: run.graph.focusedSourceIDs(selection: run.selection)) }
+            ?? findings.facts.map { "- \($0.text) [\($0.site)](\($0.url.absoluteString))" }.joined(separator: "\n")
         replyText += "\n\n" + findings.identitySummary + "\n" + findings.stopReason
         if findings.combinationsSkipped > 0 || findings.pagesSkipped > 0 {
             replyText += "\nBudget omitted \(findings.combinationsSkipped) queries and \(findings.pagesSkipped) discovered pages."

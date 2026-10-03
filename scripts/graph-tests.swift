@@ -56,8 +56,10 @@ import Foundation
             text: "Jane Example works as a doctor at Harbour Clinic.", published: nil, provider: "fixture")!
         withoutClues.extractLiteral(sourceID: plainSource, plan: plain)
         withoutClues.resolve(plan: plain)
-        precondition(withoutClues.claims.count == 1 && withoutClues.candidates[0].anchors.isEmpty,
+        precondition(withoutClues.claims.count == 2 && withoutClues.candidates[0].anchors.isEmpty,
             "Name-only source information stays available without claiming identity confirmation")
+        precondition(withoutClues.claims.contains { $0.predicate == "role" && $0.text.contains("works as a doctor") },
+            "Recover explicit public roles for profile-choice questions when model formatting fails")
         run.graph = graph
         run.plan = plan
         run.stage = .extracting

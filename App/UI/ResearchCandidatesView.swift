@@ -82,7 +82,7 @@ struct ResearchCandidatesView: View {
 
                 Spacer(minLength: 0)
 
-                Button("Research this profile") {
+                Button("Choose this profile") {
                     onSelect(candidate)
                 }
                 .buttonStyle(.borderedProminent)

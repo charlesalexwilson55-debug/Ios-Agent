@@ -17,6 +17,25 @@ Unread pages remain queued across rounds. Temporary provider failures continue
 with other queries; credential and quota failures stop with an explicit reason.
 All searches remain bounded by the existing search, page, round and time budgets.
 
+Structured name, city, age and job/title fields are recognized without relying on
+model formatting. Adult age is a discovery hint, never identity proof. Private
+home addresses are excluded. When attributable sources leave multiple profiles,
+chat asks which person the user means before producing a combined report. A
+profile choice or unique quoted job/city reply focuses the next search. Other
+profiles stay separate in the archive; additional sources require multiple
+matching quoted distinguishing details before entering the selected report.
+
+Page reading now returns public HTTP/HTTPS links that the model can follow with
+read_page. Chat receives the actual network/search-key state. This provides web
+search and page browsing, not unrestricted desktop shell access or control of
+every iOS app. Search providers still require working credentials; page reading
+can use a public URL without a search key.
+
+Research activity appears as a small conduit and current action text. Source
+details and cancellation controls expand on demand. The composer now belongs to
+the transcript's navigation layout. A real tail spacer and scrolling on activity
+updates keep growing research modules above the input bar.
+
 Sources are read before identity matching. Literal attributable source statements
 survive malformed model extraction. A name alone remains a possible profile;
 independent sources with multiple supplied anchors provide stronger provisional

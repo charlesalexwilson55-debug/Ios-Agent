@@ -254,7 +254,7 @@ import Foundation
                         let before = state.graph.claims.count
                         if selected {
                             state.graph.extract("", sourceID: sourceID, plan: plan, selected: true)
-                        } else if state.selection == nil {
+                        } else if state.selection == nil || focusCompatible(page.text ?? "", plan: plan) {
                             do {
                                 let prompt = "Subject: \(plan.subject ?? state.request)\nSource: \(page.url.absoluteString)\nPAGE DATA:\n\(page.text ?? "")"
                                 if let output = try await activity.run(item, { try await self.model(Self.extractionPrompt, prompt) }) {
@@ -265,7 +265,7 @@ import Foundation
                                 state.limitations.append("A local extraction failed; its source is retained for inspection.")
                             }
                         }
-                        if state.selection == nil && state.graph.claims.count == before {
+                        if (state.selection == nil || focusCompatible(page.text ?? "", plan: plan)) && state.graph.claims.count == before {
                             state.graph.extractLiteral(sourceID: sourceID, plan: plan)
                         }
                         activity.updateItem(item, subtitle: "\(state.graph.claims.count - before) grounded claims; source retained separately", status: .done)
@@ -278,6 +278,15 @@ import Foundation
         }
         if activity.isStopped(step) { state.skippedPages += state.pendingSources.count; state.pendingSources = [] }
         state.stage = .resolving
+    }
+
+    private func focusCompatible(_ text: String, plan: ResearchPlan) -> Bool {
+        guard let selection = state.selection else { return true }
+        let selectedQuotes = plan.selectedStatements(selection.sourceText ?? "").joined(separator: "\n")
+        let anchors = Set(plan.matchedClues(in: selectedQuotes))
+        return plan.selectedStatements(text).contains { quote in
+            anchors.intersection(plan.matchedClues(in: quote)).count >= 2
+        }
     }
 
     private func verify() async throws {
@@ -334,10 +343,14 @@ import Foundation
     private func findings() -> ResearchEngine.Findings {
         if let plan = state.plan { state.graph.resolve(plan: plan) }
         let graph = state.graph
+        let focusedIDs = graph.focusedSourceIDs(selection: state.selection)
         let displayGroups = graph.displayGroups()
+        var seenFacts = Set<String>()
         let facts: [ResearchEngine.Fact] = graph.claims.compactMap { claim in
             guard let ev = graph.evidence.first(where: { claim.evidenceIDs.contains($0.id) }),
-                  let source = graph.sources.first(where: { $0.id == ev.sourceID }) else { return nil }
+                  let source = graph.sources.first(where: { $0.id == ev.sourceID }),
+                  focusedIDs?.contains(source.id) ?? true,
+                  seenFacts.insert(source.id + ":" + ResearchPlan.normalized(claim.text)).inserted else { return nil }
             return .init(text: claim.text, site: source.url.host ?? source.title, url: source.url, evidence: ev.quote)
         }
         let candidates: [ResearchCandidate] = graph.candidates.prefix(12).compactMap { candidate in

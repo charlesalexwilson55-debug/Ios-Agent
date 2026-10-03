@@ -26,7 +26,7 @@ struct TranscriptView: View {
                             .id(entry.id)
                             .transition(.opacity.combined(with: .move(edge: .bottom)))
                     }
-                    if isWorking {
+                    if isWorking && !hasActivityModule {
                         ConduitLoader(color: accent, status: activityLabel)
                             .padding(.vertical, 10)
                     }
@@ -35,12 +35,11 @@ struct TranscriptView: View {
                     // streaming; a zero-height tail anchor always lands at the
                     // true bottom.
                     Color.clear
-                        .frame(height: 1)
+                        .frame(height: 72)
                         .id(Self.bottomAnchor)
                 }
                 .padding(.horizontal, 18)
                 .padding(.top, 12)
-                .padding(.bottom, 48)
             }
             // The glass bar floats over the top edge of the scroll content;
             // this keeps the system's edge-fade consistent with it.
@@ -48,12 +47,17 @@ struct TranscriptView: View {
             .onChange(of: entries.count) { _, _ in scroll(proxy) }
             .onChange(of: entries.last?.text) { _, _ in scroll(proxy) }
             .onChange(of: entries.last?.reasoning) { _, _ in scroll(proxy) }
+            .onChange(of: entries.compactMap(\.activity)) { _, _ in scroll(proxy) }
             .onChange(of: isWorking) { _, _ in scroll(proxy) }
         }
         .background(BackdropView())
     }
 
     private static let bottomAnchor = "conduit.transcript.bottom"
+
+    private var hasActivityModule: Bool {
+        entries.last?.kind == .activity
+    }
 
     private var activityLabel: String {
         if let step = entries.reversed().compactMap(\.activity).first?.steps.last(where: { $0.status == .running }) {

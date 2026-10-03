@@ -105,6 +105,11 @@ private actor ResearchAttemptCounter {
         precondition(!athlete.hasSubject(in: "Morgan Track with Example Club"))
         let sportOnly = ResearchPlanner.make(request: "Morgan Example soccer", reply: "")
         precondition(sportOnly.subject == "Morgan Example" && sportOnly.clues.isEmpty)
+        let labelled = ResearchPlanner.make(request: "Name: Morgan Example City: Melbourne Age: 18 Job: musician", reply: "")
+        precondition(labelled.subject == "Morgan Example")
+        precondition(labelled.clues.contains("Melbourne"))
+        precondition(labelled.keywords.contains("18") && labelled.keywords.contains("musician"))
+        precondition(labelled.queries.first?.contains("18") == true, "Use supplied adult age as discovery context, not identity proof")
 
         let profile = "  **NAME:** Jane Example\nLOCATION: Melbourne\nORGANISATION: Harbour Clinic\nKEYWORD: Jane Example\nKEYWORD: doctor\nKEYWORD: Melbourne\nKEYWORD: Harbour Clinic"
         let sentence = "Jane Example is a doctor at Harbour Clinic in Melbourne."
@@ -165,6 +170,14 @@ private actor ResearchAttemptCounter {
         let separated = try await selectionWithOther.run()
         precondition(separated.facts.allSatisfy { $0.url == source.url }, "Selection must not merge a different same-name profile")
         precondition(separated.candidates.contains { $0.url == otherSource.url && $0.status == .possible })
+        let extraSentence = "Jane Example works at Harbour Clinic in Melbourne. Jane Example received a clinical teaching award."
+        let extraSource = WebSearch.Result(title: "Jane Example award", url: URL(string: "https://medical-news.example/jane-award")!, site: "medical-news.example", summary: extraSentence, published: nil, rawContent: extraSentence)
+        let selectedExpansion = ResearchEngine(request: request, budget: .normal, ask: { _, _ in "[]" }, activity: reporter,
+            search: { _ in WebSearch.Response(provider: .tavily, results: [extraSource, otherSource]) }, selection: recovered.candidates[0])
+        let expandedProfile = try await selectedExpansion.run()
+        precondition(expandedProfile.facts.contains { $0.url == extraSource.url }, "A selected profile may expand through two matching quoted anchors")
+        precondition(expandedProfile.facts.contains { $0.text.contains("teaching award") }, "Find additional public facts, not only repeat supplied details")
+        precondition(expandedProfile.facts.allSatisfy { $0.url != otherSource.url }, "Do not include a different namesake's facts in the focused report")
         let bio = "Jane Example\nShe works at Harbour Clinic in Melbourne.\nJohn Other\nHe won an award."
         let profileStatements = plan.selectedStatements(bio)
         precondition(profileStatements.count == 1 && profileStatements[0].contains("She works"))
@@ -236,6 +249,32 @@ private actor ResearchAttemptCounter {
             search: { _ in preconditionFailure("No search after deadline") })
         let timedFindings = try await timed.run()
         precondition(timedFindings.stopReason.contains("active-time budget"))
+
+        let ambiguousPlan = ResearchPlanner.make(request: "Research Taylor Example", reply: "")
+        var ambiguousGraph = ResearchGraph()
+        for (job, city) in [("musician", "Melbourne"), ("bartender", "Sydney")] {
+            let quote = "Taylor Example is a \(job) in \(city)."
+            let sourceID = ambiguousGraph.addSource(url: URL(string: "https://\(job).example/taylor")!, title: "Taylor Example \(job)", text: quote, published: nil, provider: "fixture")!
+            let rows = [["predicate": "role", "object": job, "evidence_quote": quote], ["predicate": "location", "object": city, "evidence_quote": quote]]
+            let output = String(data: try JSONSerialization.data(withJSONObject: rows), encoding: .utf8)!
+            ambiguousGraph.extract(output, sourceID: sourceID, plan: ambiguousPlan, selected: false)
+        }
+        ambiguousGraph.resolve(plan: ambiguousPlan)
+        let ambiguousCandidates = ambiguousGraph.sources.map { source in
+            ResearchCandidate(title: source.title, url: source.url, snippet: source.text, status: .possible, reason: "Unverified", matchedClues: [], sourceText: source.text)
+        }
+        let clarification = ResearchClarification.make(request: ambiguousPlan.request, candidates: ambiguousCandidates, graph: ambiguousGraph)!
+        precondition(clarification.question.contains("Which person") && clarification.choices.count == 2)
+        precondition(clarification.selection(for: "the musician")?.url.host == "musician.example")
+        precondition(clarification.selection(for: "2")?.url.host == "bartender.example")
+        precondition(clarification.selection(for: "Taylor Example") == nil, "A shared name is not a disambiguating answer")
+        let musician = clarification.selection(for: "musician")!
+        let narrowed = ResearchPlanner.make(request: clarification.request(for: musician), reply: "")
+        precondition(narrowed.subject == "Taylor Example" && narrowed.clues.contains("Melbourne"))
+        precondition(narrowed.keywords.contains("musician"))
+        precondition(clarification.refinedRequest(with: "job: designer")?.contains("designer") == true)
+        precondition(clarification.refinedRequest(with: "what is the weather today") == nil, "A new question must not become a profile refinement")
+        print("Research clarification and focused expansion tests passed")
         print("Research engine fixture regression tests passed")
     }
 }
