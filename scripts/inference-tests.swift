@@ -39,6 +39,7 @@ private actor Probe {
         let prior = "Research Payton Example, Harbour NSW, soccer"
         let cases: [(String, ResearchTurnRouter.Route)] = [
             ("Payton is a boy", .correction), ("he is not a girl", .correction),
+            ("he's a boy", .correction), ("Payton’s a boy", .correction), ("he/him", .correction),
             ("Actually, Payton lives in Sydney", .correction), ("Payton is a teacher", .correction),
             ("thanks", .conversation), ("why did you search that?", .conversation),
             ("what did you find?", .conversation), ("write some code", .conversation),

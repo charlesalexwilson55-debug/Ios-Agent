@@ -11,9 +11,14 @@ enum ResearchTurnRouter {
 
     static func route(_ message: String, enabled: Bool, previousRequest: String?) -> Route {
         let text = message.trimmingCharacters(in: .whitespacesAndNewlines)
-        let lower = text.lowercased()
+        var lower = text.lowercased().replacingOccurrences(of: "’", with: "'")
+        for (short, expanded) in [("he's", "he is"), ("she's", "she is"), ("they're", "they are"), ("it's", "it is")] {
+            lower = lower.replacingOccurrences(of: "\\b" + NSRegularExpression.escapedPattern(for: short) + "\\b", with: expanded, options: .regularExpression)
+        }
+        lower = lower.replacingOccurrences(of: #"([\p{L}])'s\s+(?=(?:a\s+)?(?:boy|girl|man|woman|male|female)\b)"#, with: "$1 is ", options: .regularExpression)
         let words = ResearchPlan.words(text)
         guard !words.isEmpty else { return .conversation }
+        if previousRequest != nil, ["he him", "she her", "they them", "not a girl", "not a boy"].contains(ResearchPlan.normalized(lower)) { return .correction }
         let explicit = #"^(?:(?:please|can you|could you)\s+)*(?:research|investigate|look into|find information (?:on|about)|search for|look up)\b"#
         if lower.range(of: explicit, options: .regularExpression) != nil { return .research(text) }
         let correction = #"^(?:(?:actually|correction|no|nope)[,:]?\s+)?(?:(?:he|she|they|it|[\p{L}'’-]+(?:\s+[\p{L}'’-]+){0,4})\s+(?:is|isn't|is not|are|aren't|was|wasn't|lives in|works at|uses)\s+(?:(?:a|an|the)\s+)?(?:boy|girl|man|woman|male|female|he|she|they|not|from|based|called|named)\b|(?:he|she|they)\s+(?:lives in|works at)\b)"#
