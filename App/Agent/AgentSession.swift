@@ -372,7 +372,7 @@ final class AgentSession {
         readWebContent = history.contains(where: { $0.role == .tool })
         lastTurnUsedPhoneTools = readWebContent
         callCounter = history.reduce(0) { $0 + $1.calls.count }
-        researchCorrections = Array(history.filter { $0.role == .user && ResearchTurnRouter.route($0.content, enabled: false, previousRequest: nil) == .correction }.map(\.content).suffix(6))
+        researchCorrections = Array(history.filter { $0.role == .user && ResearchTurnRouter.route($0.content, enabled: false, previousRequest: previousResearchRequest) == .correction }.map(\.content).suffix(6))
     }
 
     /// Saves the finished exchange to the memory bank.
@@ -450,6 +450,10 @@ final class AgentSession {
         let tools = TaskRouter.tools(from: registry.specs, mode: mode, online: online)
 
         var systemPrompt = SystemPrompt.build(tools: tools, mode: mode)
+        if !researchCorrections.isEmpty {
+            systemPrompt += "\n\nRecent user corrections, retained as user-provided context rather than verified web evidence:\n"
+                + researchCorrections.joined(separator: "\n")
+        }
         if online {
             let searchStatus = SearchKeyStore.hasResearchKey
                 ? "Full-web search provider keys are configured; report any provider failure."
@@ -538,6 +542,7 @@ final class AgentSession {
                 isGenerating = false
                 replyText = ResponseTextCleaner.clean(replyText)
                 finishStreaming(at: entryIndex, text: replyText)
+                if Task.isCancelled || error is CancellationError { return }
                 transcript.append(TranscriptEntry(
                     kind: .error,
                     text: error.localizedDescription
