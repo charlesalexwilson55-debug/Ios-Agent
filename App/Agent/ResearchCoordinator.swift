@@ -151,7 +151,7 @@ import Foundation
                           !Self.blockedPublisher(url) else { continue }
                     state.pendingSources.append(.init(title: ResearchSourcePolicy.publicText(result.title), url: url,
                         summary: ResearchSourcePolicy.publicText(result.summary), published: result.published,
-                        text: result.rawContent.flatMap { ResearchSourcePolicy.rejectReason($0) == nil ? String(ResearchSourcePolicy.publicText($0).prefix(8000)) : nil }, provider: response.provider.rawValue))
+                        text: result.rawContent.flatMap { ResearchSourcePolicy.rejectReason($0) == nil ? ResearchSourcePolicy.publicText($0) : nil }, provider: response.provider.rawValue))
                 }
                 activity.updateItem(item, subtitle: "\(response.results.count) results · \(response.provider.rawValue)", status: .done)
             } catch {
@@ -212,16 +212,21 @@ import Foundation
             let item = activity.addItem(step, page.title, url: page.url, cancellable: true)
             do {
                 let result = try await activity.run(item) { () -> String? in
-                    if let text = page.text, text.count >= 20 { return text }
-                    var providerText: String?
-                    if let extract = self.extract {
+                    if let text = page.text, text.count >= 20,
+                       page.rendered == true || page.provider == "Selected profile" { return text }
+                    var providerText = page.text
+                    if providerText == nil, let extract = self.extract {
                         do {
                             let extracted = try await extract([page.url])
                             if let match = extracted.first(where: { ResearchSourcePolicy.canonical($0.url) == ResearchSourcePolicy.canonical(page.url) }),
                                let text = match.rawContent, text.count >= 20 { providerText = text }
                         } catch { try Task.checkCancellation() }
                     }
-                    do { return try await self.read(page.url) }
+                    do {
+                        let text = try await self.read(page.url)
+                        page.rendered = true
+                        return text
+                    }
                     catch {
                         try Task.checkCancellation()
                         self.state.limitations.append("Could not read \(page.url.host ?? "source"): \(error.localizedDescription)")

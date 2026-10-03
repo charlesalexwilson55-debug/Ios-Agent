@@ -39,6 +39,12 @@ private actor ResearchAttemptCounter {
         let quickMatchFindings = try await quickMatchEngine.run()
         precondition(quickMatchFindings.facts.contains { $0.text.contains("Morgan Example") }, "An incomplete provider extract must fall back to the rendered page")
         precondition(quickMatchFindings.stopReason == "Found a source matching the supplied name and context.", "Return a grounded full-context match without exhausting research rounds")
+        let cachedSnippetEngine = ResearchEngine(request: quickMatchPlan.request, budget: .hard, ask: { _, _ in "[]" }, activity: ActivityReporter { _ in },
+            search: { _ in .init(provider: .tavily, results: [.init(title: "Harbour NSW soccer", url: captionURL, site: "news.example", summary: "Morgan Example soccer Harbour NSW", published: nil,
+                rawContent: String(repeating: "Navigation boilerplate. ", count: 400) + "Morgan Example plays soccer in Harbour NSW.")]) },
+            read: { _ in "Morgan Example plays soccer in Harbour NSW.\n" + String(repeating: "Readable match report. ", count: 20) })
+        let cachedSnippetFindings = try await cachedSnippetEngine.run()
+        precondition(cachedSnippetFindings.facts.contains { $0.text.contains("Morgan Example") }, "Discovery provider text must not bypass the rendered reader or lose names after 8,000 characters")
         precondition(!plan.accepts(evidence: ["Jane Example is a doctor in Melbourne."], text: "John Example is a doctor in Melbourne."), "Invented evidence must fail")
         precondition(!plan.accepts(evidence: ["Jane Example is a doctor."], text: "Jane Example is a doctor."), "A common profession alone must not establish identity")
         precondition(plan.accepts(evidence: ["Jane Example is a doctor at Harbour Clinic in Melbourne."], text: "Jane Example is a doctor at Harbour Clinic in Melbourne."), "Name and disambiguating clues should pass")
@@ -252,19 +258,22 @@ private actor ResearchAttemptCounter {
         precondition(sportsFindings.limitations.contains(URLError(.timedOut).localizedDescription), "Preserve the provider error independently of its platform wording")
 
         let backlogBudget = ResearchEngine.Budget.normal
-        var backlogRun = ResearchRun(request: request, budget: backlogBudget)
-        backlogRun.plan = plan; backlogRun.stage = .searching
+        let incompleteRequest = request + ", neurosurgeon"
+        let incompletePlan = ResearchPlan(request: incompleteRequest, subject: "Jane Example",
+            keywords: ["Jane Example", "doctor", "neurosurgeon"], identityClues: ["Melbourne", "Harbour Clinic"])
+        var backlogRun = ResearchRun(request: incompleteRequest, budget: backlogBudget)
+        backlogRun.plan = incompletePlan; backlogRun.stage = .searching
         let queuedPages = backlogBudget.firstStepPages + 2
         backlogRun.pendingSources = (0..<queuedPages).map { index in
             .init(title: source.title, url: URL(string: "https://publisher\(index).example/jane")!, summary: sentence, published: nil, text: sentence, provider: "fixture")
         }
-        let backlog = ResearchEngine(request: request, budget: backlogBudget, ask: { _, _ in "[]" }, activity: reporter,
+        let backlog = ResearchEngine(request: incompleteRequest, budget: backlogBudget, ask: { _, _ in "[]" }, activity: reporter,
             search: { _ in WebSearch.Response(provider: .tavily, results: []) }, resume: backlogRun)
         let backlogFindings = try await backlog.run()
         precondition(backlogFindings.run?.pages == queuedPages, "Unread sources must survive a per-round page limit")
         var cappedBudget = ResearchEngine.Budget.normal
         cappedBudget.rounds = 1
-        let capped = ResearchEngine(request: request, budget: cappedBudget, ask: { system, _ in
+        let capped = ResearchEngine(request: incompleteRequest, budget: cappedBudget, ask: { system, _ in
             system == ResearchEngine.keywordPrompt ? profile : "SAME: yes\nEVIDENCE: \(sentence)"
         }, activity: reporter, search: { _ in WebSearch.Response(provider: .tavily, results: [source]) })
         let cappedFindings = try await capped.run()

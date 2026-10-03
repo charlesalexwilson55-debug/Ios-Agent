@@ -26,6 +26,7 @@ struct ResearchRun: Codable, Identifiable, Sendable {
         let published: String?
         var text: String?
         let provider: String
+        var rendered: Bool? = nil
     }
     let id: UUID
     let request: String
