@@ -175,12 +175,15 @@ private actor ResearchAttemptCounter {
         precondition(separated.candidates.contains { $0.url == otherSource.url && $0.status == .possible })
         let extraSentence = "Jane Example works at Harbour Clinic in Melbourne. Jane Example received a clinical teaching award."
         let extraSource = WebSearch.Result(title: "Jane Example award", url: URL(string: "https://medical-news.example/jane-award")!, site: "medical-news.example", summary: extraSentence, published: nil, rawContent: extraSentence)
+        let wrongRoleSentence = "Jane Example is a bartender at Harbour Clinic in Melbourne."
+        let wrongRoleSource = WebSearch.Result(title: "Jane Example bartender", url: URL(string: "https://different-role.example/jane")!, site: "different-role.example", summary: wrongRoleSentence, published: nil, rawContent: wrongRoleSentence)
         let selectedExpansion = ResearchEngine(request: request, budget: .normal, ask: { _, _ in "[]" }, activity: reporter,
-            search: { _ in WebSearch.Response(provider: .tavily, results: [extraSource, otherSource]) }, selection: recovered.candidates[0])
+            search: { _ in WebSearch.Response(provider: .tavily, results: [extraSource, otherSource, wrongRoleSource]) }, selection: recovered.candidates[0])
         let expandedProfile = try await selectedExpansion.run()
         precondition(expandedProfile.facts.contains { $0.url == extraSource.url }, "A selected profile may expand through two matching quoted anchors")
         precondition(expandedProfile.facts.contains { $0.text.contains("teaching award") }, "Find additional public facts, not only repeat supplied details")
         precondition(expandedProfile.facts.allSatisfy { $0.url != otherSource.url }, "Do not include a different namesake's facts in the focused report")
+        precondition(expandedProfile.facts.allSatisfy { $0.url != wrongRoleSource.url }, "Even matching employer and town cannot override a conflicting public role")
         let bio = "Jane Example\nShe works at Harbour Clinic in Melbourne.\nJohn Other\nHe won an award."
         let profileStatements = plan.selectedStatements(bio)
         precondition(profileStatements.count == 1 && profileStatements[0].contains("She works"))

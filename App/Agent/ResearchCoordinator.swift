@@ -254,6 +254,7 @@ import Foundation
                         let before = state.graph.claims.count
                         if selected {
                             state.graph.extract("", sourceID: sourceID, plan: plan, selected: true)
+                            state.graph.extractLiteral(sourceID: sourceID, plan: plan)
                         } else if state.selection == nil || focusCompatible(page.text ?? "", plan: plan) {
                             do {
                                 let prompt = "Subject: \(plan.subject ?? state.request)\nSource: \(page.url.absoluteString)\nPAGE DATA:\n\(page.text ?? "")"
