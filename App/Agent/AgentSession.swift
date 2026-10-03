@@ -189,6 +189,7 @@ final class AgentSession {
         if selected == nil, resume == nil, imageData.isEmpty, libraryPhotoID == nil,
            let clarification = researchClarification {
             if let candidate = clarification.selection(for: trimmed) {
+                markResearchCandidate(candidate, decision: "selected", request: clarification.request)
                 selected = ResearchSelection(request: clarification.request(for: candidate), candidate: candidate)
             } else if let refined = clarification.refinedRequest(with: trimmed) {
                 trimmed = refined

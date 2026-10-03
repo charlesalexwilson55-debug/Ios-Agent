@@ -286,7 +286,7 @@ private struct CodeBlockView: View {
                         .font(.system(size: 12, weight: .medium))
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(copied ? .green : .secondary)
+                .foregroundStyle(copied ? Color.green : Color.white.opacity(0.75))
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
