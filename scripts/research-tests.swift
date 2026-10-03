@@ -208,7 +208,7 @@ private actor ResearchAttemptCounter {
         precondition(focused.facts.count == 1 && focused.facts[0].url == source.url)
         precondition(focused.identitySummary.contains("not a verified identity match"))
         let otherSource = WebSearch.Result(title: "Jane Example doctor", url: URL(string: "https://different-clinic.example/jane")!, site: "different-clinic.example", summary: "Jane Example in Melbourne", published: nil, rawContent: "Jane Example is a doctor in Melbourne at Different Clinic." + String(repeating: " Clinic info.", count: 20))
-        let selectionWithOther = ResearchEngine(request: request, budget: .normal, ask: { _, _ in "" }, activity: reporter, search: { _ in WebSearch.Response(provider: .tavily, results: [otherSource]) }, selection: recovered.candidates[0], read: { _ in sentence })
+        let selectionWithOther = ResearchEngine(request: request, budget: .normal, ask: { _, _ in "" }, activity: reporter, search: { _ in WebSearch.Response(provider: .tavily, results: [otherSource]) }, selection: recovered.candidates[0], read: { url in url == otherSource.url ? otherSource.rawContent! : sentence })
         let separated = try await selectionWithOther.run()
         precondition(separated.facts.allSatisfy { $0.url == source.url }, "Selection must not merge a different same-name profile")
         precondition(separated.candidates.contains { $0.url == otherSource.url && $0.status == .possible })

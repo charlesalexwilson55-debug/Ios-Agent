@@ -15,6 +15,7 @@ struct TranscriptView: View {
     /// Stops a step or skips an item of an activity: its id and the entry.
     var onCancelActivity: (UUID, UUID) -> Void = { _, _ in }
     var isWorking: Bool = false
+    @AppStorage("conduit.thinking") private var thinkingEnabled = true
     var onSelectResearchCandidate: (String, UUID) -> Void = { _, _ in }
     var onRejectResearchCandidate: (String, UUID) -> Void = { _, _ in }
 
@@ -72,7 +73,7 @@ struct TranscriptView: View {
         }
         if entries.last?.kind == .tool { return "Routing" }
         if let last = entries.last, last.isStreaming && !last.text.isEmpty { return "Typing" }
-        return "Thinking"
+        return thinkingEnabled ? "Thinking" : "Working"
     }
 
     private func scroll(_ proxy: ScrollViewProxy) {
