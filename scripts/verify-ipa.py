@@ -94,6 +94,17 @@ def main():
         check(int(str(minimum).split(".")[0]) >= 26,
               f"MinimumOSVersion is {minimum}; Liquid Glass needs 26.0+")
 
+        check(info.get("NSSupportsLiveActivities") is True, "Live Activities support is missing")
+        widget_path = APP + "PlugIns/ConduitLiveActivity.appex/"
+        check(widget_path + "Info.plist" in names, "The Live Activity extension was not embedded")
+        if widget_path + "Info.plist" in names:
+            widget_info = plistlib.loads(z.read(widget_path + "Info.plist"))
+            check(widget_info.get("NSExtension", {}).get("NSExtensionPointIdentifier") == "com.apple.widgetkit-extension",
+                  "Live Activity extension has the wrong extension point")
+            check(widget_info.get("CFBundleVersion") == info.get("CFBundleVersion"), "App and Live Activity build numbers differ")
+            widget_binary = z.read(widget_path + widget_info["CFBundleExecutable"])
+            check(read_macho_header(widget_binary)[0] == CPU_TYPE_ARM64, "Live Activity extension must be arm64")
+
         # --- Permissions ----------------------------------------------------
         for key in REQUIRED_USAGE_KEYS:
             value = info.get(key)

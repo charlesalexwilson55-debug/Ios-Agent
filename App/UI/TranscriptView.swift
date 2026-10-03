@@ -159,10 +159,11 @@ private struct AssistantText: View {
     let accent: Color
 
     @AppStorage(Appearance.showReasoningKey) private var showReasoning = true
+    @AppStorage("conduit.thinking") private var thinkingEnabled = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if showReasoning && !entry.reasoning.isEmpty {
+            if showReasoning && thinkingEnabled && !entry.reasoning.isEmpty {
                 ReasoningView(reasoning: entry.reasoning,
                               isThinking: entry.isStreaming && entry.text.isEmpty)
             }

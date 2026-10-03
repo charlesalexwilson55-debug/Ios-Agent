@@ -28,6 +28,17 @@ private actor ResearchAttemptCounter {
         precondition(captionFindings.facts.contains { $0.text.contains("Morgan Example practises") }, "Retain literal caption evidence even when model extraction fails")
         precondition(!ResearchPresentation.closing(captionFindings, selected: false).contains("Identity remains provisional"))
         precondition(plan.hasSubject(in: "Dr Jane A. Example, Melbourne"), "Allow a middle initial")
+        let quickMatchPlan = ResearchPlan(request: "Morgan Example, Harbour NSW, soccer", subject: "Morgan Example",
+            keywords: ["Morgan Example", "Harbour", "NSW", "soccer"], identityClues: ["Harbour"])
+        precondition(quickMatchPlan.matchesSuppliedContext(in: "Morgan Example plays football in Harbour, New South Wales."))
+        precondition(!quickMatchPlan.matchesSuppliedContext(in: "Morgan Example plays soccer in Sydney NSW."), "Wrong city cannot trigger early completion")
+        let quickMatchEngine = ResearchEngine(request: quickMatchPlan.request, budget: .hard, ask: { _, _ in "[]" }, activity: ActivityReporter { _ in },
+            search: { _ in .init(provider: .browser, results: [.init(title: "Harbour NSW soccer", url: captionURL, site: "news.example", summary: "Morgan Example plays soccer in Harbour NSW.", published: nil)]) },
+            read: { _ in "Morgan Example plays soccer in Harbour NSW.\n" + String(repeating: "Club fixtures and public match information. ", count: 20) },
+            extract: { urls in urls.map { .init(title: "Incomplete", url: $0, site: "news.example", summary: "", published: nil, rawContent: "An incomplete provider extract without the searched name.") } })
+        let quickMatchFindings = try await quickMatchEngine.run()
+        precondition(quickMatchFindings.facts.contains { $0.text.contains("Morgan Example") }, "An incomplete provider extract must fall back to the rendered page")
+        precondition(quickMatchFindings.stopReason == "Found a source matching the supplied name and context.", "Return a grounded full-context match without exhausting research rounds")
         precondition(!plan.accepts(evidence: ["Jane Example is a doctor in Melbourne."], text: "John Example is a doctor in Melbourne."), "Invented evidence must fail")
         precondition(!plan.accepts(evidence: ["Jane Example is a doctor."], text: "Jane Example is a doctor."), "A common profession alone must not establish identity")
         precondition(plan.accepts(evidence: ["Jane Example is a doctor at Harbour Clinic in Melbourne."], text: "Jane Example is a doctor at Harbour Clinic in Melbourne."), "Name and disambiguating clues should pass")

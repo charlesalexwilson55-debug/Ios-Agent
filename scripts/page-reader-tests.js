@@ -26,8 +26,13 @@ assert.deepEqual(page.links, [
   { title: 'Club roster', url: 'https://club.example/roster' },
   { title: 'Match report', url: 'https://news.example/report' },
 ]);
-article.innerText = 'x'.repeat(25000);
-assert.equal(JSON.parse(vm.runInNewContext(script, { document, location: { href: page.url } })).text.length, 20000);
+article.innerText = 'x'.repeat(25000) + '\nMorgan Example plays soccer in Harbour NSW.';
+assert.match(JSON.parse(vm.runInNewContext(script, { document, location: { href: page.url } })).text, /Morgan Example/,
+  'Names beyond the former 20,000-character cutoff remain readable');
+document.body = {innerText: 'A separate introductory article.\n' + article.innerText, querySelectorAll: () => []};
+document.querySelector = () => ({innerText: 'First unrelated article. '.repeat(30), querySelectorAll: () => []});
+assert.match(JSON.parse(vm.runInNewContext(script, {document, location: {href: page.url}})).text, /Morgan Example/,
+  'A first article must not hide later articles or page captions');
 console.log('Public-page extraction, navigable links, deduplication and text bounds passed');
 const searchScript = source.match(/private static let searchExtractor = #"""([\s\S]*?)"""#/)[1];
 const heading = (title, href, summary = '') => ({innerText: title, closest: () => ({href}), parentElement: {innerText: title + '\n' + summary, parentElement: null}});

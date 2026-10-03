@@ -159,16 +159,17 @@ final class PageReader: NSObject {
     /// the title, text and final address as JSON.
     private static let extractor = #"""
         (() => {
-          const drop = 'script,style,noscript,svg,iframe,nav,footer,header,aside,form,button,' +
-            '[aria-hidden="true"],[role="navigation"],[role="banner"],[role="contentinfo"]';
+          const drop = 'script,style,noscript,svg,iframe,nav,footer,form,button,' +
+            '[role="navigation"],[role="banner"],[role="contentinfo"]';
           const textOf = (el) => {
             if (!el) return '';
             el.querySelectorAll(drop).forEach((node) => node.remove());
             return el.innerText || el.textContent || '';
           };
-          let text = textOf(document.querySelector('article') ||
-            document.querySelector('main') || document.querySelector('[role="main"]'));
-          if (text.trim().length < 400) text = textOf(document.body);
+          // Scan the entire rendered page before the research plan selects
+          // bounded excerpts. Captions, article headers and subsequent articles
+          // may contain the only occurrence of the requested person's name.
+          let text = textOf(document.body);
           const seen = new Set();
           const links = Array.from(document.querySelectorAll('a[href]')).map(a => ({
             title: (a.innerText || a.textContent || '').replace(/\s+/g, ' ').trim(), url: a.href
@@ -182,7 +183,7 @@ final class PageReader: NSObject {
             .join('\n');
           return JSON.stringify({
             title: document.title || '',
-            text: text.slice(0, 20000),
+            text,
             url: location.href,
             links
           });

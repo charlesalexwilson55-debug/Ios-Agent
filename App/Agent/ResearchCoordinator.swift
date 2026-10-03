@@ -213,18 +213,19 @@ import Foundation
             do {
                 let result = try await activity.run(item) { () -> String? in
                     if let text = page.text, text.count >= 20 { return text }
+                    var providerText: String?
                     if let extract = self.extract {
                         do {
                             let extracted = try await extract([page.url])
                             if let match = extracted.first(where: { ResearchSourcePolicy.canonical($0.url) == ResearchSourcePolicy.canonical(page.url) }),
-                               let text = match.rawContent, text.count >= 20 { return text }
+                               let text = match.rawContent, text.count >= 20 { providerText = text }
                         } catch { try Task.checkCancellation() }
                     }
                     do { return try await self.read(page.url) }
                     catch {
                         try Task.checkCancellation()
                         self.state.limitations.append("Could not read \(page.url.host ?? "source"): \(error.localizedDescription)")
-                        return nil
+                        return providerText
                     }
                 }
                 try Task.checkCancellation()
@@ -240,7 +241,7 @@ import Foundation
                     if plan.subject != nil && !plan.hasSubject(in: text) {
                         state.visitedURLs.append(page.url.absoluteString)
                         state.pages += 1; state.pendingSources.removeFirst()
-                        activity.updateItem(item, subtitle: "Different subject: full name absent from page", status: .skipped)
+                        activity.updateItem(item, subtitle: "Requested name not found in readable page text", status: .skipped)
                         try checkpoint()
                         continue
                     }
@@ -280,12 +281,23 @@ import Foundation
                             state.graph.extractLiteral(sourceID: sourceID, plan: plan)
                         }
                         activity.updateItem(item, subtitle: "\(state.graph.claims.count - before) grounded claims; source retained separately", status: .done)
+                        if state.selection == nil, state.graph.claims.count > before,
+                           plan.matchesSuppliedContext(in: text + "\n" + page.title),
+                           plan.selectedStatements(text).contains(where: { !plan.attributedEvidence($0, text: text).isEmpty }) {
+                            state.graph.resolve(plan: plan)
+                            if state.graph.contradictions.isEmpty,
+                               Set(state.graph.candidates.map(\.groupID)).count == 1 {
+                                state.stopReason = "Found a source matching the supplied name and context."
+                                state.stage = .report
+                            }
+                        }
                     }
                 } else { activity.updateItem(item, subtitle: "No readable page text; snippets are not identity evidence", status: .skipped) }
             } catch { try Task.checkCancellation(); activity.updateItem(item, subtitle: error.localizedDescription, status: .failed) }
             state.visitedURLs.append(page.url.absoluteString)
             state.pages += 1; state.pendingSources.removeFirst()
             try checkpoint()
+            if state.stage == .report { return }
         }
         if activity.isStopped(step) { state.skippedPages += state.pendingSources.count; state.pendingSources = [] }
         state.stage = .resolving

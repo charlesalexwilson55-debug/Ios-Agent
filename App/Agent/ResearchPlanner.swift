@@ -97,6 +97,15 @@ enum ResearchPlanner {
         ]
         var seen = Set<String>()
         var result: [String] = []
+        // Compact requests often put the town after a comma rather than an
+        // "in" label. Keep the town as the identity anchor; the state remains
+        // a search keyword, since captions commonly mention only the town.
+        for detail in request.components(separatedBy: CharacterSet(charactersIn: ",;\n")).dropFirst() {
+            if let town = capture(#"(?i)^\s*(.+?)\s+(?:NSW|VIC|QLD|SA|WA|TAS|ACT|NT|New South Wales|Victoria|Queensland)\s*$"#, in: detail),
+               ResearchPlan.words(town).count <= 6, seen.insert(ResearchPlan.normalized(town)).inserted {
+                result.append(town.trimmingCharacters(in: .whitespaces))
+            }
+        }
         for pattern in patterns {
             guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
             let source = request as NSString

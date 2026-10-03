@@ -34,6 +34,8 @@ targets:
     sources:
       - path: App
     dependencies:
+      - target: ConduitLiveActivity
+        embed: true
       - package: Edge0
         product: Edge0MLX
       - package: ZIPFoundation
@@ -75,3 +77,25 @@ targets:
         release:
           SWIFT_OPTIMIZATION_LEVEL: "-O"
           ONLY_ACTIVE_ARCH: NO
+  ConduitLiveActivity:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: LiveActivity
+      - path: App/Services/ConduitActivityAttributes.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.charles.conduit.liveactivity
+        MARKETING_VERSION: 0.1.0
+        CURRENT_PROJECT_VERSION: 1
+        SWIFT_VERSION: 5.0
+        TARGETED_DEVICE_FAMILY: 1
+        SKIP_INSTALL: YES
+        APPLICATION_EXTENSION_API_ONLY: YES
+    info:
+      path: Support/LiveActivity-Info.plist
+      properties:
+        CFBundleDisplayName: Conduit Activity
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension

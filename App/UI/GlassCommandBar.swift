@@ -11,6 +11,7 @@ struct GlassCommandBar: View {
     let isModelLoaded: Bool
     let onSend: () -> Void
     let onStop: () -> Void
+    var onNewConversation: () -> Void = {}
     @FocusState private var focused: Bool
 
     private var canSend: Bool {
@@ -63,6 +64,16 @@ struct GlassCommandBar: View {
                     option("Think", symbol: "brain", value: $thinking)
                     option("Online", symbol: "globe", value: $online)
                     option("Research", symbol: "magnifyingglass", value: $research)
+                    Button {
+                        menuOpen = false
+                        onNewConversation()
+                    } label: {
+                        Label("New conversation", systemImage: "square.and.pencil")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 8).frame(minHeight: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isWorking)
                 }
                 .padding(12)
                 .frame(width: 238)

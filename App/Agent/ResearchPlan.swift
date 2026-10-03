@@ -102,6 +102,24 @@ struct ResearchPlan: Codable, Sendable {
         clues.filter { Self.contains($0, in: text) }
     }
 
+    /// Page relevance can use the article's context. Identity claims still
+    /// require attributed quotations and never inherit a neighbour's details.
+    func matchesSuppliedContext(in text: String) -> Bool {
+        guard subject != nil, hasSubject(in: text), !clues.isEmpty else { return false }
+        func terms(_ value: String) -> Set<String> {
+            let value = Self.normalized(value)
+                .replacingOccurrences(of: "new south wales", with: "nsw")
+                .replacingOccurrences(of: "football", with: "soccer")
+            return Set(Self.words(value))
+        }
+        let supplied = terms((keywords + clues).joined(separator: " ")).subtracting(terms(subject ?? ""))
+        let attributed = selectedStatements(text)
+        let context = terms(clues.joined(separator: " "))
+        let suppliedNumbers = supplied.filter { Int($0) != nil }
+        return !supplied.isEmpty && supplied.isSubset(of: terms(text))
+            && attributed.contains { context.union(suppliedNumbers).isSubset(of: terms($0)) }
+    }
+
     func accepts(evidence: [String], text: String) -> Bool {
         evidence.contains { !attributedEvidence($0, text: text).isEmpty }
     }
@@ -184,8 +202,19 @@ struct ResearchPlan: Codable, Sendable {
     func excerpt(_ text: String, limit: Int) -> String {
         guard text.count > limit, let subject else { return String(text.prefix(limit)) }
         let tokens = Self.words(subject)
-        let needle = text.range(of: subject, options: [.caseInsensitive, .diacriticInsensitive])
-            ?? tokens.last.flatMap { text.range(of: $0, options: [.caseInsensitive, .diacriticInsensitive]) }
+        var bestWindow: String?
+        var bestScore = -1
+        var cursor = text.startIndex
+        while cursor < text.endIndex,
+              let needle = text.range(of: subject, options: [.caseInsensitive, .diacriticInsensitive], range: cursor..<text.endIndex) {
+            let start = text.index(needle.lowerBound, offsetBy: -min(300, limit / 4), limitedBy: text.startIndex) ?? text.startIndex
+            let window = String(text[start...].prefix(limit))
+            let score = matchedClues(in: window).count
+            if score > bestScore { bestWindow = window; bestScore = score }
+            cursor = needle.upperBound
+        }
+        if let bestWindow { return bestWindow }
+        let needle = tokens.last.flatMap { text.range(of: $0, options: [.caseInsensitive, .diacriticInsensitive]) }
         guard let needle else { return String(text.prefix(limit)) }
         let start = text.index(needle.lowerBound, offsetBy: -min(300, limit / 4), limitedBy: text.startIndex) ?? text.startIndex
         return String(text[start...].prefix(limit))

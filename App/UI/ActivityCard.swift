@@ -10,6 +10,7 @@ struct ActivityCard: View {
 
     @State private var expanded: Set<UUID> = []
     @State private var showingDetails = false
+    @AppStorage(Appearance.showActivityLabelKey) private var showActivityLabel = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -45,8 +46,10 @@ struct ActivityCard: View {
                 Capsule().strokeBorder(.primary.opacity(0.65), lineWidth: 1.2)
                     .frame(width: 38, height: 13)
                     .overlay { Circle().fill(accent).frame(width: 7, height: 7) }
-                Text(log.steps.last?.title ?? "Preparing research")
-                    .font(.caption2.weight(.medium)).foregroundStyle(.secondary)
+                if showActivityLabel {
+                    Text(log.steps.last?.title ?? "Preparing research")
+                        .font(.caption2.weight(.medium)).foregroundStyle(.secondary)
+                }
             }.frame(maxWidth: .infinity)
         }
     }

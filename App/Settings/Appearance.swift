@@ -133,6 +133,7 @@ struct AppearanceSettingsView: View {
     @AppStorage(Appearance.textSizeKey) private var textSize = Appearance.TextSize.standard.rawValue
     @AppStorage(Appearance.showReasoningKey) private var showReasoning = true
     @AppStorage(Appearance.showActivityLabelKey) private var showActivityLabel = true
+    @AppStorage(ConduitLiveStatus.enabledKey) private var liveActivityEnabled = true
     @AppStorage("conduit.photos.downloadCloud") private var downloadCloudPhotos = false
     @AppStorage(Appearance.startupEnabledKey) private var startupEnabled = true
     @AppStorage(Appearance.startupOrbKey) private var startupOrbHex = AccentPalette.palette[0].hex
@@ -215,6 +216,7 @@ struct AppearanceSettingsView: View {
             Section {
                 Toggle("Show thinking", isOn: $showReasoning)
                 Toggle("Show activity below loading icon", isOn: $showActivityLabel)
+                Toggle("Show status in Dynamic Island", isOn: $liveActivityEnabled)
             } header: {
                 Text("Reasoning")
             } footer: {

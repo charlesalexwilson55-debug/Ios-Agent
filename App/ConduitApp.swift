@@ -40,6 +40,7 @@ struct RootView: View {
     /// answers to maths and code matter more than speed on those questions.
     @AppStorage("conduit.thinking") private var thinking = true
     @AppStorage("conduit.online") private var online = true
+    @AppStorage(ConduitLiveStatus.enabledKey) private var liveActivityEnabled = true
     @AppStorage(InferencePolicy.batterySaverKey) private var batterySaver = false
     @AppStorage(InferencePolicy.batteryModelKey) private var batteryModel = ""
     @AppStorage("conduit.power.preSaverModel") private var preSaverModel = ""
@@ -94,7 +95,8 @@ struct RootView: View {
                         isWorking: session?.isWorking ?? false,
                         isModelLoaded: isReady,
                         onSend: send,
-                        onStop: { session?.cancel() }
+                        onStop: { session?.cancel() },
+                        onNewConversation: { session?.clear() }
                     )
                     .zIndex(1)
                 }
@@ -180,7 +182,13 @@ struct RootView: View {
             session?.visionModelDirectory = models.first?.directory
         }
         .onChange(of: session?.isWorking) { _, working in
+            ConduitLiveStatus.shared.setWorking(working == true, foreground: scenePhase == .active,
+                status: research ? "Researching" : (thinking ? "Thinking" : "Working"))
             if working == false { checkBatterySaver() }
+        }
+        .onChange(of: liveActivityEnabled) { _, _ in
+            ConduitLiveStatus.shared.setWorking(session?.isWorking == true, foreground: scenePhase == .active,
+                status: research ? "Researching" : "Working")
         }
         .onChange(of: batterySaver) { _, _ in checkBatterySaver() }
         .onChange(of: batteryModel) { _, _ in checkBatterySaver() }
@@ -193,75 +201,39 @@ struct RootView: View {
         .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .active:
+                ConduitLiveStatus.shared.setWorking(session?.isWorking == true, foreground: true,
+                    status: research ? "Researching" : "Working")
                 consumePendingTask()
                 checkBatterySaver()
                 consumeEdge0DownloadRequest()
             case .inactive, .background:
+                ConduitLiveStatus.shared.pause()
                 session?.leavingForeground()
             default: break
             }
         }
     }
 
-    /// Chat, with the command bar. A NavigationStack purely to host the
-    /// toolbar: without one the toolbar modifier is silently ignored and the
-    /// New button never appears. The bar itself is kept hidden so the
-    /// transcript runs to the top edge under the glass.
+    /// The transcript occupies the full chat viewport without a navigation header.
     private var chatPage: some View {
-        NavigationStack {
-            TranscriptView(
-                entries: session?.transcript ?? [],
-                accent: Color(hex: ModelColors.hex(for: catalog.selectedModelID, in: modelColors)) ?? .blue,
-                onCancelActivity: { id, entryID in session?.cancelActivity(id, in: entryID) },
-                isWorking: session?.isWorking ?? false,
-                onSelectResearchCandidate: { id, entryID in session?.selectResearchCandidate(id, in: entryID) },
-                onRejectResearchCandidate: { id, entryID in session?.rejectResearchCandidate(id, in: entryID) }
-            )
-            // A tap anywhere above the bar closes the plus menu.
-            .overlay {
-                if menuOpen {
-                    Color.black.opacity(0.06)
-                        .contentShape(.rect)
-                        .onTapGesture { menuOpen = false }
-                        .accessibilityHidden(true)
-                }
-            }
-            .navigationTitle("")
-            .toolbarTitleDisplayMode(.inline)
-            .toolbarBackgroundVisibility(.hidden, for: .navigationBar)
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    HStack(spacing: 7) {
-                        Circle().fill(Color.blue.gradient)
-                            .frame(width: 9, height: 9)
-                            .shadow(color: .blue.opacity(0.7), radius: 5)
-                        Text(modelStatus)
-                            .font(.system(size: 12, weight: .medium))
-                            .lineLimit(1)
-                    }
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 13)
-                    .padding(.vertical, 7)
-                    .background(.black.opacity(0.32), in: .capsule)
-                    .overlay { Capsule().strokeBorder(.white.opacity(0.86), lineWidth: 0.8) }
-                    .shadow(color: .blue.opacity(0.65), radius: 10)
-                    .accessibilityLabel(modelStatus)
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        session?.clear()
-                    } label: {
-                        Image(systemName: "square.and.pencil")
-                    }
-                    .disabled(session?.transcript.isEmpty ?? true)
-                    .accessibilityLabel("New conversation")
-                }
+        TranscriptView(
+            entries: session?.transcript ?? [],
+            accent: Color(hex: ModelColors.hex(for: catalog.selectedModelID, in: modelColors)) ?? .blue,
+            onCancelActivity: { id, entryID in session?.cancelActivity(id, in: entryID) },
+            isWorking: session?.isWorking ?? false,
+            onSelectResearchCandidate: { id, entryID in session?.selectResearchCandidate(id, in: entryID) },
+            onRejectResearchCandidate: { id, entryID in session?.rejectResearchCandidate(id, in: entryID) }
+        )
+        .overlay {
+            if menuOpen {
+                Color.black.opacity(0.06)
+                    .contentShape(.rect)
+                    .onTapGesture { menuOpen = false }
+                    .accessibilityHidden(true)
             }
         }
         .id(appearanceKey)
-        .onChange(of: page) { _, _ in
-            menuOpen = false
-        }
+        .onChange(of: page) { _, _ in menuOpen = false }
     }
 
     private var appearanceKey: String {
@@ -291,14 +263,6 @@ struct RootView: View {
     private var isReady: Bool {
         guard case .idle = loadingState else { return false }
         return catalog.selectedModel != nil
-    }
-
-    private var modelStatus: String {
-        switch loadingState {
-        case .loading: "Loading \(catalog.selectedModel?.displayName ?? "model")…"
-        case .failed: "Model unavailable"
-        case .idle: catalog.selectedModel?.displayName ?? "Choose a model"
-        }
     }
 
     private var settingsSheet: some View {
