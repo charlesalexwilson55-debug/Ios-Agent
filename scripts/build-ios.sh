@@ -79,6 +79,7 @@ xcodebuild archive \
   -skipMacroValidation \
   -skipPackagePluginValidation \
   CODE_SIGNING_ALLOWED=NO \
+  CURRENT_PROJECT_VERSION="${GITHUB_RUN_NUMBER:-1}" \
   CODE_SIGNING_REQUIRED=NO \
   CODE_SIGN_IDENTITY="" \
   CODE_SIGN_ENTITLEMENTS="" \

@@ -34,16 +34,26 @@ private actor ResearchAttemptCounter {
         precondition(invalid.subject == nil, "Never invent the subject")
         precondition(plan.excerpt(String(repeating: "Navigation menu ", count: 700) + "Jane Example is a doctor at Harbour Clinic in Melbourne.", limit: 300).contains("Harbour Clinic"), "Read the relevant passage, not just the page beginning")
         print("Research policy regression tests passed")
+        let source = URL(string: "https://clinic.example/team/jane")!
+        let linked = ResearchCoordinator.sourceLeads([
+            .init(title: "Jane Example publications", url: URL(string: "https://journal.example/jane-example")!),
+            .init(title: "Publications", url: URL(string: "https://clinic.example/jane/papers")!),
+            .init(title: "John Other", url: URL(string: "https://other.example/john")!),
+            .init(title: "Log in", url: URL(string: "https://clinic.example/login")!)
+        ], from: source, text: "Jane Example works at Harbour Clinic Melbourne.", plan: plan)
+        precondition(linked.count == 2, "Follow grounded profile links, not unrelated people or login pages")
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [SearchFixtureProtocol.self]
         let session = URLSession(configuration: configuration)
         defer { session.invalidateAndCancel() }
         SearchKeyStore.key = nil
-        do {
-            _ = try await WebSearch.research("Jane Example", session: session)
-            preconditionFailure("Missing key must not fall back to Wikipedia")
-        } catch WebSearch.SearchError.researchNeedsKey {}
-        precondition(SearchFixtureProtocol.requests.isEmpty)
+        SearchFixtureProtocol.payload = #"<li class="b_algo"><h2><a href="https://clinic.example/jane">Jane Example</a></h2><p>Doctor in Melbourne.</p></li>"#
+        let publicSearch = try await WebSearch.research("Jane Example", session: session)
+        precondition(publicSearch.provider == .browser)
+        precondition(publicSearch.results.count == 1)
+        precondition(SearchFixtureProtocol.requests.count == 1)
+        precondition(SearchFixtureProtocol.requests[0].url?.host == "www.bing.com")
+        SearchFixtureProtocol.requests = []
         SearchKeyStore.key = "test-placeholder"
         SearchFixtureProtocol.status = 401
         do {

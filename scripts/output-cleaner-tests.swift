@@ -9,6 +9,8 @@ struct Tests {
         assert(ResponseTextCleaner.clean("The HTML is `<div>`.") == "The HTML is `<div>`.")
         assert(ResponseTextCleaner.clean("```html\n<answer>kept</answer>\n```") == "```html\n<answer>kept</answer>\n```")
         assert(ResponseTextCleaner.clean("Ready <answ", streaming: true) == "Ready")
+        assert(ResponseTextCleaner.displayProse("* First\n- Second\n## Title") == "• First\n• Second\n**Title**")
+        assert(ResponseTextCleaner.displayProse("2 * 3 = 6 and **bold** with `x * y`") == "2 * 3 = 6 and **bold** with `x * y`")
         print("Response cleaner OK")
     }
 }

@@ -2,6 +2,9 @@ import Foundation
 
 @main struct LibraryTests {
     @MainActor static func main() async throws {
+        precondition(!Recall.usesConversationMemory("Why is the sky blue?"))
+        precondition(Recall.usesConversationMemory("When did I screenshot my messages?"))
+        precondition(Recall.usesConversationMemory("What did we discuss earlier?"))
         let prior = UserDefaults.standard.data(forKey: "conduit.libraries")
         defer {
             if let prior { UserDefaults.standard.set(prior, forKey: "conduit.libraries") }

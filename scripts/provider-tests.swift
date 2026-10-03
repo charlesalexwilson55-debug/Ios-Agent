@@ -78,14 +78,17 @@ final class ProviderFixtureProtocol: URLProtocol {
     private static func missingKeyDoesNotUseWikipedia(_ session: URLSession) async throws {
         SearchKeyStore.exaKey = nil
         SearchKeyStore.key = nil
-        ProviderFixtureProtocol.reset([])
-
-        do {
-            _ = try await WebSearch.research("source-grounded research", session: session)
-            preconditionFailure("Research without either provider key must fail")
-        } catch WebSearch.SearchError.researchNeedsKey {}
-
-        precondition(ProviderFixtureProtocol.requests.isEmpty)
+        ProviderFixtureProtocol.reset([.init(status: 200, body: #"<li class="b_algo"><h2><a href="https://clinic.example/jane">Jane Example — doctor</a></h2><p>Doctor in Melbourne.</p></li>"#)])
+        let response = try await WebSearch.research("Jane Example doctor", session: session)
+        precondition(response.provider == .browser && response.results.count == 1)
+        precondition(response.answer == nil, "Search must not supply a generated answer for the model to copy")
+        precondition(ProviderFixtureProtocol.requests.count == 1)
+        precondition(ProviderFixtureProtocol.requests[0].url?.host == "www.bing.com")
+        let target = "https://clinic.example/jane?lang=en"
+        let encoded = "a1" + Data(target.utf8).base64EncodedString().replacingOccurrences(of: "=", with: "")
+        precondition(BrowserSearch.destination("https://www.bing.com/ck/a?u=" + encoded)?.absoluteString == target)
+        precondition(BrowserSearch.destination("javascript:alert(1)") == nil)
+        precondition(BrowserSearch.parse("<html>Verify you are human</html>").isEmpty)
     }
 
     private static func exaIsPrimaryDiscovery(_ session: URLSession) async throws {

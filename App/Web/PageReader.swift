@@ -45,12 +45,26 @@ final class PageReader: NSObject {
         try await PageReader().load(url)
     }
 
+    static func search(_ query: String) async throws -> [WebSearch.Result] {
+        var url = URLComponents(string: "https://www.google.com/search")!
+        url.queryItems = [URLQueryItem(name: "q", value: query), URLQueryItem(name: "udm", value: "14"),
+                          URLQueryItem(name: "num", value: "10")]
+        let page = try await PageReader().load(url.url!, search: true)
+        return page.links.map { link in
+            WebSearch.Result(title: link.title, url: link.url, site: link.url.host ?? "", summary: "",
+                             published: nil, provider: .browser)
+        }
+    }
+
+    private static var pendingLinks: [URL: [Link]] = [:]
+    static func takeLinks(for url: URL) -> [Link] { pendingLinks.removeValue(forKey: url) ?? [] }
+
     private var webView: WKWebView?
     private var navigation: CheckedContinuation<Void, Never>?
     private var script: CheckedContinuation<String?, Never>?
     private var loadError: String?
 
-    private func load(_ url: URL) async throws -> Page {
+    private func load(_ url: URL, search: Bool = false) async throws -> Page {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         configuration.mediaTypesRequiringUserActionForPlayback = .all
@@ -85,7 +99,7 @@ final class PageReader: NSObject {
 
         let json = await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in
             script = continuation
-            webView.evaluateJavaScript(Self.extractor) { [weak self] value, _ in
+            webView.evaluateJavaScript(search ? Self.searchExtractor : Self.extractor) { [weak self] value, _ in
                 let text = value as? String
                 MainActor.assumeIsolated {
                     self?.scriptEnded(text)
@@ -103,7 +117,7 @@ final class PageReader: NSObject {
             throw ReadError.loadFailed(loadError ?? "no response")
         }
         let text = (object["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard text.count >= Self.minimumText else {
+        guard text.count >= (search ? 1 : Self.minimumText) else {
             if let loadError { throw ReadError.loadFailed(loadError) }
             throw ReadError.noText
         }
@@ -113,7 +127,10 @@ final class PageReader: NSObject {
                   ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil else { return nil }
             return Link(title: String((item["title"] ?? raw).prefix(120)), url: url)
         }
-        return Page(title: object["title"] as? String ?? "", url: finalURL, text: text, links: Array(links.prefix(20)))
+        let boundedLinks = Array(links.prefix(20))
+        if Self.pendingLinks.count >= 12 { Self.pendingLinks.removeAll() }
+        Self.pendingLinks[url] = boundedLinks
+        return Page(title: object["title"] as? String ?? "", url: finalURL, text: text, links: boundedLinks)
     }
 
     private func navigationEnded(error: String?) {
@@ -167,6 +184,33 @@ final class PageReader: NSObject {
             url: location.href,
             links
           });
+        })()
+        """#
+
+    private static let searchExtractor = #"""
+        (() => {
+          const seen = new Set();
+          const links = [];
+          for (const heading of document.querySelectorAll('a h3')) {
+            const anchor = heading.closest('a[href]');
+            if (!anchor) continue;
+            let target;
+            try {
+              target = new URL(anchor.href, location.href);
+              if (/(^|\.)google\.[a-z.]+$/i.test(target.hostname)) {
+                const next = target.searchParams.get('q') || target.searchParams.get('url');
+                if (!next) continue;
+                target = new URL(next);
+              }
+            } catch { continue; }
+            if (!/^https?:$/.test(target.protocol) || /(^|\.)(google\.[a-z.]+|googleusercontent\.com|gstatic\.com)$/i.test(target.hostname)) continue;
+            const title = (heading.innerText || heading.textContent || '').replace(/\s+/g, ' ').trim();
+            if (!title || seen.has(target.href)) continue;
+            seen.add(target.href); links.push({title, url: target.href});
+            if (links.length >= 10) break;
+          }
+          return JSON.stringify({title: document.title || '', url: location.href,
+            text: links.map(link => link.title).join('\n'), links});
         })()
         """#
 }

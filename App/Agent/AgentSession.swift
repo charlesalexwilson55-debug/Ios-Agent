@@ -388,10 +388,15 @@ final class AgentSession {
         if online {
             let searchStatus = SearchKeyStore.hasResearchKey
                 ? "Full-web search provider keys are configured; report any provider failure."
-                : "General web search has no provider key; web_search is limited to Wikipedia, but read_page can still read public URLs."
+                : "Public web search is available without a provider key; search access can be blocked by the search engine, and failures must be reported."
             systemPrompt += "\n\nInternet is connected. read_page returns public page text and links you can follow with read_page. "
                 + searchStatus + " Check available tools before claiming you have no access."
         }
+        systemPrompt += "\n\nUse your own knowledge for stable explanations, maths and code. Do not search every question. "
+            + "Search when verification is needed or the user requests it. Use focused terms, read useful original pages, "
+            + "compare evidence, and write your own answer. Search snippets are leads, not verified facts. "
+            + "Prefer clear paragraphs. Avoid excessive emphasis, decorative asterisks, XML wrappers and invented answer tags. "
+            + "Do not narrate routine context retrieval unless the user asks."
         if let profile = ProfileStore.shared.promptSection {
             systemPrompt += "\n\n" + profile
         }
@@ -404,12 +409,9 @@ final class AgentSession {
         )
         if !notes.isEmpty {
             systemPrompt += "\n\n" + notes.promptSection
-            var chip = TranscriptEntry(kind: .tool, text: "Found \(notes.hits.count) note"
-                + (notes.hits.count == 1 ? "" : "s") + ": " + notes.sourceNames.joined(separator: ", "))
-            chip.toolOutcome = .done
-            transcript.append(chip)
+            Diagnostics.log("recall hits=\(notes.hits.count)")
         }
-        let thinking = thinkingEnabled
+        var thinking = thinkingEnabled
         let toolSteps = maxToolIterations
         offeredTools = Set(tools.map(\.name))
         usedPhoneTools = false
@@ -496,6 +498,13 @@ final class AgentSession {
             // No tools requested: the turn is the model's answer, and we stop.
             guard !pendingCalls.isEmpty else {
                 if replyText.isEmpty, transcript.indices.contains(entryIndex) {
+                    if thinking, !transcript[entryIndex].reasoning.isEmpty, iteration < toolSteps - 1 {
+                        // Recover once when reasoning consumed the generation
+                        // budget. No tool was requested, so actions are not replayed.
+                        thinking = false
+                        systemPrompt += "\nGive the user a direct final answer now. Do not begin another thinking section."
+                        continue
+                    }
                     // An empty reply with no tool call is a dead turn. Saying
                     // so is better than leaving a blank bubble.
                     transcript[entryIndex].text = transcript[entryIndex].reasoning.isEmpty

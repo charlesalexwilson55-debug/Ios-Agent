@@ -62,6 +62,7 @@ struct RootView: View {
     @AppStorage(Appearance.startupOrbKey) private var startupOrbHex = AccentPalette.palette[0].hex
 
     var body: some View {
+        VStack(spacing: 0) {
         ZStack {
             chatPage
                 .opacity(page == .chat ? 1 : 0)
@@ -78,9 +79,10 @@ struct RootView: View {
                     .environment(catalog)
             }
         }
-        .safeAreaInset(edge: .bottom, spacing: 16) {
-            // One layout owner reserves space for both controls. Nesting another
-            // bottom inset inside NavigationStack made the composer overlap tabs.
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
+            // The transcript has a physical boundary above the footer rather
+            // than relying on safe-area insets during keyboard and row changes.
             VStack(spacing: 4) {
                 if page == .chat {
                     GlassCommandBar(
@@ -99,7 +101,10 @@ struct RootView: View {
                 ConduitNavigationBar(selected: $page, onSettings: { showingSettings = true })
             }
             .frame(maxWidth: .infinity)
+            .padding(.top, 12)
+            .zIndex(1)
         }
+        .background(BackdropView())
         .overlay {
             if startupEnabled && startupVisible {
                 StartupSplash(ready: startupReady,
@@ -125,7 +130,8 @@ struct RootView: View {
             newSession.researchEnabled = research
             session = newSession
             UIDevice.current.isBatteryMonitoringEnabled = true
-            Diagnostics.log("app.launch avail=\(Diagnostics.availableMB)MB")
+            let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
+            Diagnostics.log("app.launch build=\(build) avail=\(Diagnostics.availableMB)MB")
             // Read before loading, which writes a marker of its own.
             let unfinished = Diagnostics.takeUnfinishedWork()
             if let unfinished {

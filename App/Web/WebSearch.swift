@@ -8,7 +8,7 @@ import Foundation
 enum WebSearch {
 
     enum Provider: String, Sendable {
-        case exa, tavily, combined, wikipedia
+        case exa, tavily, combined, wikipedia, browser
 
         var displayName: String {
             switch self {
@@ -16,6 +16,7 @@ enum WebSearch {
             case .tavily: "Tavily"
             case .combined: "Exa and Tavily"
             case .wikipedia: "Wikipedia"
+            case .browser: "Public web search"
             }
         }
     }
@@ -67,39 +68,20 @@ enum WebSearch {
     private static let summaryLimit = 320
 
     static func search(_ query: String) async throws -> Response {
-        if let exaKey = SearchKeyStore.exaKey {
-            do {
-                return try await exa(query, key: exaKey)
-            } catch let exaError {
-                try Task.checkCancellation()
-                if let tavilyKey = SearchKeyStore.key {
-                    do {
-                        return try await tavily(query, key: tavilyKey)
-                    } catch let tavilyError {
-                        try Task.checkCancellation()
-                        var response = try await wikipedia(query)
-                        response.limitation = providerProblem(.exa, error: exaError)
-                            + " " + providerProblem(.tavily, error: tavilyError)
-                        return response
-                    }
-                }
-                var response = try await wikipedia(query)
-                response.limitation = providerProblem(.exa, error: exaError)
-                return response
-            }
-        }
-        guard let key = SearchKeyStore.key else {
-            var response = try await wikipedia(query)
-            response.limitation = noKeyLimitation
-            return response
-        }
         do {
-            return try await tavily(query, key: key)
+            return try await research(query)
         } catch {
             try Task.checkCancellation()
-            var response = try await wikipedia(query)
-            response.limitation = providerProblem(.tavily, error: error)
-            return response
+            do {
+                var response = try await BrowserSearch.search(query)
+                response.limitation = "A configured provider failed; public web search was used."
+                return response
+            } catch {
+                try Task.checkCancellation()
+                var response = try await wikipedia(query)
+                response.limitation = "Public web search was unavailable. Only Wikipedia was searched; this cannot establish complete or current information."
+                return response
+            }
         }
     }
 
@@ -115,6 +97,8 @@ enum WebSearch {
             return try await tavily(query, key: key, session: session)
         case .wikipedia:
             return try await wikipedia(query, session: session)
+        case .browser:
+            return try await BrowserSearch.search(query, session: session)
         case .combined:
             throw SearchError.badResponse
         }
@@ -123,7 +107,7 @@ enum WebSearch {
     /// Research must never silently degrade into an encyclopedia-only search.
     static func research(_ query: String, session: URLSession = .shared) async throws -> Response {
         try Task.checkCancellation()
-        guard SearchKeyStore.hasResearchKey else { throw SearchError.researchNeedsKey }
+        guard SearchKeyStore.hasResearchKey else { return try await BrowserSearch.search(query, session: session) }
 
         if let exaKey = SearchKeyStore.exaKey {
             let exaResponse: Response
@@ -131,16 +115,21 @@ enum WebSearch {
                 exaResponse = try await exa(query, key: exaKey, research: true, session: session)
             } catch let exaError {
                 try Task.checkCancellation()
-                guard let tavilyKey = SearchKeyStore.key else { throw exaError }
+                if case SearchError.badResponse = exaError { throw exaError }
+                guard let tavilyKey = SearchKeyStore.key else {
+                    var fallback = try await BrowserSearch.search(query, session: session)
+                    fallback.limitation = "Exa failed; public web search was used."
+                    return fallback
+                }
                 do {
                     var fallback = try await tavily(query, key: tavilyKey, research: true, session: session)
                     fallback.limitation = "Exa discovery failed (\(failureDetail(exaError))); Tavily results are shown instead."
                     return fallback
                 } catch let tavilyError {
                     try Task.checkCancellation()
-                    throw SearchError.providersFailed(
-                        "Exa \(failureDetail(exaError)); Tavily \(failureDetail(tavilyError))."
-                    )
+                    var fallback = try await BrowserSearch.search(query, session: session)
+                    fallback.limitation = "Exa and Tavily failed; public web search was used."
+                    return fallback
                 }
             }
 
@@ -284,7 +273,7 @@ enum WebSearch {
             "query": query,
             "search_depth": research && UserDefaults.standard.string(forKey: "conduit.research.depth") != "basic" ? "advanced" : "basic",
             "max_results": research ? 8 : 5,
-            "include_answer": !research,
+            "include_answer": false,
             "include_raw_content": false,
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)

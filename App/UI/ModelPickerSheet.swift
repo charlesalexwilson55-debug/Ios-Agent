@@ -175,10 +175,15 @@ struct ModelPickerSheet: View {
                                         ModelColors.hex(for: selected.id, in: modelColors) == swatch.hex ? 2 : 0)
                                 }
                         }
+                        .buttonStyle(.plain)
+                        .frame(minWidth: 36, minHeight: 36)
                         .accessibilityLabel("\(swatch.name) model light")
                     }
                 }
                 .frame(maxWidth: .infinity)
+                ConduitLoader(color: Color(hex: ModelColors.hex(for: selected.id, in: modelColors)) ?? .blue,
+                              status: nil)
+                    .padding(.vertical, 8)
             }
             if !catalog.visionModels.isEmpty {
                 Text("Image reader: \(catalog.visionModels.map(\.displayName).joined(separator: ", "))")

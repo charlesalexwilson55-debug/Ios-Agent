@@ -75,8 +75,17 @@ struct TranscriptView: View {
     }
 
     private func scroll(_ proxy: ScrollViewProxy) {
-        withAnimation(.easeOut(duration: 0.22)) {
-            proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
+        Task { @MainActor in
+            // Row heights update after the text mutation. Scroll after that
+            // layout, without overlapping animations for every streamed token.
+            await Task.yield()
+            if isWorking {
+                proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
+            } else {
+                withAnimation(.easeOut(duration: 0.18)) {
+                    proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
+                }
+            }
         }
     }
 
@@ -95,7 +104,10 @@ struct TranscriptView: View {
                 }
             }
         case .tool:
-            ToolChip(text: entry.text, outcome: entry.toolOutcome)
+            // Older saved chats can contain recall chips from prior builds.
+            if entry.text.range(of: #"^Found \d+ notes?: "#, options: .regularExpression) == nil {
+                ToolChip(text: entry.text, outcome: entry.toolOutcome)
+            }
         case .activity:
             if let log = entry.activity {
                 ActivityCard(log: log, accent: accent) { id in
@@ -156,13 +168,6 @@ private struct AssistantText: View {
                 StoredImageView(id: id, maxHeight: 340)
             }
 
-            if entry.isStreaming {
-                // Parsing the entire growing answer as Markdown for every
-                // token makes long code answers expensive and visually jumpy.
-                Text(entry.text)
-                    .font(.system(size: 16 * Appearance.textScale))
-                    .textSelection(.enabled)
-            } else {
                 ForEach(MessageSegment.parse(entry.text)) { segment in
                     switch segment.kind {
                     case .prose(let prose):
@@ -171,7 +176,6 @@ private struct AssistantText: View {
                         CodeBlockView(language: language, code: code)
                     }
                 }
-            }
 
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -247,8 +251,9 @@ private struct ProseText: View {
         let options = AttributedString.MarkdownParsingOptions(
             interpretedSyntax: .inlineOnlyPreservingWhitespace
         )
-        return (try? AttributedString(markdown: markdown, options: options))
-            ?? AttributedString(markdown)
+        let prose = ResponseTextCleaner.displayProse(markdown)
+        return (try? AttributedString(markdown: prose, options: options))
+            ?? AttributedString(prose)
     }
 }
 
@@ -308,7 +313,7 @@ private struct ReasoningView: View {
 
     var body: some View {
         DisclosureGroup(isExpanded: $expanded) {
-            Text(ResponseTextCleaner.clean(reasoning))
+            ProseText(markdown: ResponseTextCleaner.clean(reasoning))
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)

@@ -25,7 +25,6 @@ import Foundation
             state.stopReason = restriction; state.completed = true
             return findings()
         }
-        guard SearchKeyStore.hasResearchKey else { throw WebSearch.SearchError.researchNeedsKey }
         state.paused = false
         lastCheckpoint = Date()
         do {
@@ -225,6 +224,12 @@ import Foundation
                 }
                 try Task.checkCancellation()
                 if let outer = result, let text = outer, let plan = state.plan {
+                    for link in Self.sourceLeads(PageReader.takeLinks(for: page.url), from: page.url, text: text, plan: plan) {
+                        guard !state.visitedURLs.contains(link.url.absoluteString),
+                              !state.pendingSources.contains(where: { ResearchSourcePolicy.canonical($0.url) == ResearchSourcePolicy.canonical(link.url) }) else { continue }
+                        state.pendingSources.append(.init(title: link.title, url: link.url, summary: "Linked from \(page.url.host ?? "source")",
+                            published: nil, text: nil, provider: "Source link"))
+                    }
                     // Provider snippets and domain reputation cannot replace
                     // the full requested name in actual page content.
                     if plan.subject != nil && !plan.hasSubject(in: text) {
@@ -339,6 +344,19 @@ import Foundation
         else if state.pendingQueries.isEmpty && state.pendingSources.isEmpty { state.stopReason = "No unused name/context queries or unread source leads remain." }
         if !state.stopReason.isEmpty { state.stage = .report }
         else { state.stage = state.pendingQueries.isEmpty ? .extracting : .searching }
+    }
+
+    static func sourceLeads(_ links: [PageReader.Link], from source: URL, text: String, plan: ResearchPlan) -> [PageReader.Link] {
+        guard plan.subject == nil || plan.hasSubject(in: text) else { return [] }
+        let related = ["profile", "biography", "publications", "research", "career", "statistics", "results"]
+        return Array(links.filter { link in
+            guard ResearchSourcePolicy.canonical(link.url) != nil,
+                  ResearchSourcePolicy.canonical(link.url) != ResearchSourcePolicy.canonical(source),
+                  !blockedPublisher(link.url) else { return false }
+            let label = link.title + " " + (link.url.path.removingPercentEncoding ?? link.url.path)
+            if plan.subject != nil && plan.hasSubject(in: label) { return true }
+            return link.url.host == source.host && related.contains(where: { link.title.lowercased().contains($0) })
+        }.prefix(4))
     }
 
     private func findings() -> ResearchEngine.Findings {

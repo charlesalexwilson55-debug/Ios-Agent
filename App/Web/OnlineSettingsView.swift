@@ -57,10 +57,9 @@ struct OnlineSettingsView: View {
                 }
 
                 Section {
-                    Label(hasExaKey || hasTavilyKey ? "Full-web research configured" : "Full-web research needs a key",
-                          systemImage: hasExaKey || hasTavilyKey ? "globe" : "exclamationmark.magnifyingglass")
+                    Label("Public web search available", systemImage: "globe")
                 } footer: {
-                    Text("Exa is the primary discovery provider. Tavily broadens results when both are configured and is used when Exa is unavailable.")
+                    Text("Public search works without a key. Exa and Tavily are optional providers for more consistent discovery. Search engines may block automated requests; Conduit reports that rather than claiming nothing was found.")
                 }
 
                 Section("Research quality") {

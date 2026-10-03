@@ -13,6 +13,8 @@ enum SearchKeyStore {
 }
 @MainActor enum PageReader {
     struct Page { let text: String }
+    struct Link { let title: String; let url: URL }
+    static func takeLinks(for url: URL) -> [Link] { [] }
     static func read(_ url: URL) async throws -> Page { throw URLError(.cannotLoadFromNetwork) }
 }
 final class SearchFixtureProtocol: URLProtocol {
