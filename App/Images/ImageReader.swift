@@ -7,6 +7,7 @@ import MLXVLM
 import Tokenizers
 import UIKit
 import Vision
+import os
 
 /// Runs the image-reading model (Qwen3-VL) to describe pictures.
 ///
@@ -18,11 +19,13 @@ actor VisionRunner {
     enum VisionError: LocalizedError {
         case badImage
         case notLoaded
+        case insufficientMemory
 
         var errorDescription: String? {
             switch self {
             case .badImage: "The picture could not be opened."
             case .notLoaded: "The image model is not loaded."
+            case .insufficientMemory: "Not enough memory for the image model. Using Apple Vision instead."
             }
         }
     }
@@ -44,7 +47,16 @@ actor VisionRunner {
     func load(directory: URL) async throws {
         guard loadedPath != directory.path else { return }
         container = nil
+        loadedPath = nil
         MLX.Memory.clearCache()
+        let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.fileSizeKey])) ?? []
+        let weights = files.filter { $0.pathExtension == "safetensors" }.reduce(0) {
+            $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0)
+        }
+        let available = Int(os_proc_available_memory())
+        guard available > weights + 450 * 1_048_576 else { throw VisionError.insufficientMemory }
+        MLX.Memory.cacheLimit = 32 * 1_048_576
+        MLX.Memory.memoryLimit = MLX.Memory.activeMemory + max(0, available - 450 * 1_048_576)
         container = try await VLMModelFactory.shared.loadContainer(
             from: directory, using: #huggingFaceTokenizerLoader())
         loadedPath = directory.path
@@ -52,7 +64,11 @@ actor VisionRunner {
 
     func describe(_ imageData: Data, question: String?) async throws -> String {
         guard let container else { throw VisionError.notLoaded }
-        guard let image = CIImage(data: imageData) else { throw VisionError.badImage }
+        guard var image = CIImage(data: imageData) else { throw VisionError.badImage }
+        // Bound vision activations. Full-resolution OCR remains available
+        // through Apple Vision, while the VLM needs only a scene-sized input.
+        let longSide = max(image.extent.width, image.extent.height)
+        if longSide > 1024 { image = image.transformed(by: CGAffineTransform(scaleX: 1024 / longSide, y: 1024 / longSide)) }
         var prompt = Self.describePrompt
         if let question, !question.isEmpty {
             prompt += "\nThe user said this about the picture: \u{201C}\(question)\u{201D}. Include whatever "
@@ -60,7 +76,10 @@ actor VisionRunner {
         }
         let input = UserInput(chat: [.user(prompt, images: [.ciImage(image)])])
         let prepared = try await container.prepare(input: input)
-        let parameters = GenerateParameters(maxTokens: 700, temperature: 0.2, topP: 0.9)
+        let available = Int(os_proc_available_memory())
+        guard available > 650 * 1_048_576 else { throw VisionError.insufficientMemory }
+        MLX.Memory.memoryLimit = MLX.Memory.activeMemory + max(0, available - 450 * 1_048_576)
+        let parameters = GenerateParameters(maxTokens: 700, kvBits: 8, temperature: 0.2, topP: 0.9, prefillStepSize: 256)
         var text = ""
         let stream = try await container.generate(input: prepared, parameters: parameters)
         for await event in stream {
