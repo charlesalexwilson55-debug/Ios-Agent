@@ -939,7 +939,15 @@ final class AgentSession {
                     await waitUntilForeground()
                     isGenerating = true
                     defer { isGenerating = false }
-                    text = try await VisionRunner.shared.describe(data, question: currentRequest)
+                    do {
+                        text = try await VisionRunner.shared.describe(data, question: currentRequest)
+                    } catch {
+                        try Task.checkCancellation()
+                        Diagnostics.log("vision.fallback \(error.localizedDescription)")
+                        await VisionRunner.shared.unload()
+                        useModel = false
+                        text = try await QuickVision.describe(data)
+                    }
                 } else {
                     text = try await QuickVision.describe(data)
                 }
