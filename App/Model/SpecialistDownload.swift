@@ -37,7 +37,7 @@ import UIKit
                 status = "Downloaded and verified"; fraction = 1
                 await catalog.refresh()
             } catch is CancellationError { status = "Paused. Tap Download to resume completed files." }
-            catch { error = error.localizedDescription; status = "Download stopped. Completed files are retained." }
+            catch { self.error = error.localizedDescription; status = "Download stopped. Completed files are retained." }
         }
     }
     func cancel() { task?.cancel() }
