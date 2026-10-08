@@ -110,6 +110,10 @@ final class AgentSession {
 
     /// The image-reading model on the phone, if there is one.
     var visionModelDirectory: URL?
+    var quickTextModel: ModelRunner.Configuration?
+    var researchCheckModel: ModelRunner.Configuration?
+    var heavyTaskModel: ModelRunner.Configuration?
+    private var quickTextTurn = false
     /// Pictures attached to the message being answered.
     private var pendingImageIDs: [UUID] = []
     private var pendingResearchSelection: ResearchSelection?
@@ -294,7 +298,8 @@ final class AgentSession {
         // Research may still be draining GPU work and restoring the chat model.
         // Keep submit disabled until its task exits so another turn cannot load
         // weights concurrently with that restoration.
-        if activeReporter == nil { isWorking = false }
+        // The turn still owns its model until generation drains and any
+        // specialist route restores the chat model. Submit remains disabled.
         if let index = transcript.indices.last, transcript[index].isStreaming {
             transcript[index].isStreaming = false
             if transcript[index].text.isEmpty {
@@ -402,6 +407,51 @@ final class AgentSession {
     // MARK: - The loop
 
     private func runTurn() async {
+        let auto = UserDefaults.standard.object(forKey: ModelTaskRouter.enabledKey) as? Bool ?? true
+        let researching: Bool
+        if case .research = pendingResearchRoute { researching = true } else { researching = false }
+        let role = ModelTaskRouter.role(for: currentRequest, research: researching)
+        let target = auto ? (role == .quickText ? quickTextModel : (role == .heavy ? heavyTaskModel : nil)) : nil
+        let original = await runner.configuration()
+        var changed = false
+        quickTextTurn = false
+        if let target, let original, target.directory != original.directory {
+            do {
+                await waitUntilForeground()
+                try Task.checkCancellation()
+                try await runner.load(directory: target.directory, displayName: target.name)
+                changed = true
+                quickTextTurn = role == .quickText
+                Diagnostics.log("inference.route role=\(role.rawValue) model=\(target.name)")
+            } catch {
+                Diagnostics.log("inference.route fallback: \(error.localizedDescription)")
+                if Task.isCancelled {
+                    let restore = Task { @MainActor in
+                        await self.waitUntilForeground()
+                        try? await runner.load(directory: original.directory, displayName: original.name, adapterDirectory: original.adapter)
+                    }
+                    await restore.value
+                    return
+                }
+                do { try await runner.load(directory: original.directory, displayName: original.name, adapterDirectory: original.adapter) }
+                catch { transcript.append(TranscriptEntry(kind: .error, text: error.localizedDescription)); return }
+            }
+        } else if auto, role == .quickText, target != nil {
+            quickTextTurn = true
+        }
+        await runTurnBody()
+        quickTextTurn = false
+        if changed, let original {
+            let restore = Task { @MainActor in
+                await self.waitUntilForeground()
+                do { try await self.runner.load(directory: original.directory, displayName: original.name, adapterDirectory: original.adapter) }
+                catch { self.transcript.append(TranscriptEntry(kind: .error, text: "Select the chat model again. " + error.localizedDescription)) }
+            }
+            await restore.value
+        }
+    }
+
+    private func runTurnBody() async {
         if pendingResearchRoute == .correction, pendingImageIDs.isEmpty,
            pendingResearchSelection == nil, pendingResearchRun == nil {
             researchCorrections = Array((researchCorrections + [currentRequest]).suffix(6))
@@ -447,7 +497,7 @@ final class AgentSession {
 
         let mode = TaskRouter.mode(for: currentRequest, previousTurnUsedPhoneTools: lastTurnUsedPhoneTools)
         let online = onlineEnabled && Connectivity.shared.isOnline
-        let tools = TaskRouter.tools(from: registry.specs, mode: mode, online: online)
+        let tools = quickTextTurn ? [] : TaskRouter.tools(from: registry.specs, mode: mode, online: online)
 
         var systemPrompt = SystemPrompt.build(tools: tools, mode: mode)
         if !researchCorrections.isEmpty {
@@ -824,6 +874,7 @@ final class AgentSession {
         // Finish restoring even if the research task was cancelled. Never leave
         // catalog selection pointing at a different resident model silently.
         let restore = Task { @MainActor in
+            await self.waitUntilForeground()
             do { try await self.runner.load(directory: original.directory, displayName: original.name, adapterDirectory: original.adapter) }
             catch { self.transcript.append(TranscriptEntry(kind: .error, text: "The chat model could not be restored. Select it in Models. " + error.localizedDescription)) }
         }
@@ -976,13 +1027,16 @@ final class AgentSession {
         if let original = researchOriginalModel {
             let role = system.hasPrefix(ResearchCoordinator.extractionPrompt) ? "extractorModel" : "plannerModel"
             let path = UserDefaults.standard.string(forKey: "conduit.research." + role) ?? ""
-            let target = path.isEmpty || unavailableResearchModels.contains(path) ? original.directory : URL(fileURLWithPath: path)
+            let auto = UserDefaults.standard.object(forKey: ModelTaskRouter.enabledKey) as? Bool ?? true
+            let specialist = auto ? researchCheckModel : nil
+            let preferred = path.isEmpty ? specialist?.directory : URL(fileURLWithPath: path)
+            let target = preferred.flatMap { unavailableResearchModels.contains($0.path) ? nil : $0 } ?? original.directory
             do {
                 try await runner.load(directory: target, displayName: target == original.directory ? original.name : target.lastPathComponent,
                                       adapterDirectory: target == original.directory ? original.adapter : nil)
             } catch {
                 try Task.checkCancellation()
-                unavailableResearchModels.insert(path)
+                unavailableResearchModels.insert(target.path)
                 transcript.append(TranscriptEntry(kind: .assistant, text: "The optional research model could not be loaded; using the chat model. " + error.localizedDescription))
                 try await runner.load(directory: original.directory, displayName: original.name, adapterDirectory: original.adapter)
             }

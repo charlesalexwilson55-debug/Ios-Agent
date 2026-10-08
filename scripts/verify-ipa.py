@@ -102,6 +102,7 @@ def main():
             check(widget_info.get("NSExtension", {}).get("NSExtensionPointIdentifier") == "com.apple.widgetkit-extension",
                   "Live Activity extension has the wrong extension point")
             check(widget_info.get("CFBundleVersion") == info.get("CFBundleVersion"), "App and Live Activity build numbers differ")
+            check(widget_info.get("CFBundleShortVersionString") == info.get("CFBundleShortVersionString"), "App and Live Activity marketing versions differ")
             widget_binary = z.read(widget_path + widget_info["CFBundleExecutable"])
             check(read_macho_header(widget_binary)[0] == CPU_TYPE_ARM64, "Live Activity extension must be arm64")
 

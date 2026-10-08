@@ -23,12 +23,20 @@ struct ModelPickerSheet: View {
     @State private var isCopying = false
     @State private var importError: String?
     @State private var downloader = Edge0Download.shared
+    @State private var specialistDownloader = SpecialistDownload.shared
+    @AppStorage(ModelTaskRouter.enabledKey) private var automaticRouting = true
+    @AppStorage("conduit.models.route.researchCheck") private var researchModel = ""
+    @AppStorage("conduit.models.route.quickText") private var quickModel = ""
+    @AppStorage("conduit.models.route.heavy") private var heavyModel = ""
+    @AppStorage("conduit.models.route.vision") private var visionModel = ""
     @AppStorage(ModelColors.storageKey) private var modelColors = ""
 
     var body: some View {
         NavigationStack {
             List {
                 modelsSection
+                specialistDownloads
+                routingSection
                 edgeDownloads
                 if !catalog.adapters.isEmpty { adaptersSection }
             }
@@ -83,6 +91,56 @@ struct ModelPickerSheet: View {
 
     // MARK: - Models
 
+    private var specialistDownloads: some View {
+        Section("Task models") {
+            ForEach(SpecialistDownload.Model.allCases) { model in
+                Button {
+                    specialistDownloader.start(model, catalog: catalog)
+                } label: {
+                    HStack {
+                        Image(systemName: model == .vision ? "eye" : "bolt")
+                        Text(model.rawValue)
+                        Spacer()
+                        Text(model.sizeLabel).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .disabled(specialistDownloader.isRunning || downloader.isRunning ||
+                    (catalog.models + catalog.visionModels).contains { $0.directory.lastPathComponent == model.folder })
+            }
+            if specialistDownloader.isRunning {
+                ProgressView(value: specialistDownloader.fraction)
+                Text(specialistDownloader.status).font(.caption)
+                Button("Pause download", role: .cancel) { specialistDownloader.cancel() }
+            } else if !specialistDownloader.status.isEmpty {
+                Text(specialistDownloader.status).font(.caption)
+            }
+            if let error = specialistDownloader.error { Text(error).font(.caption).foregroundStyle(.red) }
+        }
+    }
+
+    private var routingSection: some View {
+        Section {
+            Toggle("Choose models by task", isOn: $automaticRouting)
+            if automaticRouting {
+                routePicker("Quick text", selection: $quickModel, models: catalog.models.filter { $0.displayName.lowercased().contains("minicpm5-1b") })
+                routePicker("Research checks", selection: $researchModel, models: catalog.models)
+                routePicker("Heavy code and reasoning", selection: $heavyModel, models: catalog.models)
+            }
+            routePicker("Image reading", selection: $visionModel, models: catalog.visionModels)
+        } header: { Text("Model routing") }
+        footer: {
+            Text("Automatic uses MiniCPM for short text and research checks, Qwen-VL for pictures, and Edge0 for heavy code when installed. Phone actions stay with your chat model. Only one model is loaded at a time.")
+        }
+    }
+
+    private func routePicker(_ title: String, selection: Binding<String>, models: [DiscoveredModel]) -> some View {
+        Picker(title, selection: selection) {
+            Text("Automatic").tag("")
+            Text("Use default").tag("none")
+            ForEach(models) { model in Text(model.displayName).tag(model.id) }
+        }
+    }
+
     private var edgeDownloads: some View {
         Section {
             ForEach(Edge0Download.Tier.allCases) { tier in
@@ -96,7 +154,7 @@ struct ModelPickerSheet: View {
                         Text(tier == .small ? "≈5 GB" : "≈20 GB").foregroundStyle(.secondary)
                     }
                 }
-                .disabled(downloader.isRunning || catalog.models.contains { $0.architecture == tier.architecture })
+                .disabled(downloader.isRunning || specialistDownloader.isRunning || catalog.models.contains { $0.architecture == tier.architecture })
             }
             if downloader.isRunning {
                 ProgressView(value: downloader.fraction)

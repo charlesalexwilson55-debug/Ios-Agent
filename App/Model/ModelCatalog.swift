@@ -123,6 +123,27 @@ final class ModelCatalog {
         adapters.first { $0.id == selectedAdapterID }
     }
 
+    /// The selected chat model remains the fallback and the user's default.
+    func specialist(_ role: ModelTaskRouter.Role) -> DiscoveredModel? {
+        let explicit = UserDefaults.standard.string(forKey: "conduit.models.route." + role.rawValue) ?? ""
+        let available = role == .chat ? models : (role == .heavy ? models : models.filter { !$0.isVisionModel })
+        if explicit == "none" { return nil }
+        if !explicit.isEmpty { return available.first { $0.id == explicit } }
+        switch role {
+        case .quickText, .researchCheck:
+            return models.first { $0.displayName.lowercased().contains("minicpm5-1b") }
+        case .heavy: return models.first { $0.architecture == "edge0_35b" }
+        case .chat: return selectedModel
+        }
+    }
+
+    var preferredVisionModel: DiscoveredModel? {
+        let explicit = UserDefaults.standard.string(forKey: "conduit.models.route.vision") ?? ""
+        if explicit == "none" { return nil }
+        if !explicit.isEmpty { return visionModels.first { $0.id == explicit } }
+        return visionModels.first { $0.displayName.lowercased().contains("qwen3-vl-2b") } ?? visionModels.first
+    }
+
     // MARK: - Locations
 
     static var documentsRoot: URL {

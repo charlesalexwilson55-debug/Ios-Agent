@@ -20,7 +20,7 @@ import UIKit
     private var operation: Task<Void, Never>?
 
     func start(_ tier: Tier, catalog: ModelCatalog) {
-        guard !isRunning else { return }
+        guard !isRunning, !SpecialistDownload.shared.isRunning else { return }
         isRunning = true; error = nil; fraction = 0; status = "Checking storage…"
         UIApplication.shared.isIdleTimerDisabled = true
         let root = ModelCatalog.managedRoot

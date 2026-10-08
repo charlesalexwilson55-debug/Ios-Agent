@@ -143,7 +143,7 @@ struct RootView: View {
             let diedWhileLoading = unfinished?.hasPrefix("load") ?? false
 
             await catalog.refresh()
-            newSession.visionModelDirectory = catalog.visionModels.first?.directory
+            updateSpecialists()
             // Reload whatever was in use last launch, so the app comes back
             // ready rather than making the user pick again every time. Not if
             // loading it is what killed the last run: that would crash again
@@ -178,9 +178,10 @@ struct RootView: View {
         .onChange(of: research) { _, enabled in
             session?.researchEnabled = enabled
         }
-        .onChange(of: catalog.visionModels) { _, models in
-            session?.visionModelDirectory = models.first?.directory
-        }
+        .onChange(of: catalog.visionModels) { _, _ in updateSpecialists() }
+        .onChange(of: catalog.models) { _, _ in updateSpecialists() }
+        .onChange(of: page) { _, _ in updateSpecialists() }
+        .onChange(of: session?.isWorking) { _, working in if working == true { updateSpecialists() } }
         .onChange(of: session?.isWorking) { _, working in
             ConduitLiveStatus.shared.setWorking(working == true, foreground: scenePhase == .active,
                 status: research ? "Researching" : (thinking ? "Thinking" : "Working"))
@@ -256,8 +257,19 @@ struct RootView: View {
     private func selectFromPage(_ model: DiscoveredModel) {
         preSaverModel = ""
         autoModel = ""
-        session?.visionModelDirectory = catalog.visionModels.first?.directory
+        updateSpecialists()
         select(model)
+    }
+
+    private func updateSpecialists() {
+        session?.visionModelDirectory = catalog.preferredVisionModel?.directory
+        func configuration(_ role: ModelTaskRouter.Role) -> ModelRunner.Configuration? {
+            guard let model = catalog.specialist(role) else { return nil }
+            return .init(directory: model.directory, name: model.displayName, adapter: nil)
+        }
+        session?.quickTextModel = configuration(.quickText)
+        session?.researchCheckModel = configuration(.researchCheck)
+        session?.heavyTaskModel = configuration(.heavy)
     }
 
     private var isReady: Bool {
