@@ -28,10 +28,16 @@ enum SystemPrompt {
     }
 
     static func build(tools: [ToolDescriptor], mode: Mode) -> String {
+        let prompt: String
         switch mode {
-        case .answer: answerPrompt
-        case .task: taskPrompt(tools: tools)
+        case .answer: prompt = answerPrompt
+        case .task: prompt = taskPrompt(tools: tools)
         }
+        guard tools.contains(where: { $0.name == "run_javascript" }) else { return prompt }
+        return prompt + "\n\nrun_javascript is available. Verify numerical calculations, even simple arithmetic, "
+            + "with this tool before answering. Report the actual tool result. When writing runnable JavaScript, "
+            + "check representative cases, empty input and boundary conditions with this tool. "
+            + "Fix failing checks before presenting the code. Do not claim code was tested unless you ran it."
     }
 
     // MARK: - Questions

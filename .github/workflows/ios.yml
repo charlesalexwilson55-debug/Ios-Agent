@@ -76,6 +76,8 @@ jobs:
             python3 scripts/model-evaluation-tests.py
             xcrun swiftc -swift-version 5 -parse-as-library App/Model/MiniCPMToolDecoder.swift scripts/minicpm-tool-tests.swift -o artifacts/minicpm-tool-tests
             artifacts/minicpm-tool-tests
+            xcrun swiftc -swift-version 5 -parse-as-library App/Agent/ToolKit.swift App/Agent/SystemPrompt.swift scripts/calculator-prompt-tests.swift -o artifacts/calculator-prompt-tests
+            artifacts/calculator-prompt-tests
             xcrun swiftc -swift-version 5 -parse-as-library App/UI/TranscriptProgress.swift scripts/progress-tests.swift -o artifacts/progress-tests
             artifacts/progress-tests
             xcrun swiftc -swift-version 5 -parse-as-library App/Model/InferenceGate.swift App/Agent/ResearchPlan.swift App/Agent/ResearchTurnRouter.swift scripts/inference-tests.swift -o artifacts/inference-tests
