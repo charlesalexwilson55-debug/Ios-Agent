@@ -178,7 +178,7 @@ public final class Edge0ChatEngine35B: @unchecked Sendable {
         var decodeStartedAt: Date?
 
         while true {
-            switch shouldFinish() ? .hitEndToken : stop.evaluate(token: next, produced: produced) {
+            switch shouldFinish() ? .hitLimit : stop.evaluate(token: next, produced: produced) {
             case .hitEndToken, .hitLimit:
                 let finished = Date()
                 let decodeSeconds = decodeStartedAt.map {
