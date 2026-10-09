@@ -38,20 +38,17 @@ struct ActivityCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    @ViewBuilder private var header: some View {
-        if let running = log.steps.last(where: { $0.status == .running }) {
-            ConduitLoader(color: accent, status: running.title)
-        } else {
-            VStack(spacing: 6) {
-                Capsule().strokeBorder(.primary.opacity(0.65), lineWidth: 1.2)
-                    .frame(width: 38, height: 13)
-                    .overlay { Circle().fill(accent).frame(width: 7, height: 7) }
-                if showActivityLabel {
-                    Text(log.steps.last?.title ?? "Preparing research")
-                        .font(.caption2.weight(.medium)).foregroundStyle(.secondary)
-                }
-            }.frame(maxWidth: .infinity)
+    private var header: some View {
+        // The transcript owns the live indicator. This row remains a stable
+        // disclosure for sources, including when activity labels are hidden.
+        HStack(spacing: 8) {
+            Image(systemName: "doc.text.magnifyingglass").foregroundStyle(accent)
+            Text(showActivityLabel ? (log.steps.last?.title ?? "Research sources") : "Research sources")
+                .font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                .lineLimit(1)
+            Spacer(minLength: 36)
         }
+        .frame(minHeight: 32)
     }
 
     private var progressText: String {

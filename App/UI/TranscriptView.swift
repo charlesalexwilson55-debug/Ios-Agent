@@ -18,8 +18,10 @@ struct TranscriptView: View {
     @AppStorage("conduit.thinking") private var thinkingEnabled = true
     var onSelectResearchCandidate: (String, UUID) -> Void = { _, _ in }
     var onRejectResearchCandidate: (String, UUID) -> Void = { _, _ in }
+    @State private var scrollTask: Task<Void, Never>?
 
     var body: some View {
+        VStack(spacing: 0) {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14) {
@@ -27,10 +29,6 @@ struct TranscriptView: View {
                         row(for: entry)
                             .id(entry.id)
                             .transition(.opacity.combined(with: .move(edge: .bottom)))
-                    }
-                    if isWorking && !hasActivityModule {
-                        ConduitLoader(color: accent, status: activityLabel)
-                            .padding(.vertical, 10)
                     }
                     // Anchor for auto-scroll. Scrolling to the last entry's own
                     // id stops short while that entry is still growing during
@@ -51,36 +49,37 @@ struct TranscriptView: View {
             .onChange(of: entries.last?.reasoning) { _, _ in scroll(proxy) }
             .onChange(of: entries.compactMap(\.activity)) { _, _ in scroll(proxy) }
             .onChange(of: isWorking) { _, _ in scroll(proxy) }
+            .onGeometryChange(for: CGSize.self, of: { $0.size }) { _ in scroll(proxy) }
+            .onDisappear { scrollTask?.cancel() }
+        }
+        if isWorking {
+            // One owner outside lazy scroll rows: research placeholders cannot
+            // restart the animation or move it underneath the composer.
+            ConduitLoader(color: accent, status: activityLabel)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 8)
+        }
         }
         .background(BackdropView())
     }
 
     private static let bottomAnchor = "conduit.transcript.bottom"
 
-    private var hasActivityModule: Bool {
-        entries.last?.kind == .activity
-    }
-
     private var activityLabel: String {
-        if let step = entries.reversed().compactMap(\.activity).first?.steps.last(where: { $0.status == .running }) {
-            let title = step.title.lowercased()
-            if title.contains("search") || title.contains("research") { return "Researching" }
-            if title.contains("read") || title.contains("extract") { return "Reading" }
-            if title.contains("writ") { return "Writing" }
-            if title.contains("load") { return "Loading" }
-            if title.contains("resolv") || title.contains("check") { return "Cross-checking" }
-            return "Planning"
-        }
-        if entries.last?.kind == .tool { return "Routing" }
-        if let last = entries.last, last.isStreaming && !last.text.isEmpty { return "Typing" }
-        return thinkingEnabled ? "Thinking" : "Working"
+        TranscriptProgress.label(rows: entries.map {
+            TranscriptProgress.Row(isUser: $0.kind == .user, isTool: $0.kind == .tool,
+                isStreaming: $0.isStreaming, hasAnswer: !$0.text.isEmpty,
+                runningTitles: $0.activity?.steps.filter { $0.status == .running }.map(\.title) ?? [])
+        }, thinking: thinkingEnabled)
     }
 
     private func scroll(_ proxy: ScrollViewProxy) {
-        Task { @MainActor in
+        scrollTask?.cancel()
+        scrollTask = Task { @MainActor in
             // Row heights update after the text mutation. Scroll after that
             // layout, without overlapping animations for every streamed token.
-            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(30))
+            guard !Task.isCancelled else { return }
             if isWorking {
                 proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
             } else {

@@ -33,6 +33,7 @@ struct RootView: View {
     /// One runner for the app's lifetime. Recreating it would drop the loaded
     /// weights, and reloading those is a 20-60 second operation on a phone.
     @State private var runner = ModelRunner()
+    @State private var evaluation = DeviceEvaluation()
     @State private var session: AgentSession?
     @State private var draft = ""
     @State private var loadingState: ModelLoadingState = .idle
@@ -116,6 +117,7 @@ struct RootView: View {
                     .transition(.opacity)
             }
         }
+        .overlay { if evaluation.isRunning { DeviceEvaluationView(evaluation: evaluation) } }
         .tint(Color.conduitAccent)
         .sheet(isPresented: $showingSettings) { settingsSheet }
         .task {
@@ -144,6 +146,12 @@ struct RootView: View {
 
             await catalog.refresh()
             updateSpecialists()
+            if DeviceEvaluation.hasRequest {
+                startupReady = true
+                startupVisible = false
+                await evaluation.run(catalog: catalog, runner: runner)
+                if DeviceEvaluation.hasRequest { return }
+            }
             // Reload whatever was in use last launch, so the app comes back
             // ready rather than making the user pick again every time. Not if
             // loading it is what killed the last run: that would crash again
@@ -202,12 +210,20 @@ struct RootView: View {
         .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .active:
+                if DeviceEvaluation.hasRequest {
+                    Task {
+                        await evaluation.run(catalog: catalog, runner: runner)
+                        if !DeviceEvaluation.hasRequest, let previous = catalog.selectedModel { await load(previous) }
+                    }
+                    return
+                }
                 ConduitLiveStatus.shared.setWorking(session?.isWorking == true, foreground: true,
                     status: research ? "Researching" : "Working")
                 consumePendingTask()
                 checkBatterySaver()
                 consumeEdge0DownloadRequest()
             case .inactive, .background:
+                evaluation.pause()
                 ConduitLiveStatus.shared.pause()
                 session?.leavingForeground()
             default: break

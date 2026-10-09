@@ -1,6 +1,7 @@
 import Foundation
 import MLX
 import MLXLLM
+import MLXVLM
 import MLXLMCommon
 // mlx-swift-lm 3.31.4 ships no concrete tokenizer loader. MLXHuggingFace
 // provides the #huggingFaceTokenizerLoader() macro, and its expansion calls
@@ -223,10 +224,17 @@ actor ModelRunner {
             // The LLM factory explicitly: the generic loader tries the vision
             // factory first, which would load a text-only Qwen3.5 checkpoint
             // twice before giving up on it.
-            let loaded = try await LLMModelFactory.shared.loadContainer(
-                from: directory,
-                using: #huggingFaceTokenizerLoader()
-            )
+            let config = (try? Data(contentsOf: directory.appendingPathComponent("config.json")))
+                .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+            let architecture = config?["model_type"] as? String ?? ""
+            let loaded: ModelContainer
+            if DiscoveredModel.visionArchitectures.contains(architecture) {
+                // Explicit vision checkpoints can be evaluated with text-only
+                // questions. Stripped Qwen3.5 uses the LLM factory below.
+                loaded = try await VLMModelFactory.shared.loadContainer(from: directory, using: #huggingFaceTokenizerLoader())
+            } else {
+                loaded = try await LLMModelFactory.shared.loadContainer(from: directory, using: #huggingFaceTokenizerLoader())
+            }
             if let adapterDirectory {
                 try await Self.applyAdapter(at: adapterDirectory, to: loaded)
             }

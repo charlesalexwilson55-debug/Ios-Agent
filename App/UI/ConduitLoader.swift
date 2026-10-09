@@ -11,7 +11,7 @@ struct ConduitLoader: View {
 
     var body: some View {
         VStack(spacing: 6) {
-            TimelineView(.animation(minimumInterval: 1 / 30, paused: reduceMotion)) { context in
+            TimelineView(.animation(minimumInterval: 1 / 60, paused: reduceMotion)) { context in
                 let position = reduceMotion ? 0.5 : ConduitMotion.position(at: context.date.timeIntervalSince(started))
                 ZStack {
                     Capsule().strokeBorder(.primary.opacity(0.65), lineWidth: 1.2)
@@ -24,6 +24,8 @@ struct ConduitLoader: View {
             }
             if showActivityLabel, let status {
                 Text(status).font(.caption2.weight(.medium)).foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .frame(height: 14)
             }
         }
         .frame(maxWidth: .infinity, alignment: .center)
