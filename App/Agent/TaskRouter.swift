@@ -14,12 +14,12 @@ enum TaskRouter {
     /// Tools offered when answering a question.
     static let answerToolNames: Set<String> = [
         "get_current_time", "run_javascript", "web_search", "read_page", "get_weather",
-        "create_3d_object", "create_image",
+        "create_3d_object", "create_image", "create_files", "search_libraries", "read_library_photo", "github_search",
     ]
 
     /// Tools that reach the internet. Withheld when the user has switched
     /// online access off or there is no signal.
-    static let webToolNames: Set<String> = ["web_search", "read_page", "get_weather"]
+    static let webToolNames: Set<String> = ["web_search", "read_page", "get_weather", "github_search"]
 
     static func mode(for request: String, previousTurnUsedPhoneTools: Bool) -> SystemPrompt.Mode {
         if looksLikePhoneTask(request) { return .task }

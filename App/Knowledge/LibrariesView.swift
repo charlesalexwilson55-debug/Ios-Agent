@@ -332,6 +332,12 @@ struct LibraryManageView: View {
                             Task { await store.removeDocument(document, from: library) }
                         }
                     }
+                    .contextMenu {
+                        if let url = LibraryMedia.originalURL(document, library: library) {
+                            ShareLink(item: url)
+                            SendToPCButton { url }
+                        }
+                    }
                 }
             }
 
@@ -358,20 +364,7 @@ struct LibraryManageView: View {
                         guard let data = try await photo.loadTransferable(type: Data.self) else {
                             throw TextExtractor.ExtractError.empty
                         }
-                        guard let image = ImageStore.shared.addPhoto(data, prompt: "Imported into \(library.name)"),
-                              var updated = store.libraries.first(where: { $0.id == library.id }) else {
-                            throw TextExtractor.ExtractError.empty
-                        }
-                        updated.photoIDs = updated.readablePhotoIDs + [image.id]
-                        if updated.coverPinned != true { updated.coverImageID = image.id }
-                        store.update(updated)
-                        let analysis = await Task.detached(priority: .utility) { PhotoLibraryIndex.analyze(data) }.value
-                        let description = "Recognized text:\n\(analysis.text)\nVisual labels: \(analysis.labels.joined(separator: ", "))"
-                        ImageStore.shared.setDescription(image.id, description)
-                        try await KnowledgeIndex.shared.add(id: library.collection + "/photo/" + image.id.uuidString,
-                            source: .library, collection: library.collection,
-                            title: "\(library.name) · Photo \(index + 1)", text: description)
-                        await store.refresh(library)
+                        _ = try await LibraryMedia.importPhoto(data, into: library, store: store)
                     } catch {
                         failures.append("Photo \(index + 1): \(error.localizedDescription)")
                     }

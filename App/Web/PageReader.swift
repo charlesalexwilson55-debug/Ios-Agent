@@ -43,7 +43,23 @@ final class PageReader: NSObject {
     private static let minimumText = 200
 
     static func read(_ url: URL) async throws -> Page {
-        try await PageReader().load(url)
+        // GitHub raw files and API JSON are references, not rendered web pages.
+        if ["raw.githubusercontent.com", "api.github.com"].contains(url.host?.lowercased() ?? ""), url.scheme == "https" {
+            var request = URLRequest(url: url, timeoutInterval: 20)
+            request.setValue("Conduit", forHTTPHeaderField: "User-Agent")
+            let (bytes, response) = try await URLSession.shared.bytes(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+                  let type = http.value(forHTTPHeaderField: "Content-Type"),
+                  type.contains("text/") || type.contains("json") else { throw ReadError.noText }
+            var data = Data()
+            for try await byte in bytes {
+                data.append(byte)
+                if data.count >= 250_000 { break }
+            }
+            guard let text = String(data: data, encoding: .utf8), !text.isEmpty else { throw ReadError.noText }
+            return Page(title: url.lastPathComponent, url: url, text: text, links: [])
+        }
+        return try await PageReader().load(url)
     }
 
     static func search(_ query: String) async throws -> [WebSearch.Result] {

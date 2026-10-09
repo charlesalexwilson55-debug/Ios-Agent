@@ -98,6 +98,14 @@ struct TranscriptView: View {
         case .assistant:
             VStack(alignment: .leading, spacing: 10) {
                 AssistantText(entry: entry, accent: accent)
+                    .contextMenu {
+                        Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = entry.text }
+                        SendToPCButton {
+                            let url = FileManager.default.temporaryDirectory.appendingPathComponent("Chat-\(entry.id.uuidString).md")
+                            try Data(entry.text.utf8).write(to: url, options: .atomic)
+                            return url
+                        }
+                    }
                 if !entry.researchCandidates.isEmpty {
                     ResearchCandidatesView(candidates: entry.researchCandidates, isWorking: isWorking,
                         onSelect: { onSelectResearchCandidate($0.id, entry.id) },
@@ -109,6 +117,7 @@ struct TranscriptView: View {
             if entry.text.range(of: #"^Found \d+ notes?: "#, options: .regularExpression) == nil {
                 ToolChip(text: entry.text, outcome: entry.toolOutcome)
                 if let id = entry.objectID { ObjectPreview(id: id) }
+                if let id = entry.projectID, let project = FileProject.load(id) { GeneratedFilesView(project: project) }
                 ForEach(entry.imageIDs, id: \.self) { id in StoredImageView(id: id, maxHeight: 340) }
             }
         case .activity:
@@ -157,6 +166,7 @@ private struct UserBubble: View {
 private struct AssistantText: View {
     let entry: TranscriptEntry
     let accent: Color
+    @State private var inferredProject: FileProject?
 
     @AppStorage(Appearance.showReasoningKey) private var showReasoning = true
     @AppStorage("conduit.thinking") private var thinkingEnabled = true
@@ -177,12 +187,26 @@ private struct AssistantText: View {
                     case .prose(let prose):
                         ProseText(markdown: prose)
                     case .code(let language, let code):
-                        CodeBlockView(language: language, code: code)
+                        if inferredProject == nil { CodeBlockView(language: language, code: code) }
                     }
                 }
 
+            if let inferredProject { GeneratedFilesView(project: inferredProject) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .task(id: entry.isStreaming) {
+            guard !entry.isStreaming, inferredProject == nil else { return }
+            let files = ArtifactParser.files(from: entry.text, complete: true)
+            guard !files.isEmpty else { return }
+            // The stable entry UUID avoids creating another project every time a chat opens.
+            let key = "conduit.artifact." + entry.id.uuidString
+            if let saved = UserDefaults.standard.string(forKey: key), let project = FileProject.load(saved) {
+                inferredProject = project
+            } else if let project = try? FileProject.save(title: "Chat files", files: files) {
+                UserDefaults.standard.set(project.id, forKey: key)
+                inferredProject = project
+            }
+        }
     }
 
 }

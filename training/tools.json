@@ -533,6 +533,25 @@
   {
     "type": "function",
     "function": {
+      "name": "github_search",
+      "description": "Find public GitHub repositories, source examples, documentation and datasets. Returns repository links and descriptions. Follow useful links with read_page. This retrieves references; it does not train the model or install code.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "GitHub repository search terms, optionally language:swift or topic:dataset"
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "web_search",
       "description": "Search the web. Returns the top results, each with a title, the site, a short summary and the link. Use it for anything current, local or specific, or anything you are not sure of. If the summaries are not enough, read the most useful result with read_page.",
       "parameters": {
@@ -560,6 +579,10 @@
           "url": {
             "type": "string",
             "description": "The full https:// address of the page."
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Character offset for the next page section. Start at 0; use next_offset returned by the previous read."
           }
         },
         "required": [
@@ -582,6 +605,30 @@
           }
         },
         "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "create_files",
+      "description": "Save a website, code project or other text files as clickable file cards with copy buttons, ZIP download and local HTML preview. Include every file needed. Use relative paths and HTML relative links; no installed packages or server are available in the local preview.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "Project title"
+          },
+          "files": {
+            "type": "string",
+            "description": "JSON array of {path, content} objects, for example [{\"path\":\"index.html\",\"content\":\"<!doctype html>...\"}]. Maximum 32 text files and 2 MB combined."
+          }
+        },
+        "required": [
+          "title",
+          "files"
+        ]
       }
     }
   },
@@ -628,6 +675,51 @@
         },
         "required": [
           "prompt"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "search_libraries",
+      "description": "Search the user's imported library documents and photo collections. Returns relevant passages, matching photo IDs and exact counts of matches in indexed photo text/labels. It does not search only cover art. Leave query empty to list libraries and their contents. Image labels and OCR are not a complete semantic interpretation; use read_library_photo for visual details.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Focused words to find, for example Rickie"
+          },
+          "library": {
+            "type": "string",
+            "description": "Library name or UUID; omit to search every enabled library"
+          }
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "read_library_photo",
+      "description": "Read an imported photo by photo_id returned by search_libraries. Routes to the installed vision model, with Apple Vision OCR/labels as fallback. Cannot infer unseen content or identify a person from their face.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "photo_id": {
+            "type": "string",
+            "description": "Photo UUID or gallery asset ID from search_libraries"
+          },
+          "question": {
+            "type": "string",
+            "description": "What to describe or transcribe in the photo"
+          }
+        },
+        "required": [
+          "photo_id",
+          "question"
         ]
       }
     }

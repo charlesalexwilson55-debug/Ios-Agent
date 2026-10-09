@@ -51,7 +51,7 @@ TOOLS_PATH = HERE / "tools.json"
 # lists it, per the task brief.
 REGISTRY_FILES = [
     "PeopleTools.swift", "CalendarTools.swift", "DeviceTools.swift",
-    "CodeTools.swift", "WebTools.swift", "CreationTools.swift",
+    "CodeTools.swift", "WebTools.swift", "CreationTools.swift", "LibraryTools.swift",
 ]
 
 
@@ -64,8 +64,8 @@ class TaskRouterMirror:
     (TaskRouter.webToolNames withheld): only the two tools that need no
     network survive.
     """
-    answer_tool_names = {"get_current_time", "run_javascript", "web_search", "read_page", "get_weather", "create_image", "create_3d_object"}
-    web_tool_names = {"web_search", "read_page", "get_weather"}
+    answer_tool_names = {"get_current_time", "run_javascript", "web_search", "read_page", "get_weather", "create_image", "create_3d_object", "create_files", "search_libraries", "read_library_photo", "github_search"}
+    web_tool_names = {"web_search", "read_page", "get_weather", "github_search"}
     offline_answer_tool_names = answer_tool_names - web_tool_names
 
 

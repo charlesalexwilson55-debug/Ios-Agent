@@ -3,6 +3,7 @@ import Observation
 import Photos
 import UIKit
 import Vision
+import ImageIO
 
 /// Searchable, on-device metadata for Photos assets. The original images stay
 /// in Photos; only recognized text, broad visual labels and asset IDs are kept.
@@ -205,7 +206,13 @@ final class PhotoLibraryIndex {
         textRequest.recognitionLevel = .accurate
         textRequest.usesLanguageCorrection = true
         let classRequest = VNClassifyImageRequest()
-        let handler = VNImageRequestHandler(data: data)
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: 3072,
+              ] as CFDictionary) else { return ("", []) }
+        let handler = VNImageRequestHandler(cgImage: image)
         try? handler.perform([textRequest, classRequest])
         let text = (textRequest.results ?? []).compactMap { $0.topCandidates(1).first?.string }
             .joined(separator: "\n")

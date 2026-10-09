@@ -11,6 +11,15 @@ import Foundation
             else { UserDefaults.standard.removeObject(forKey: "conduit.libraries") }
         }
         var library = Library(name: "Photo migration fixture")
+        library.coverImageID = UUID()
+        library.photoIDs = []
+        precondition(library.readablePhotoIDs.isEmpty, "A cover is not collection content")
+        library.photoIDs = nil
+        library.coverPinned = true
+        precondition(library.readablePhotoIDs.isEmpty, "A decorative cover must never become an imported photo")
+        library.coverPinned = false
+        precondition(library.readablePhotoIDs == [library.coverImageID!], "Legacy content remains readable")
+        library.photoIDs = []
         library.galleryAssetIDs = ["fixture-photo-a", "fixture-photo-b"]
         UserDefaults.standard.set(try JSONEncoder().encode([library]), forKey: "conduit.libraries")
         let store = LibraryStore()

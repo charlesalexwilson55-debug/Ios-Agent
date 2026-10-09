@@ -45,7 +45,7 @@ enum TextExtractor {
         let text: String
         switch ext {
         case "pdf":
-            text = pdfText(url)
+            text = try await pdfText(url)
         case "docx":
             text = try officeText(url, parts: { $0 == "word/document.xml" })
         case "pptx":
@@ -99,15 +99,21 @@ enum TextExtractor {
 
     // MARK: - Formats
 
-    private static func pdfText(_ url: URL) -> String {
+    private static func pdfText(_ url: URL) async throws -> String {
         guard let document = PDFDocument(url: url) else { return "" }
         var pages: [String] = []
         for index in 0..<document.pageCount {
-            guard let page = document.page(at: index),
-                  let text = page.string?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !text.isEmpty
-            else { continue }
+            try Task.checkCancellation()
+            guard let page = document.page(at: index) else { continue }
+            var text = page.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if text.isEmpty {
+                // A scanned PDF needs OCR just like a photo. Bound each rendered page.
+                let thumbnail = page.thumbnail(of: CGSize(width: 1800, height: 2400), for: .mediaBox)
+                if let image = thumbnail.cgImage { text = try await recognizeText(in: image) }
+            }
+            if text.isEmpty { continue }
             pages.append("[Page \(index + 1)]\n\(text)")
+            if pages.reduce(0, { $0 + $1.count }) >= characterLimit { break }
         }
         return pages.joined(separator: "\n\n")
     }

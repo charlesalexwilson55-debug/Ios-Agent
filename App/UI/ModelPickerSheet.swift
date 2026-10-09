@@ -2,475 +2,217 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
-/// Model selection, import and download.
-///
-/// Importing from the Files app is presented first and downloading second,
-/// which is the opposite of what most apps do. The reason is bandwidth: these
-/// are 2-5GB files, and a user who already has the weights on a computer
-/// should not be nudged into pulling them again over cellular.
 struct ModelPickerSheet: View {
     @Environment(ModelCatalog.self) private var catalog
     @Environment(\.dismiss) private var dismiss
-
     let onSelect: (DiscoveredModel) -> Void
     let loadingState: ModelLoadingState
-    /// Off when shown as a full page from the sidebar, where there is no
-    /// sheet to dismiss.
     var showsDoneButton = true
-
-    @State private var isImporting = false
-    @State private var showingSuggestions = false
-    @State private var isCopying = false
+    @State private var importing = false
+    @State private var copying = false
+    @State private var information = false
     @State private var importError: String?
-    @State private var downloader = Edge0Download.shared
-    @State private var specialistDownloader = SpecialistDownload.shared
-    @AppStorage(ModelTaskRouter.enabledKey) private var automaticRouting = true
-    @AppStorage("conduit.models.route.researchCheck") private var researchModel = ""
-    @AppStorage("conduit.models.route.quickText") private var quickModel = ""
-    @AppStorage("conduit.models.route.heavy") private var heavyModel = ""
-    @AppStorage("conduit.models.route.vision") private var visionModel = ""
     @AppStorage(ModelColors.storageKey) private var modelColors = ""
 
     var body: some View {
         NavigationStack {
-            List {
-                modelsSection
-                specialistDownloads
-                routingSection
-                edgeDownloads
-                if !catalog.adapters.isEmpty { adaptersSection }
-            }
-            .scrollContentBackground(.hidden)
-            .background(BackdropView())
-            .navigationTitle("Models")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                if showsDoneButton {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Done") { dismiss() }
+            ScrollView {
+                VStack(spacing: 22) {
+                    HStack(spacing: 8) {
+                        Text("Upload a model").font(.title2.bold())
+                        Button { information = true } label: { Image(systemName: "info.circle").font(.subheadline) }
+                            .accessibilityLabel("Model import help")
+                    }.padding(.top, 12)
+                    Button { importing = true } label: {
+                        Image(systemName: "folder.badge.plus").font(.system(size: 36, weight: .light))
+                            .frame(maxWidth: .infinity, minHeight: 100)
+                            .glassEffect(.regular.tint(.black.opacity(0.2)), in: .rect(cornerRadius: 24))
                     }
-                }
-            }
-            .refreshable { await catalog.refresh() }
-            .task {
-                await catalog.refresh()
-            }
-            .fileImporter(
-                isPresented: $isImporting,
-                // A model is a folder of weights plus config and tokenizer
-                // files, so the picker selects a directory, not a file.
-                allowedContentTypes: [.zip, .folder],
-                allowsMultipleSelection: false
-            ) { result in
-                handleImport(result)
-            }
-            .sheet(isPresented: $showingSuggestions) {
-                NavigationStack {
-                    List { downloadSection }
-                        .navigationTitle("Suggested models")
-                        .toolbar {
-                            ToolbarItem(placement: .confirmationAction) {
-                                Button("Done") { showingSuggestions = false }
+                    .buttonStyle(.plain).disabled(copying).accessibilityLabel("Import model folder or ZIP")
+                    if copying { ProgressView("Importing…") }
+                    if !catalog.models.isEmpty {
+                        ModelSelectionWheel(models: catalog.models, selectedID: catalog.selectedModelID, onSelect: onSelect,
+                                            onDelete: { model in Task { await catalog.delete(model) } })
+                        if let selected = catalog.selectedModel {
+                            Text(selected.sizeDescription).font(.caption).foregroundStyle(.secondary)
+                            switch loadingState {
+                            case .loading(let status): ProgressView(status).font(.caption)
+                            case .failed(let reason): Text(reason).font(.caption).foregroundStyle(.red)
+                            case .idle: EmptyView()
                             }
-                        }
-                }
-            }
-            // A real two-way binding, not `.constant`: with a constant binding
-            // SwiftUI cannot clear the flag itself, so an interactive dismiss
-            // leaves the state set and the alert immediately re-presents.
-            .alert("Could not import", isPresented: Binding(
-                get: { importError != nil },
-                set: { if !$0 { importError = nil } }
-            )) {
-                Button("OK", role: .cancel) { importError = nil }
-            } message: {
-                Text(importError ?? "")
-            }
-        }
-    }
-
-    // MARK: - Models
-
-    private var specialistDownloads: some View {
-        Section("Task models") {
-            ForEach(SpecialistDownload.Model.allCases) { model in
-                Button {
-                    specialistDownloader.start(model, catalog: catalog)
-                } label: {
-                    HStack {
-                        Image(systemName: model == .vision ? "eye" : "bolt")
-                        Text(model.rawValue)
-                        Spacer()
-                        Text(model.sizeLabel).font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-                .disabled(specialistDownloader.isRunning || downloader.isRunning ||
-                    (catalog.models + catalog.visionModels).contains { $0.directory.lastPathComponent == model.folder })
-            }
-            if specialistDownloader.isRunning {
-                ProgressView(value: specialistDownloader.fraction)
-                Text(specialistDownloader.status).font(.caption)
-                Button("Pause download", role: .cancel) { specialistDownloader.cancel() }
-            } else if !specialistDownloader.status.isEmpty {
-                Text(specialistDownloader.status).font(.caption)
-            }
-            if let error = specialistDownloader.error { Text(error).font(.caption).foregroundStyle(.red) }
-        }
-    }
-
-    private var routingSection: some View {
-        Section {
-            Toggle("Choose models by task", isOn: $automaticRouting)
-            if automaticRouting {
-                routePicker("Quick text", selection: $quickModel, models: catalog.models.filter { $0.displayName.lowercased().contains("minicpm5-1b") })
-                routePicker("Research checks", selection: $researchModel, models: catalog.models)
-                routePicker("Heavy code and reasoning", selection: $heavyModel, models: catalog.models)
-            }
-            routePicker("Image reading", selection: $visionModel, models: catalog.visionModels)
-        } header: { Text("Model routing") }
-        footer: {
-            Text("Automatic uses MiniCPM for short text and research checks, Qwen-VL for pictures, and Edge0 for heavy code when installed. Phone actions stay with your chat model. Only one model is loaded at a time.")
-        }
-    }
-
-    private func routePicker(_ title: String, selection: Binding<String>, models: [DiscoveredModel]) -> some View {
-        Picker(title, selection: selection) {
-            Text("Automatic").tag("")
-            Text("Use default").tag("none")
-            ForEach(models) { model in Text(model.displayName).tag(model.id) }
-        }
-    }
-
-    private var edgeDownloads: some View {
-        Section {
-            ForEach(Edge0Download.Tier.allCases) { tier in
-                Button {
-                    downloader.start(tier, catalog: catalog)
-                } label: {
-                    HStack {
-                        Image(systemName: "arrow.down.circle")
-                        Text(tier.rawValue)
-                        Spacer()
-                        Text(tier == .small ? "≈5 GB" : "≈20 GB").foregroundStyle(.secondary)
-                    }
-                }
-                .disabled(downloader.isRunning || specialistDownloader.isRunning || catalog.models.contains { $0.architecture == tier.architecture })
-            }
-            if downloader.isRunning {
-                ProgressView(value: downloader.fraction)
-                Text(downloader.status).font(.caption)
-                Button("Pause download", role: .cancel) { downloader.cancel() }
-            } else if !downloader.status.isEmpty {
-                Text(downloader.status).font(.caption)
-            }
-            if let error = downloader.error { Text(error).font(.caption).foregroundStyle(.red) }
-        } header: {
-            Text("Download directly to iPhone")
-        } footer: {
-            Text("Experimental streaming models. Use Wi-Fi and keep Conduit open. Completed tensors are saved if interrupted. 35B weights are prepared on this iPhone; no computer storage is needed.")
-        }
-    }
-
-    private var modelsSection: some View {
-        Section {
-            VStack(spacing: 14) {
-                HStack(spacing: 7) {
-                    Text("Upload a model").font(.title2.bold())
-                    Button { showingSuggestions = true } label: {
-                        Image(systemName: "info.circle")
-                    }
-                    .accessibilityLabel("Suggested models")
-                }
-                .frame(maxWidth: .infinity)
-                Button { isImporting = true } label: {
-                    VStack(spacing: 8) {
-                        Image(systemName: "folder.badge.plus")
-                            .font(.system(size: 32, weight: .light))
-                        Text("Choose a model folder or ZIP")
-                            .font(.subheadline)
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 104)
-                    .background(Color.conduitAccent.opacity(0.12), in: .rect(cornerRadius: 18))
-                    .overlay { RoundedRectangle(cornerRadius: 18).strokeBorder(Color.conduitAccent.opacity(0.35)) }
-                }
-                .buttonStyle(.plain)
-                .disabled(isCopying)
-                if isCopying { ProgressView("Importing model…") }
-            }
-            .padding(.vertical, 8)
-
-            if !catalog.models.isEmpty {
-                HStack(alignment: .center, spacing: 8) {
-                    if catalog.models.count > 1 {
-                        modelTile(offset: -1)
-                    }
-                    modelTile(offset: 0)
-                    if catalog.models.count > 2 {
-                        modelTile(offset: 1)
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 18)
-                .accessibilityElement(children: .contain)
-                .accessibilityLabel("Model carousel")
-            }
-            if let selected = catalog.selectedModel {
-                ModelRow(model: selected, isSelected: true, loadingState: loadingState)
-                Text("Conduit light")
-                    .font(.caption.weight(.semibold))
-                    .frame(maxWidth: .infinity, alignment: .center)
-                HStack(spacing: 12) {
-                    ForEach(AccentPalette.palette) { swatch in
-                        Button {
-                            modelColors = ModelColors.setting(swatch.hex, for: selected.id, in: modelColors)
-                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                        } label: {
-                            Circle()
-                                .fill(Color(hex: swatch.hex) ?? .blue)
-                                .frame(width: 22, height: 22)
-                                .overlay {
-                                    Circle().strokeBorder(.white, lineWidth:
-                                        ModelColors.hex(for: selected.id, in: modelColors) == swatch.hex ? 2 : 0)
+                            if let warning = selected.memoryWarning {
+                                Text(warning).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                            }
+                            HStack(spacing: 8) {
+                                ForEach(AccentPalette.palette) { swatch in
+                                    Button {
+                                        modelColors = ModelColors.setting(swatch.hex, for: selected.id, in: modelColors)
+                                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                    } label: {
+                                        Circle().fill(Color(hex: swatch.hex) ?? .blue).frame(width: 23, height: 23)
+                                            .overlay { Circle().strokeBorder(.white, lineWidth: ModelColors.hex(for: selected.id, in: modelColors) == swatch.hex ? 2 : 0) }
+                                    }.buttonStyle(.plain).frame(minWidth: 32, minHeight: 40).accessibilityLabel(swatch.name)
                                 }
-                        }
-                        .buttonStyle(.plain)
-                        .frame(minWidth: 36, minHeight: 36)
-                        .accessibilityLabel("\(swatch.name) model light")
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                ConduitLoader(color: Color(hex: ModelColors.hex(for: selected.id, in: modelColors)) ?? .blue,
-                              status: nil)
-                    .padding(.vertical, 8)
-            }
-            if !catalog.visionModels.isEmpty {
-                Text("Image reader: \(catalog.visionModels.map(\.displayName).joined(separator: ", "))")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-        } header: {
-            Text("On this device")
-        } footer: {
-            if catalog.isScanning {
-                Text("Scanning…")
-            }
-        }
-    }
-
-    private func modelTile(offset: Int) -> some View {
-        let selectedIndex = catalog.models.firstIndex { $0.id == catalog.selectedModelID } ?? 0
-        let index = (selectedIndex + offset + catalog.models.count) % catalog.models.count
-        let model = catalog.models[index]
-        let isCenter = offset == 0
-        return Button { onSelect(model); UISelectionFeedbackGenerator().selectionChanged() } label: {
-            VStack(spacing: 10) {
-                Image(systemName: petIcon(for: model))
-                    .font(.system(size: isCenter ? 44 : 26))
-                    .frame(width: isCenter ? 90 : 64, height: isCenter ? 90 : 64)
-                    .background(Color(hex: ModelColors.hex(for: model.id, in: modelColors))?.opacity(0.18) ?? .blue.opacity(0.18),
-                                in: .rect(cornerRadius: 24))
-                Text(model.displayName)
-                    .font(isCenter ? .headline : .caption)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
-            }
-            .frame(maxWidth: isCenter ? 150 : 95)
-            .foregroundStyle(isCenter ? Color.primary : Color.secondary)
-        }
-        .buttonStyle(.plain)
-        .contextMenu {
-            Button("Delete model", systemImage: "trash", role: .destructive) {
-                Task { await catalog.delete(model) }
-            }
-        }
-        .accessibilityLabel("Select \(model.displayName)")
-    }
-
-    private func petIcon(for model: DiscoveredModel) -> String {
-        let pets = ["pawprint.fill", "hare.fill", "tortoise.fill", "bird.fill", "fish.fill", "ladybug.fill"]
-        let hash = model.displayName.utf8.reduce(UInt64(0)) { ($0 &* 31) &+ UInt64($1) }
-        return pets[Int(hash % UInt64(pets.count))]
-    }
-
-    private var adaptersSection: some View {
-        Section {
-            // "None" is an explicit row rather than a swipe-to-clear, because
-            // an adapter silently changing the model's behaviour is exactly
-            // the kind of state a user needs to be able to see and turn off.
-            Button {
-                catalog.select(adapterID: nil)
-            } label: {
-                HStack {
-                    Text("None")
-                    Spacer()
-                    if catalog.selectedAdapterID == nil {
-                        Image(systemName: "checkmark").foregroundStyle(.tint)
-                    }
-                }
-            }
-            .buttonStyle(.plain)
-
-            ForEach(catalog.adapters) { adapter in
-                Button {
-                    catalog.select(adapterID: adapter.id)
-                } label: {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(adapter.displayName)
-                            Text(adapter.sizeDescription)
-                                .font(.system(size: 12))
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        if catalog.selectedAdapterID == adapter.id {
-                            Image(systemName: "checkmark").foregroundStyle(.tint)
+                            }
+                            ConduitLoader(color: Color(hex: ModelColors.hex(for: selected.id, in: modelColors)) ?? .blue, status: nil)
                         }
                     }
-                }
-                .buttonStyle(.plain)
+                }.padding(.horizontal, 24).padding(.bottom, 30)
             }
-        } header: {
-            Text("LoRA adapter")
-        } footer: {
-            Text("An adapter fine-tunes the selected model's behaviour without replacing its "
-                + "weights. Reselect the model after changing this.")
-        }
-    }
-
-    // MARK: - Adding
-
-    private var downloadSection: some View {
-        Section {
-            ForEach(ModelCatalog.suggestions) { suggestion in
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack {
-                        Text(suggestion.displayName)
-                            .font(.system(size: 15, weight: .medium))
-                        Spacer()
-                        Text(ByteCountFormatter.string(
-                            fromByteCount: suggestion.approxBytes, countStyle: .file
-                        ))
-                        .font(.system(size: 13))
-                        .foregroundStyle(.secondary)
+            .background(BackdropView()).toolbar(.hidden, for: .navigationBar)
+            .task { await catalog.refresh() }.refreshable { await catalog.refresh() }
+            .fileImporter(isPresented: $importing, allowedContentTypes: [.zip, .folder]) { result in
+                switch result {
+                case .success(let url):
+                    Task {
+                        copying = true
+                        defer { copying = false }
+                        do { try await catalog.importModel(from: url) }
+                        catch { importError = error.localizedDescription }
                     }
-                    Text(suggestion.note)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                    Text(suggestion.repoID)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(.tertiary)
-                        .textSelection(.enabled)
-                }
-                .padding(.vertical, 3)
-            }
-        } header: {
-            Text("Suggested")
-        } footer: {
-            Text("Download these with the MLX or Hugging Face CLI on a computer, then import the "
-                + "folder. Pulling several gigabytes through the app is slower and more fragile "
-                + "than copying it across.")
-        }
-    }
-
-    private func handleImport(_ result: Result<[URL], Error>) {
-        switch result {
-        case .success(let urls):
-            guard let url = urls.first else { return }
-            Task {
-                isCopying = true
-                defer { isCopying = false }
-                do {
-                    try await catalog.importModel(from: url)
-                } catch {
-                    importError = error.localizedDescription
+                case .failure(let error): importError = error.localizedDescription
                 }
             }
-        case .failure(let error):
-            importError = error.localizedDescription
+            .sheet(isPresented: $information) {
+                NavigationStack {
+                    ModelRoutingSettings().navigationTitle("Models").navigationBarTitleDisplayMode(.inline)
+                        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { information = false } } }
+                }
+            }
+            .alert("Could not import", isPresented: Binding(get: { importError != nil }, set: { if !$0 { importError = nil } })) {
+                Button("OK", role: .cancel) { importError = nil }
+            } message: { Text(importError ?? "") }
+            .overlay(alignment: .topTrailing) {
+                if showsDoneButton { Button("Done") { dismiss() }.padding(12) }
+            }
         }
     }
 }
 
-/// Load progress, surfaced so a 40-second model load does not look like a hang.
-enum ModelLoadingState: Equatable {
-    case idle
-    case loading(String)
-    case failed(String)
+/// Drag rotates the wheel; the model loads only after the wheel settles.
+private struct ModelSelectionWheel: View {
+    let models: [DiscoveredModel]
+    let selectedID: String?
+    let onSelect: (DiscoveredModel) -> Void
+    let onDelete: (DiscoveredModel) -> Void
+    @State private var rotation = 0.0
+    @State private var lastAngle: Double?
+    @State private var dragging = false
+    private var step: Double { 360 / Double(max(models.count, 1)) }
+    private var focus: Int { ModelWheel.index(rotation: rotation, count: models.count) ?? 0 }
+    var body: some View {
+        VStack(spacing: 16) {
+            GeometryReader { geometry in
+                let size = min(geometry.size.width, geometry.size.height)
+                let radius = max(70, size / 2 - 34)
+                let center = CGPoint(x: geometry.size.width / 2, y: geometry.size.height / 2)
+                ZStack {
+                    Circle().stroke(.white.opacity(0.12), lineWidth: 1).frame(width: radius * 2, height: radius * 2)
+                    ModelBrandIcon(model: models[focus]).frame(width: 78, height: 78)
+                    if models.count > 1 {
+                        ForEach(Array(models.indices), id: \.self) { index in
+                            let model = models[index]
+                            let angle = (Double(index) * step + rotation - 90) * .pi / 180
+                            Button { settle(at: index) } label: {
+                                ModelBrandIcon(model: model).padding(8).frame(width: 54, height: 54)
+                                    .background(.black.opacity(0.6), in: .circle)
+                                    .overlay { Circle().strokeBorder(index == focus ? Color.conduitAccent : .white.opacity(0.12), lineWidth: index == focus ? 2 : 1) }
+                            }.buttonStyle(.plain)
+                            .position(x: center.x + CGFloat(cos(angle)) * radius, y: center.y + CGFloat(sin(angle)) * radius)
+                            .accessibilityLabel("Select \(model.displayName)")
+                            .contextMenu { Button("Delete model", systemImage: "trash", role: .destructive) { onDelete(model) } }
+                        }
+                    }
+                }
+                .frame(width: geometry.size.width, height: geometry.size.height)
+                .contentShape(.circle)
+                .gesture(DragGesture(minimumDistance: 6).onChanged { value in
+                    guard models.count > 1 else { return }
+                    dragging = true
+                    let angle = atan2(Double(value.location.y - center.y), Double(value.location.x - center.x)) * 180 / .pi
+                    let previous = lastAngle ?? atan2(Double(value.startLocation.y - center.y), Double(value.startLocation.x - center.x)) * 180 / .pi
+                    var delta = angle - previous
+                    if delta > 180 { delta -= 360 }; if delta < -180 { delta += 360 }
+                    rotation += delta; lastAngle = angle
+                }.onEnded { _ in
+                    lastAngle = nil; dragging = false
+                    let selected = focus
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { rotation = (rotation / step).rounded() * step }
+                    choose(selected)
+                })
+            }.frame(height: 275)
+            Text(models[focus].displayName).font(.headline).multilineTextAlignment(.center).lineLimit(3)
+                .frame(maxWidth: .infinity).padding(.horizontal, 16)
+        }
+        .onAppear { align() }
+        .onChange(of: selectedID) { _, _ in if !dragging { align() } }
+        .onChange(of: models.map(\.id)) { _, _ in align() }
+        .accessibilityElement(children: .contain).accessibilityLabel("Model wheel").accessibilityValue(models[focus].displayName)
+        .accessibilityAdjustableAction { direction in settle(at: (focus + (direction == .increment ? 1 : models.count - 1)) % models.count) }
+    }
+    private func align() { rotation = -Double(models.firstIndex { $0.id == selectedID } ?? 0) * step }
+    private func settle(at index: Int) {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { rotation = -Double(index) * step }
+        choose(index)
+    }
+    private func choose(_ index: Int) {
+        UISelectionFeedbackGenerator().selectionChanged()
+        if models[index].id != selectedID { onSelect(models[index]) }
+    }
 }
 
-private struct ModelRow: View {
+private struct ModelBrandIcon: View {
     let model: DiscoveredModel
-    let isSelected: Bool
-    let loadingState: ModelLoadingState
-
+    private var asset: String? {
+        let name = model.displayName.lowercased()
+        if name.contains("qwen") { return "ModelBrandQwen" }
+        if name.contains("minicpm") { return "ModelBrandMiniCPM" }
+        if name.contains("edge0") { return "ModelBrandEdge0" }
+        return nil
+    }
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(model.displayName)
-                        .font(.system(size: 15, weight: .medium))
-                        .lineLimit(2)
-                    HStack(spacing: 6) {
-                        Text(model.sizeDescription)
-                        if let architecture = model.architecture {
-                            Text("·")
-                            Text(architecture)
-                        }
-                        if let bits = model.quantBits {
-                            Text("·")
-                            Text("\(bits)-bit")
-                        }
+        Group {
+            if let asset { Image(asset).resizable().scaledToFit() }
+            else { Text(String(model.displayName.prefix(2)).uppercased()).font(.title2.bold()).foregroundStyle(Color.conduitAccent) }
+        }.clipShape(.rect(cornerRadius: 12))
+    }
+}
+
+struct ModelRoutingSettings: View {
+    @Environment(ModelCatalog.self) private var catalog
+    @AppStorage(ModelTaskRouter.enabledKey) private var automatic = true
+    @AppStorage("conduit.models.route.researchCheck") private var research = ""
+    @AppStorage("conduit.models.route.quickText") private var quick = ""
+    @AppStorage("conduit.models.route.heavy") private var heavy = ""
+    @AppStorage("conduit.models.route.vision") private var vision = ""
+    var body: some View {
+        Form {
+            Section { Text("Import an MLX model folder or ZIP containing its weights, config and tokenizer. Conduit copies models from Files and does not download them.") }
+            Section("Routing") {
+                Toggle("Choose models by task", isOn: $automatic)
+                if automatic {
+                    route("Quick text", $quick, catalog.models)
+                    route("Research checks", $research, catalog.models)
+                    route("Heavy code", $heavy, catalog.models)
+                }
+                route("Image reading", $vision, catalog.visionModels)
+            }
+            if !catalog.adapters.isEmpty {
+                Section("Adapter") {
+                    Picker("LoRA adapter", selection: Binding(get: { catalog.selectedAdapterID ?? "" }, set: { catalog.select(adapterID: $0.isEmpty ? nil : $0) })) {
+                        Text("None").tag("")
+                        ForEach(catalog.adapters) { Text($0.displayName).tag($0.id) }
                     }
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                }
-                Spacer()
-                if isLoadingThis {
-                    ProgressView().controlSize(.small)
-                } else if isSelected {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.tint)
                 }
             }
-
-            if let warning = model.memoryWarning {
-                HStack(alignment: .top, spacing: 5) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.orange)
-                    Text(warning)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.top, 1)
-            }
-
-            if case .failed(let message) = loadingState, isSelected {
-                Text(message)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.red)
-            }
-        }
-        .padding(.vertical, 3)
+        }.scrollContentBackground(.hidden).background(BackdropView())
     }
-
-    private var isLoadingThis: Bool {
-        if case .loading(let id) = loadingState { return id == model.id }
-        return false
-    }
-}
-
-private struct PermissionRow: View {
-    let name: String
-    let status: String
-
-    var body: some View {
-        HStack {
-            Text(name)
-            Spacer()
-            Text(status)
-                .font(.system(size: 13))
-                .foregroundStyle(status.hasPrefix("Denied") ? .red : .secondary)
+    private func route(_ name: String, _ selection: Binding<String>, _ models: [DiscoveredModel]) -> some View {
+        Picker(name, selection: selection) {
+            Text("Automatic").tag(""); Text("Use default").tag("none")
+            ForEach(models) { Text($0.displayName).tag($0.id) }
         }
     }
 }
+
+enum ModelLoadingState: Equatable { case idle, loading(String), failed(String) }

@@ -50,7 +50,8 @@ struct MemoryView: View {
                     .padding(.bottom, 24)
                 }
             }
-            .navigationTitle("Memory")
+            .navigationTitle("")
+            .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $search, prompt: "Search everything Conduit remembers")
             .onSubmit(of: .search) { runSearch() }
             .onChange(of: search) { _, text in

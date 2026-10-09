@@ -57,6 +57,11 @@ private struct ResearchRunView: View {
     var body: some View {
         List {
             Section {
+                SendToPCButton {
+                    let url = FileManager.default.temporaryDirectory.appendingPathComponent("Research-\(run.id).json")
+                    try JSONEncoder().encode(run).write(to: url, options: .atomic)
+                    return url
+                }
                 Text(run.request)
                 Text("\(run.searches) search queries · \(run.pages) pages · \(run.round) rounds").font(.caption)
                 if !run.stopReason.isEmpty { Text(run.stopReason).font(.footnote) }

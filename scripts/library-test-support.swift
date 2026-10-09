@@ -16,3 +16,12 @@ enum TextExtractor {
     static func text(from url: URL) throws -> String { throw URLError(.unsupportedURL) }
 }
 enum Diagnostics { static func log(_ text: String) {} }
+
+@MainActor enum LibraryMedia {
+    static func removeFiles(for library: Library) {}
+    static func removeFile(_ id: String, library: Library) {}
+    static func repairPhotos(in store: LibraryStore) async {}
+    static func importFile(_ url: URL, into library: Library, store: LibraryStore) async throws {
+        throw URLError(.unsupportedURL)
+    }
+}

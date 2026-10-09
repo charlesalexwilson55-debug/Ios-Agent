@@ -37,6 +37,7 @@ final class ToolRegistry {
             CodeTools(),
             WebTools(),
             CreationTools(),
+            LibraryTools(),
         ], dynamicProviders: [
         ])
     }

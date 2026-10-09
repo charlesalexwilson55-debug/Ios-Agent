@@ -27,7 +27,33 @@ packages:
     url: https://github.com/huggingface/swift-transformers
     from: 1.3.0
 
+schemes:
+  LibraryChecks:
+    build:
+      targets:
+        ConduitLibraryTests: [test]
+    test:
+      targets: [ConduitLibraryTests]
 targets:
+  ConduitLibraryTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests
+      - path: App/Knowledge/KnowledgeIndex.swift
+      - path: App/Knowledge/LibraryStore.swift
+      - path: App/Knowledge/LibraryMedia.swift
+      - path: App/Knowledge/PhotoLibraryIndex.swift
+      - path: App/Knowledge/TextExtractor.swift
+      - path: App/Knowledge/ZipReader.swift
+      - path: App/Images/ImageStore.swift
+    dependencies:
+      - sdk: libsqlite3.tbd
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.charles.conduit.library-tests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: 5.0
   Conduit:
     type: application
     platform: iOS

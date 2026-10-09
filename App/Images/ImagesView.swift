@@ -251,6 +251,7 @@ struct ImageDetailView: View {
                     Button("Done") { dismiss() }
                 }
                 ToolbarItemGroup(placement: .primaryAction) {
+                    if let record = store.record(id: id) { SendToPCButton { store.url(for: record) } }
                     if let image = store.image(id) {
                         ShareLink(item: Image(uiImage: image),
                                   preview: SharePreview("Picture", image: Image(uiImage: image)))

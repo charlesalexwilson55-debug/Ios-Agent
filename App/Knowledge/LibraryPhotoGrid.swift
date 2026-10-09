@@ -163,6 +163,18 @@ private struct LibraryPhotoViewer: View {
                     Button { dismiss() } label: { Image(systemName: "chevron.left") }
                         .accessibilityLabel("Back to library")
                     Spacer()
+                    SendToPCButton {
+                        switch photo.source {
+                        case .stored(let id):
+                            guard let record = ImageStore.shared.record(id: id) else { throw CocoaError(.fileNoSuchFile) }
+                            return ImageStore.shared.url(for: record)
+                        case .gallery:
+                            guard let image, let data = image.jpegData(compressionQuality: 0.95) else { throw CocoaError(.fileReadCorruptFile) }
+                            let url = FileManager.default.temporaryDirectory.appendingPathComponent("Library-Photo.jpg")
+                            try data.write(to: url, options: .atomic)
+                            return url
+                        }
+                    }.font(.caption)
                     Button { hideMessages.toggle() } label: {
                         Image(systemName: hideMessages ? "bubble.left" : "bubble.left.slash")
                     }

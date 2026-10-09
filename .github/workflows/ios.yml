@@ -74,6 +74,10 @@ jobs:
           {
             node scripts/page-reader-tests.js
             python3 scripts/model-evaluation-tests.py
+            python3 scripts/pc-outbox-tests.py
+            xcrun swiftc -swift-version 5 -parse-as-library App/Files/FileProject.swift App/Model/ModelWheel.swift scripts/artifact-tests.swift -o artifacts/artifact-tests
+            artifacts/artifact-tests artifacts/project-fixture.zip
+            python3 scripts/verify-artifact-zip.py artifacts/project-fixture.zip
             xcrun swiftc -swift-version 5 -parse-as-library App/Model/MiniCPMToolDecoder.swift scripts/minicpm-tool-tests.swift -o artifacts/minicpm-tool-tests
             artifacts/minicpm-tool-tests
             xcrun swiftc -swift-version 5 -parse-as-library App/Agent/ToolKit.swift App/Agent/SystemPrompt.swift scripts/calculator-prompt-tests.swift -o artifacts/calculator-prompt-tests
@@ -105,6 +109,12 @@ jobs:
             xcrun swiftc -swift-version 5 -parse-as-library App/Images/MeshAsset.swift scripts/mesh-tests.swift -o artifacts/mesh-tests
             artifacts/mesh-tests
           } 2>&1 | tee build/xcodebuild.log
+          xcodegen generate
+          simulator=$(xcrun simctl list devices available --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(v["udid"] for runtime,devices in d["devices"].items() if "iOS" in runtime for v in devices if "iPhone" in v["name"]))')
+          xcodebuild test -project Conduit.xcodeproj -scheme LibraryChecks \
+            -destination "platform=iOS Simulator,id=$simulator" \
+            -skipMacroValidation -skipPackagePluginValidation CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee -a build/xcodebuild.log
           bash scripts/build-ios.sh
 
       - uses: actions/upload-artifact@v4

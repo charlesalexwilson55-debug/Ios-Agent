@@ -53,8 +53,9 @@ struct SettingsView: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("Back to settings")
                 }
+                if selectedTab == nil { Color.clear.frame(width: 34, height: 34) }
                 Text(selectedTab?.title ?? "Settings").font(.title2.bold())
-                Spacer()
+                    .frame(maxWidth: .infinity, alignment: .center)
                 Button(action: onClose) {
                     Image(systemName: "xmark")
                         .font(.system(size: 14, weight: .semibold))
@@ -128,7 +129,7 @@ struct SettingsView: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 20)
+        .padding(.vertical, 14)
         .glassEffect(.regular, in: .rect(cornerRadius: 22))
     }
 
@@ -182,11 +183,12 @@ private struct ModelBadge: View {
         HStack(spacing: 5) {
             Image(systemName: "sparkle")
             Text(usage.map { "\(tier.name) · \($0.model)" } ?? "No model used yet")
-                .lineLimit(1)
+                .lineLimit(1).minimumScaleFactor(0.8)
         }
-        .font(.caption.weight(.semibold))
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
+        .font(.caption2.weight(.semibold))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .frame(maxWidth: 250)
         .background {
             Capsule().fill(LinearGradient(
                 colors: [tier.color.opacity(0.2), tier.color.opacity(held ? 0.8 : 0.4), .white.opacity(held ? 0.65 : 0.15)],
@@ -194,7 +196,7 @@ private struct ModelBadge: View {
                 endPoint: UnitPoint(x: 0.9 - tiltX * 0.3, y: 0.9 - tiltY * 0.3)))
         }
         .overlay { Capsule().strokeBorder(tier.color.opacity(0.7)) }
-        .scaleEffect(held ? 1.22 : 1)
+        .scaleEffect(held ? 1.08 : 1)
         .rotation3DEffect(.degrees(held ? tiltY * 13 : 0), axis: (x: 1, y: 0, z: 0))
         .highPriorityGesture(DragGesture(minimumDistance: 0)
             .onChanged { value in

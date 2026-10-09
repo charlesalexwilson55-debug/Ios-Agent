@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Original rendered chrome artwork, with a restrained motion sequence.
 /// Opening completes only after the model's startup work finishes.
@@ -15,12 +16,16 @@ struct StartupSplash: View {
     @State private var finishing = false
     @State private var appeared = false
     @State private var finale: Task<Void, Never>?
+    @State private var burstScale: CGFloat = 0.01
+    @State private var burstOpacity: Double = 0
+    @State private var backdropOpacity: Double = 1
+    @State private var trail = false
 
     var body: some View {
         GeometryReader { geometry in
             let width = min(geometry.size.width * 0.72, 310)
             ZStack {
-                Color(white: 0.025).ignoresSafeArea()
+                Color(white: 0.025).opacity(backdropOpacity).ignoresSafeArea()
                 ZStack {
                     Image("StartupConduitChrome")
                         .resizable().scaledToFit()
@@ -37,9 +42,24 @@ struct StartupSplash: View {
                         .shadow(color: color.opacity(0.8), radius: 6)
                         .offset(x: (position - 0.5) * width * 0.72)
                         .opacity(orbOpacity)
+                    Capsule()
+                        .fill(LinearGradient(colors: [color.opacity(0.55), .clear], startPoint: .leading, endPoint: .trailing))
+                        .frame(width: 44, height: 5).blur(radius: 3)
+                        .offset(x: (position - 0.5) * width * 0.72 + 24)
+                        .opacity(trail ? orbOpacity : 0)
                 }
                 .opacity(markOpacity)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                Circle()
+                    .fill(RadialGradient(colors: [.white, color.opacity(0.9), color.opacity(0.2)], center: .center, startRadius: 0, endRadius: 32))
+                    .frame(width: 64, height: 64).scaleEffect(burstScale)
+                    .offset(x: -width * 0.3).opacity(burstOpacity).allowsHitTesting(false)
+                VStack {
+                    Spacer()
+                    Text("CONDUIT").font(.custom("Archivo-SemiBold", size: 19))
+                        .tracking(6).foregroundStyle(.white.opacity(0.7))
+                        .padding(.bottom, geometry.safeAreaInsets.bottom + 26)
+                }.opacity(markOpacity)
             }
         }
         .accessibilityElement(children: .ignore)
@@ -60,18 +80,16 @@ struct StartupSplash: View {
             do {
                 try await Task.sleep(for: .milliseconds(180))
                 if !reduceMotion {
-                    withAnimation(.easeInOut(duration: 0.18)) { position = 0.96; stretch = 1.035; halo = 0.55 }
-                    try await Task.sleep(for: .milliseconds(180))
-                    withAnimation(.interpolatingSpring(stiffness: 240, damping: 24)) { position = 0.08; stretch = 1 }
-                    try await Task.sleep(for: .milliseconds(290))
-                    if Int.random(in: 0..<10) == 0 {
-                        for destination in [CGFloat(0.92), CGFloat(0.08)] {
-                            withAnimation(.easeInOut(duration: 0.22)) { position = destination }
-                            try await Task.sleep(for: .milliseconds(240))
-                        }
-                    }
-                    withAnimation(.easeOut(duration: 0.16)) { halo = 0.85; orbOpacity = 0 }
-                    try await Task.sleep(for: .milliseconds(160))
+                    trail = true
+                    withAnimation(.timingCurve(0.2, 0, 0.1, 1, duration: 0.34)) { position = 0.08; halo = 0.6 }
+                    try await Task.sleep(for: .milliseconds(340))
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    burstOpacity = 1
+                    withAnimation(.easeOut(duration: 0.12)) { burstScale = 0.8; orbOpacity = 0; stretch = 1.015 }
+                    try await Task.sleep(for: .milliseconds(100))
+                    withAnimation(.easeIn(duration: 0.28)) { burstScale = 45; markOpacity = 0; stretch = 1 }
+                    try await Task.sleep(for: .milliseconds(280))
+                    withAnimation(.easeOut(duration: 0.2)) { burstOpacity = 0; backdropOpacity = 0 }
                 }
                 withAnimation(.easeOut(duration: 0.18)) { markOpacity = 0; halo = 0 }
                 try await Task.sleep(for: .milliseconds(180))

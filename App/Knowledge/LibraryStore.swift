@@ -22,7 +22,8 @@ struct Library: Identifiable, Codable, Hashable {
 
     /// Older libraries predate photoIDs but still keep their cover image.
     var readablePhotoIDs: [UUID] {
-        if let photoIDs, !photoIDs.isEmpty { return photoIDs }
+        if let photoIDs { return photoIDs }
+        if coverPinned == true { return [] }
         return coverImageID.map { [$0] } ?? []
     }
 
@@ -77,13 +78,13 @@ final class LibraryStore {
             .contains(where: { text.contains($0) }) { return nil }
         guard ["photo", "picture", "image"].contains(where: { text.contains($0) }) else { return nil }
         let matches = libraries.filter {
-            !$0.name.isEmpty && text.contains($0.name.lowercased()) && !$0.readablePhotoIDs.isEmpty
+            $0.enabled && !$0.name.isEmpty && text.contains($0.name.lowercased()) && !$0.readablePhotoIDs.isEmpty
         }
-        if matches.count == 1 { return matches[0].readablePhotoIDs.last }
+        if matches.count == 1, matches[0].readablePhotoIDs.count == 1 { return matches[0].readablePhotoIDs.first }
         guard matches.isEmpty,
               ["latest photo", "last photo", "most recent photo", "latest picture", "last picture"]
                 .contains(where: { text.contains($0) }) else { return nil }
-        let photos = libraries.flatMap(\.readablePhotoIDs)
+        let photos = libraries.filter(\.enabled).flatMap(\.readablePhotoIDs)
         return ImageStore.shared.images.first(where: { photos.contains($0.id) })?.id
     }
 
@@ -110,10 +111,12 @@ final class LibraryStore {
         documents[library.id] = nil
         persist()
         try? await KnowledgeIndex.shared.remove(collection: library.collection)
+        LibraryMedia.removeFiles(for: library)
     }
 
     func refresh(_ library: Library) async {
-        documents[library.id] = (try? await KnowledgeIndex.shared.documents(collection: library.collection)) ?? []
+        let found = (try? await KnowledgeIndex.shared.documents(collection: library.collection)) ?? []
+        if libraries.contains(where: { $0.id == library.id }) { documents[library.id] = found }
     }
 
     /// Stable IDs make retries replace passages instead of duplicating them.
@@ -137,6 +140,10 @@ final class LibraryStore {
                 let text = "Photo taken: \(date)\nRecognized text:\n\(photo.text)\nVisual labels: \(photo.labels.joined(separator: ", "))"
                 try await KnowledgeIndex.shared.add(id: library.collection + "/gallery/" + id,
                     source: .library, collection: library.collection, title: "\(library.name) · Photo · \(date)", text: text)
+                if !libraries.contains(where: { $0.id == library.id }) {
+                    try? await KnowledgeIndex.shared.remove(document: library.collection + "/gallery/" + id)
+                    throw CancellationError()
+                }
             } else {
                 progress.failures.append("Photo \(progress.done + 1) could not be indexed")
             }
@@ -152,6 +159,7 @@ final class LibraryStore {
     }
 
     func repairGalleryIndexes() async {
+        await LibraryMedia.repairPhotos(in: self)
         for library in libraries where library.enabled && library.galleryIndexVersion != 1 {
             do { try await indexGallery(library) }
             catch { Diagnostics.log("library.photo-index failed: \(error.localizedDescription)") }
@@ -160,25 +168,35 @@ final class LibraryStore {
 
     func removeDocument(_ document: KnowledgeIndex.Document, from library: Library) async {
         try? await KnowledgeIndex.shared.remove(document: document.id)
+        if var updated = libraries.first(where: { $0.id == library.id }) {
+            if document.id.hasPrefix(library.collection + "/photo/"),
+               let id = UUID(uuidString: String(document.id.dropFirst((library.collection + "/photo/").count))) {
+                updated.photoIDs = updated.readablePhotoIDs.filter { $0 != id }
+                if updated.coverImageID == id && updated.coverPinned != true { updated.coverImageID = updated.photoIDs?.last }
+            }
+            if document.id.hasPrefix(library.collection + "/gallery/") {
+                let id = String(document.id.dropFirst((library.collection + "/gallery/").count))
+                updated.galleryAssetIDs?.removeAll { $0 == id }
+            }
+            update(updated)
+        }
+        LibraryMedia.removeFile(document.id, library: library)
         await refresh(library)
     }
 
-    /// Reads each file, then indexes its text. Files are not copied: only
-    /// their text is kept, in the index.
+    /// Retains originals and indexes text. Images also enter the photo collection.
     func importFiles(_ urls: [URL], into library: Library) async {
+        guard importing[library.id] == nil, libraries.contains(where: { $0.id == library.id }) else { return }
         var progress = ImportProgress(total: urls.count)
         importing[library.id] = progress
+        defer { importing[library.id] = nil }
         for url in urls {
+            if Task.isCancelled || !libraries.contains(where: { $0.id == library.id }) { break }
             progress.current = url.lastPathComponent
             importing[library.id] = progress
             let scoped = url.startAccessingSecurityScopedResource()
             do {
-                let text = try await Task.detached(priority: .userInitiated) {
-                    try await TextExtractor.text(from: url)
-                }.value
-                let id = "\(library.collection)/\(UUID().uuidString)"
-                try await KnowledgeIndex.shared.add(id: id, source: .library, collection: library.collection,
-                                                    title: url.lastPathComponent, text: text)
+                try await LibraryMedia.importFile(url, into: library, store: self)
             } catch {
                 progress.failures.append("\(url.lastPathComponent): \(error.localizedDescription)")
             }
@@ -186,7 +204,6 @@ final class LibraryStore {
             progress.done += 1
             importing[library.id] = progress
         }
-        importing[library.id] = nil
         lastFailures[library.id] = progress.failures.isEmpty ? nil : progress.failures
         await refresh(library)
     }
@@ -194,9 +211,14 @@ final class LibraryStore {
     /// Adds typed or pasted text as a note.
     func addNote(title: String, text: String, to library: Library) async throws {
         let id = "\(library.collection)/\(UUID().uuidString)"
+        guard libraries.contains(where: { $0.id == library.id }) else { throw CancellationError() }
         let name = title.trimmingCharacters(in: .whitespacesAndNewlines)
         try await KnowledgeIndex.shared.add(id: id, source: .library, collection: library.collection,
                                             title: name.isEmpty ? "Note" : name, text: text)
+        if !libraries.contains(where: { $0.id == library.id }) {
+            try? await KnowledgeIndex.shared.remove(document: id)
+            throw CancellationError()
+        }
         await refresh(library)
     }
 

@@ -17,6 +17,7 @@
   <key>MinimumOSVersion</key><string>26.0</string>
   <key>UIRequiredDeviceCapabilities</key><array><string>arm64</string></array>
   <key>UILaunchScreen</key><dict/>
+  <key>UIAppFonts</key><array><string>Archivo.ttf</string></array>
   <key>UISupportedInterfaceOrientations</key>
   <array><string>UIInterfaceOrientationPortrait</string></array>
   <key>ITSAppUsesNonExemptEncryption</key><false/>
