@@ -34,7 +34,7 @@ import UIKit
         var availableMB = 0
         var status = "completed"
     }
-    struct Checkpoint: Codable { let model: String; let caseID: String }
+    struct Checkpoint: Codable { let model: String; let caseID: String; var phase = "case" }
     private(set) var isRunning = false
     private(set) var status = "Preparing device tests"
     private(set) var completed = 0
@@ -80,13 +80,19 @@ import UIKit
             let oldData = (try? Data(contentsOf: resultsURL)) ?? Data()
             var results = oldData.split(separator: 10).compactMap { try? JSONDecoder().decode(Result.self, from: Data($0)) }
             if let data = try? Data(contentsOf: checkpointURL),
-               let pending = try? JSONDecoder().decode(Checkpoint.self, from: data),
-               !results.contains(where: { $0.model == pending.model && $0.caseID == pending.caseID }) {
-                var result = Result(model: pending.model, caseID: pending.caseID,
-                                    category: request.cases.first { $0.id == pending.caseID }?.category ?? "unknown")
-                result.status = "interrupted"
-                result.error = "The process ended before this case produced a result. Check device diagnostics."
-                results.append(result)
+               let pending = try? JSONDecoder().decode(Checkpoint.self, from: data) {
+                let interrupted = request.cases.filter { item in
+                    (pending.phase == "load" || item.id == pending.caseID)
+                        && !results.contains { $0.model == pending.model && $0.caseID == item.id }
+                }
+                for item in interrupted {
+                    var result = Result(model: pending.model, caseID: item.id, category: item.category)
+                    result.status = pending.phase == "load" ? "blocked_load" : "interrupted"
+                    result.error = pending.phase == "load"
+                        ? "The process ended while loading this model. Other cases are blocked until its load failure is diagnosed."
+                        : "The process ended before this case produced a result. Check device diagnostics."
+                    results.append(result)
+                }
                 try persist(results, to: resultsURL)
             }
             total = request.models.count * request.cases.count; completed = results.count
@@ -98,6 +104,8 @@ import UIKit
                 try Task.checkCancellation()
                 guard UIApplication.shared.applicationState == .active else { throw CancellationError() }
                 status = "Loading \(name)"
+                try JSONEncoder().encode(Checkpoint(model: name, caseID: pending[0].id, phase: "load"))
+                    .write(to: checkpointURL, options: .atomic)
                 await VisionRunner.shared.unload()
                 await runner.unload()
                 var loadError: String?
@@ -107,9 +115,10 @@ import UIKit
                     }
                     try await runner.load(directory: model.directory, displayName: name)
                 } catch {
-                    if Task.isCancelled { throw CancellationError() }
+                    if Task.isCancelled { try? FileManager.default.removeItem(at: checkpointURL); throw CancellationError() }
                     loadError = error.localizedDescription
                 }
+                if Task.isCancelled { try? FileManager.default.removeItem(at: checkpointURL); throw CancellationError() }
                 for item in pending {
                     try Task.checkCancellation()
                     guard UIApplication.shared.applicationState == .active else { throw CancellationError() }

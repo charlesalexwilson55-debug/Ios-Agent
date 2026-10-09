@@ -211,6 +211,7 @@ struct RootView: View {
             switch phase {
             case .active:
                 if DeviceEvaluation.hasRequest {
+                    guard startupReady, session != nil else { return }
                     Task {
                         await evaluation.run(catalog: catalog, runner: runner)
                         if !DeviceEvaluation.hasRequest, let previous = catalog.selectedModel { await load(previous) }

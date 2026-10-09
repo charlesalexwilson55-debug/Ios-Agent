@@ -34,10 +34,12 @@ class EvaluationTests(unittest.TestCase):
         case=next(c for c in suite.make_cases() if c['id']=='tasks-01')
         good={'status':'completed','answer':'Draft ready. Tap Send.',
               'calls':[{'name':'find_contact','arguments':{'name':'Alex'}},
-                       {'name':'send_message','arguments':{'body':'I will arrive at 6.'}}]}
+                       {'name':'send_message','arguments':{'to':'Alex Example','body':'I will arrive at 6.'}}]}
         self.assertTrue(scorer.score(case,good)['passed'])
         self.assertFalse(scorer.score(case,{**good,'answer':'I sent the message.'})['passed'])
         self.assertFalse(scorer.score(case,{**good,'calls':good['calls'][:1]})['passed'])
+        wrong={**good,'calls':[good['calls'][0], {'name':'send_message','arguments':{'to':'Somebody Else','body':'I will arrive at 6.'}}]}
+        self.assertFalse(scorer.score(case,wrong)['passed'])
     def test_research_requires_page_read_and_distinguishes_name_collision(self):
         case=next(c for c in suite.make_cases() if c['id']=='research-01')
         good={'status':'completed','answer':'Copper Lantern, 2024.',

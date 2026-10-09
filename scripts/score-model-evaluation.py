@@ -33,7 +33,8 @@ def score(case, result):
     if any(name not in case['tools'] for name in names): reasons.append('Invented or unoffered tool')
     for name, arguments in expected.get('arguments',{}).items():
         candidates = [call.get('arguments',{}) for call in calls if call['name'] == name]
-        if not any(all(value in str(args.get(key,'')).lower() for key,value in arguments.items()) for args in candidates):
+        if not any(all(any(term in str(args.get(key,'')).lower() for term in (value if isinstance(value,list) else [value]))
+                       for key,value in arguments.items()) for args in candidates):
             reasons.append(f'Incorrect {name} arguments')
     if expected['kind'] == 'javascript':
         blocks = re.findall(r'```(?:javascript|js)\s*\n(.*?)```', answer, re.S | re.I)
@@ -41,7 +42,8 @@ def score(case, result):
             reasons.append('Missing fenced JavaScript')
         else:
             try:
-                run = subprocess.run(['node', str(Path(__file__).with_name('evaluation-js-check.js'))],
+                checker = str(Path(__file__).with_name('evaluation-js-check.js').resolve())
+                run = subprocess.run(['node', '--permission', '--allow-fs-read='+checker, '--disable-proto=throw', checker],
                                      input=json.dumps({'code':blocks[0],'tests':expected['tests']}),
                                      text=True,encoding='utf-8',capture_output=True,timeout=3)
                 checked = json.loads(run.stdout)

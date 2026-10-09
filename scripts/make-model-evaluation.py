@@ -42,7 +42,7 @@ def make_cases():
         ('Who wrote Pride and Prejudice?', ['jane austen']),
         ('How many sides does a hexagon have?', ['six','6']),
         ('What is the square root of 144?', ['12','twelve']),
-        ('Why is the daytime sky blue? Explain briefly.', ['rayleigh','scatter']),
+        ('Why is the daytime sky blue? Explain briefly.', ['rayleigh','scatter','scattered','scattering']),
         ('What is 15 percent of 240? Reply with the number.', ['36']),
     ]
     for prompt, terms in knowledge:
@@ -80,6 +80,12 @@ def make_cases():
          {'find_contact':{'ok':True,'detail':{'contacts':[{'name':'Alex Green'},{'name':'Alex Brown'}]}},
           'send_message':staged}, terms=['which','green','brown'])
     cases[-1]['expected'].update(clarification=True, forbiddenTools=['send_message'])
+    for case in cases:
+        if case['category'] == 'tasks' and not case['expected'].get('clarification'):
+            for tool in ['send_message','send_email','place_call']:
+                if tool in case['expected']['required']:
+                    options = ['alex','alex@example.invalid'] if tool == 'send_email' else ['alex','+15550101001']
+                    case['expected']['arguments'].setdefault(tool,{})['to'] = options
     for index in range(1,11):
         name = f'Jordan Fixture{index}'
         town = f'Exampletown{index}'
