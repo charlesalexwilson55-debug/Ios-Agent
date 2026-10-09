@@ -57,5 +57,15 @@ class EvaluationTests(unittest.TestCase):
         answer={'status':'completed','answer':'3987'}
         self.assertFalse(scorer.score(case,answer)['passed'])
         self.assertTrue(scorer.score(case,{**answer,'calls':[{'name':'run_javascript','arguments':{'code':'137*29+Math.sqrt(196)'}}]})['passed'])
+    def test_xml_tool_commands_are_not_visible_answers(self):
+        case=next(c for c in suite.make_cases() if c['id']=='knowledge-01')
+        answer={'status':'completed','answer':'391 <function name="fake"><param name="code">1</param></function>'}
+        self.assertIn('Protocol tags visible',scorer.score(case,answer)['reason'])
+    def test_blocked_model_is_reported_separately_from_generated_failures(self):
+        case=suite.make_cases()[0]
+        data=scorer.report({'models':['missing-model'],'cases':[case]},
+                           [{'model':'missing-model','caseID':case['id'],'status':'blocked_load'}])
+        self.assertEqual(data['models']['missing-model'].get('blocked'),1)
+        self.assertEqual(data['models']['missing-model'].get('failed',0),0)
 
 if __name__=='__main__': unittest.main()

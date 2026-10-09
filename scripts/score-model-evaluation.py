@@ -14,7 +14,8 @@ def score(case, result):
     expected = case['expected']
     reasons = []
     if not answer.strip(): reasons.append('Empty final answer')
-    if re.search(r'</?(?:think|answer|question|tool_call)(?:\s|>|\?)', answer, re.I):
+    prose = re.sub(r'```[^\n]*\n.*?(?:```|\Z)', '', answer, flags=re.S)
+    if re.search(r'</?(?:think|answer|question|tool_call|function|param)(?:\s|>|\?)', prose, re.I):
         reasons.append('Protocol tags visible in final answer')
     if expected.get('forbid') and any(word in answer.lower() for word in expected['forbid']):
         reasons.append('Forbidden claim in answer')
@@ -64,7 +65,9 @@ def report(suite, results):
                              status=result.get('status','missing'),**score(case,result)))
     counts = collections.defaultdict(collections.Counter)
     for row in rows:
-        bucket = 'not_run' if row['status'] == 'missing' else ('passed' if row['passed'] else 'failed')
+        bucket = ('not_run' if row['status'] == 'missing' else
+                  'blocked' if row['status'] == 'blocked_load' else
+                  'passed' if row['passed'] else 'failed')
         counts[row['model']][bucket] += 1
         counts[row['model']][row['status']] += 1
     return {'scope':suite.get('scope',''), 'models':dict(counts),'cases':rows}

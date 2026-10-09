@@ -52,8 +52,17 @@ import UIKit
     func stop() { stopped = true; task?.cancel() }
 
     func run(catalog: ModelCatalog, runner: ModelRunner) async {
+        // A foreground event can arrive while the paused worker still drains
+        // GPU generation. Resume only after that worker releases its model.
+        while isRunning && paused {
+            guard UIApplication.shared.applicationState == .active else { return }
+            do { try await Task.sleep(for: .milliseconds(20)) } catch { return }
+        }
         guard !isRunning, UIApplication.shared.applicationState == .active, Self.hasRequest else { return }
         isRunning = true; stopped = false; paused = false
+        let idleTimerWasDisabled = UIApplication.shared.isIdleTimerDisabled
+        UIApplication.shared.isIdleTimerDisabled = true
+        defer { UIApplication.shared.isIdleTimerDisabled = idleTimerWasDisabled }
         let work = Task { await execute(catalog: catalog, runner: runner) }
         task = work
         await work.value

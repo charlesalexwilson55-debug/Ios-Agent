@@ -449,9 +449,31 @@ actor ModelRunner {
         var generated = 0
         var actualTokens: Int?
         var firstToken = true
+        let miniUsesXML = loadedName.lowercased().contains("minicpm5") && !tools.isEmpty
+        var miniText = ""
         func emit(_ pieces: [ThinkSplitter.Piece]) {
             for piece in pieces where !piece.text.isEmpty {
-                onEvent(piece.isReasoning ? .reasoning(piece.text) : .text(piece.text))
+                if miniUsesXML && !piece.isReasoning { miniText += piece.text }
+                else { onEvent(piece.isReasoning ? .reasoning(piece.text) : .text(piece.text)) }
+            }
+        }
+        func finishMini() throws {
+            guard miniUsesXML, !miniText.isEmpty else { return }
+            let schemas = tools.map { tool in
+                let properties = tool.parameterSchema["properties"] as? [String: any Sendable] ?? [:]
+                let types = properties.reduce(into: [String: String]()) { result, property in
+                    let definition = property.value as? [String: any Sendable]
+                    result[property.key] = definition?["type"] as? String ?? "string"
+                }
+                return MiniCPMToolDecoder.Schema(name: tool.name, types: types,
+                    required: Set(tool.parameterSchema["required"] as? [String] ?? []))
+            }
+            let parsed = try MiniCPMToolDecoder.parse(miniText, schemas: schemas)
+            miniText = ""
+            if !parsed.text.isEmpty { onEvent(.text(parsed.text)) }
+            for call in parsed.calls {
+                onEvent(.toolCall(id: nil, name: call.name,
+                    arguments: try JSONDecoder().decode(ArgumentValue.self, from: call.arguments)))
             }
         }
 
@@ -481,7 +503,18 @@ actor ModelRunner {
         }
 
         do {
-            let stream = try await container.generate(input: prepared, parameters: parameters)
+            // Keep the producer handle: dropping its stream cancels generation
+            // but does not wait for GPU work or retained model weights to end.
+            // Releasing our gate earlier made foreground resumes fail loading
+            // models that normally fit. Supply schemas for typed arguments too.
+            let schemas = tools.map(\.functionSchema)
+            let (stream, producer) = try await container.perform(nonSendable: prepared) { context, input in
+                let iterator = try TokenIterator(input: input, model: context.model, parameters: parameters)
+                return MLXLMCommon.generateTask(promptTokenCount: input.text.tokens.size,
+                    modelConfiguration: context.configuration, tokenizer: context.tokenizer,
+                    iterator: iterator, tools: schemas)
+            }
+            do {
             for await event in stream {
                 if Task.isCancelled { break }
                 if InferencePolicy.shouldStop(for: ProcessInfo.processInfo.thermalState) {
@@ -506,12 +539,22 @@ actor ModelRunner {
                     actualTokens = info.generationTokenCount
                     Diagnostics.log("inference.complete promptTokens=\(info.promptTokenCount) generatedTokens=\(info.generationTokenCount) prefillSeconds=\(info.promptTime) tokensPerSecond=\(info.tokensPerSecond)")
                     emit(splitter.flush())
+                    try finishMini()
                     onEvent(.finished(tokensPerSecond: info.tokensPerSecond))
                 default:
                     break
                 }
             }
+            } catch {
+                producer.cancel()
+                await producer.value
+                throw error
+            }
+            producer.cancel()
+            await producer.value
+            try Task.checkCancellation()
             emit(splitter.flush())
+            try finishMini()
         } catch {
             Diagnostics.log("generate.error \(error.localizedDescription)")
             if let runnerError = error as? RunnerError { throw runnerError }
