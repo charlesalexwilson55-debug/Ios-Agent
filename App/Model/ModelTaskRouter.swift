@@ -1,7 +1,8 @@
 import Foundation
 
-/// Small, explicit routes. Tool-using requests stay with the chat model because
-/// MiniCPM5's tool syntax is not supported by the pinned MLX Swift parser.
+/// Small, explicit routes. Resource requests stay with the chat model. MiniCPM
+/// has a schema-checked XML adapter, but the larger chat model remains the
+/// default for multi-step work and factual answers.
 enum ModelTaskRouter {
     enum Role: String, CaseIterable, Identifiable {
         case quickText, researchCheck, heavy, chat

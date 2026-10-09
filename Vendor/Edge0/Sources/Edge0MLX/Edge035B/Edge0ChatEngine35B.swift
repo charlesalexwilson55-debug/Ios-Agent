@@ -79,7 +79,8 @@ public final class Edge0ChatEngine35B: @unchecked Sendable {
         maxTokens: Int = 512,
         thinking: Bool = true,
         onText: @escaping @Sendable (String) -> Void = { _ in },
-        shouldContinue: @escaping @Sendable () -> Bool = { true }
+        shouldContinue: @escaping @Sendable () -> Bool = { true },
+        shouldFinish: @escaping @Sendable () -> Bool = { false }
     ) async throws -> Edge0GenerationResult {
         let prompt = userText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty else { throw Edge035BFailure.invalid("Message cannot be empty") }
@@ -177,7 +178,7 @@ public final class Edge0ChatEngine35B: @unchecked Sendable {
         var decodeStartedAt: Date?
 
         while true {
-            switch stop.evaluate(token: next, produced: produced) {
+            switch shouldFinish() ? .hitEndToken : stop.evaluate(token: next, produced: produced) {
             case .hitEndToken, .hitLimit:
                 let finished = Date()
                 let decodeSeconds = decodeStartedAt.map {
@@ -233,6 +234,10 @@ public final class Edge0ChatEngine35B: @unchecked Sendable {
                 onText(shown)
             }
             produced += 1
+
+            // A complete tool call ends this assistant round successfully.
+            // Do not decode speculative prose while its tool is waiting to run.
+            if shouldFinish() { continue }
 
             let logits = try model.step(tokens: MLXArray([next], [1, 1]), state: state)
             processed.append(next)

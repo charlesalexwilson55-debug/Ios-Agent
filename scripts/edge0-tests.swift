@@ -69,10 +69,15 @@ import Foundation
         _ = try parser.feed("", final: true)
         precondition(prose == "Answer" && reasoning == "secret" && calls.count == 1 && calls[0].0 == "web_search")
         var xml = Edge0Protocol.Parser(thinking: false)
+        precondition(!xml.hasCompleteCall)
         let pieces = try xml.feed("<tool_call><function=run_javascript><parameter=code>2 + 2</parameter></function></tool_call>", final: true)
         guard let first = pieces.first, case .call(let name, let arguments) = first else { fatalError("XML call missing") }
         let xmlArguments = try JSONSerialization.jsonObject(with: arguments) as? [String: String]
         precondition(name == "run_javascript" && xmlArguments?["code"] == "2 + 2")
+        precondition(xml.hasCompleteCall)
+        var partial = Edge0Protocol.Parser(thinking: false)
+        _ = try partial.feed("<tool_call>{")
+        precondition(!partial.hasCompleteCall)
         var broken = Edge0Protocol.Parser(thinking: false)
         do { _ = try broken.feed("<tool_call>{", final: true); fatalError("Incomplete tool call accepted") } catch {}
         let prompt = try Edge0Protocol.prompt(messages: [.init(role: "system", content: "Help"), .init(role: "user", content: "Question"), .init(role: "tool", content: "Result")], schemas: [], thinking: false, small: false)

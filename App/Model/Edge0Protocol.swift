@@ -55,6 +55,7 @@ enum Edge0Protocol {
     }
     enum Piece { case text(String), reasoning(String), call(String, Data) }
     struct Parser {
+        private(set) var hasCompleteCall = false
         private var buffer = ""
         private var reasoning: Bool
         private var tool = false
@@ -71,6 +72,7 @@ enum Edge0Protocol {
                     let body = String(buffer[..<end.lowerBound])
                     let call = try Self.call(body)
                     pieces.append(.call(call.0, call.1))
+                    hasCompleteCall = true
                     buffer = String(buffer[end.upperBound...]); tool = false
                     continue
                 }

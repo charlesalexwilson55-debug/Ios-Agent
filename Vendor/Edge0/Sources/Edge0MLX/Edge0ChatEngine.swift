@@ -85,19 +85,21 @@ public final class Edge0ChatEngine: @unchecked Sendable {
         thinking: Bool = false,
         seed: UInt64? = nil,
         onText: @escaping @Sendable (String) -> Void = { _ in },
-        shouldContinue: @escaping @Sendable () -> Bool = { true }
+        shouldContinue: @escaping @Sendable () -> Bool = { true },
+        shouldFinish: @escaping @Sendable () -> Bool = { false }
     ) throws -> Edge0GenerationResult {
         try Device.withDefaultDevice(Self.runtimeDevice) {
             try generateReply(to: userText, renderedPrompt: renderedPrompt, maxTokens: maxTokens,
                               thinking: thinking, seed: seed,
-                              onText: onText, shouldContinue: shouldContinue)
+                              onText: onText, shouldContinue: shouldContinue, shouldFinish: shouldFinish)
         }
     }
 
     private func generateReply(
         to userText: String, renderedPrompt: String?, maxTokens: Int, thinking: Bool, seed: UInt64?,
         onText: @escaping @Sendable (String) -> Void,
-        shouldContinue: @escaping @Sendable () -> Bool
+        shouldContinue: @escaping @Sendable () -> Bool,
+        shouldFinish: @escaping @Sendable () -> Bool
     ) throws -> Edge0GenerationResult {
         let trimmed = userText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw M1Error.invalid("Message cannot be empty") }
@@ -172,7 +174,7 @@ public final class Edge0ChatEngine: @unchecked Sendable {
                 firstTokenAt = Date()
                 decodeStartedAt = firstTokenAt
             }
-            if generated.count == maxTokens { break }
+            if generated.count == maxTokens || shouldFinish() { break }
             output = try model(tokenID: next)
             peakMemory = max(peakMemory, output?.peakMemory ?? 0)
             tokenCount += 1

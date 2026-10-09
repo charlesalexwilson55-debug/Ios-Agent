@@ -35,6 +35,10 @@ import UIKit
         var status = "completed"
     }
     struct Checkpoint: Codable { let model: String; let caseID: String; var phase = "case" }
+    @MainActor private final class PartialResult {
+        var value: Result
+        init(_ value: Result) { self.value = value }
+    }
     private(set) var isRunning = false
     private(set) var status = "Preparing device tests"
     private(set) var completed = 0
@@ -171,6 +175,7 @@ import UIKit
         let mode: SystemPrompt.Mode = item.category == "tasks" ? .task : .answer
         let seed = Result(model: model, caseID: item.id, category: item.category)
         var result = seed
+        let partial = PartialResult(seed)
         do {
             result = try await withThrowingTaskGroup(of: Result.self) { group in
                 group.addTask { @MainActor in
@@ -189,6 +194,10 @@ import UIKit
                             case .toolCall(let id, let name, let arguments): calls.append(.init(id: id ?? UUID().uuidString, name: name, arguments: arguments))
                             case .finished(let rate): output.tokensPerSecond = rate
                             }
+                            partial.value = output
+                            partial.value.rawAnswer = text
+                            partial.value.answer = ResponseTextCleaner.clean(text, streaming: true)
+                            partial.value.calls = output.calls + calls
                         }
                         output.rawAnswer = text; output.answer = ResponseTextCleaner.clean(text); output.calls += calls
                         if calls.isEmpty { return output }
@@ -213,6 +222,7 @@ import UIKit
                 return try await group.next()!
             }
         } catch {
+            result = partial.value
             result.status = error is CancellationError ? "cancelled" : "error"
             result.error = error.localizedDescription
         }

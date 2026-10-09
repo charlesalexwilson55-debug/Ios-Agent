@@ -615,10 +615,12 @@ actor ModelRunner {
         let result: Edge0GenerationResult
         if let edgeLarge {
             result = try await edgeLarge.reply(to: "Conversation", renderedPrompt: prompt,
-                onRawText: { output.receive($0) }, maxTokens: limit, thinking: thinking, shouldContinue: keepGoing)
+                onRawText: { output.receive($0) }, maxTokens: limit, thinking: thinking, shouldContinue: keepGoing,
+                shouldFinish: { output.hasCompleteCall })
         } else if let edgeSmall {
             result = try edgeSmall.reply(to: "Conversation", renderedPrompt: prompt,
-                maxTokens: limit, thinking: thinking, onText: { output.receive($0) }, shouldContinue: keepGoing)
+                maxTokens: limit, thinking: thinking, onText: { output.receive($0) }, shouldContinue: keepGoing,
+                shouldFinish: { output.hasCompleteCall })
         } else { throw RunnerError.noModelLoaded }
         try Task.checkCancellation()
         try output.finish()
@@ -631,14 +633,20 @@ actor ModelRunner {
 
     /// Native callbacks report cumulative text. Convert to deltas before protocol parsing.
     private final class EdgeOutput: @unchecked Sendable {
+        private let lock = NSLock()
         private var parser: Edge0Protocol.Parser
         private var previous = ""
         private var failure: Error?
         private let emit: @Sendable (RunnerEvent) -> Void
+        var hasCompleteCall: Bool {
+            lock.lock(); defer { lock.unlock() }
+            return parser.hasCompleteCall && failure == nil
+        }
         init(thinking: Bool, emit: @Sendable @escaping (RunnerEvent) -> Void) {
             parser = .init(thinking: thinking); self.emit = emit
         }
         func receive(_ cumulative: String) {
+            lock.lock(); defer { lock.unlock() }
             // A cumulative decoder may end a chunk with an unfinished UTF-8 character.
             // Wait for its complete bytes rather than publishing replacement characters.
             var stable = cumulative
@@ -648,6 +656,7 @@ actor ModelRunner {
             do { try deliver(parser.feed(delta)) } catch { failure = error }
         }
         func finish() throws {
+            lock.lock(); defer { lock.unlock() }
             if let failure { throw failure }
             try deliver(parser.feed("", final: true))
         }
