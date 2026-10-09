@@ -37,23 +37,34 @@ def score(case, result):
         if not any(all(any(term in str(args.get(key,'')).lower() for term in (value if isinstance(value,list) else [value]))
                        for key,value in arguments.items()) for args in candidates):
             reasons.append(f'Incorrect {name} arguments')
+    code_correct = None
+    code_formatted = None
     if expected['kind'] == 'javascript':
         blocks = re.findall(r'```(?:javascript|js)\s*\n(.*?)```', answer, re.S | re.I)
+        code_formatted = bool(blocks)
+        code = blocks[0] if blocks else None
         if not blocks:
             reasons.append('Missing fenced JavaScript')
-        else:
+            # Keep the formatting failure, but independently execute a complete
+            # standalone function so a presentation error does not hide its logic.
+            if re.fullmatch(r'(?:async\s+)?function\s+[$\w]+\s*\([^\n]*\)\s*\{.*\}\s*;?', answer.strip(), re.S):
+                code = answer.strip()
+        if code is not None:
             try:
                 checker = str(Path(__file__).with_name('evaluation-js-check.js').resolve())
                 run = subprocess.run(['node', '--permission', '--allow-fs-read='+checker, '--disable-proto=throw', checker],
-                                     input=json.dumps({'code':blocks[0],'tests':expected['tests']}),
+                                     input=json.dumps({'code':code,'tests':expected['tests']}),
                                      text=True,encoding='utf-8',capture_output=True,timeout=3)
                 checked = json.loads(run.stdout)
+                code_correct = not checked.get('error') and checked.get('outputs') == [test['output'] for test in expected['tests']]
                 if checked.get('error'): reasons.append('Code execution: '+checked['error'])
-                elif checked['outputs'] != [test['output'] for test in expected['tests']]: reasons.append('Code failed independent inputs')
+                elif not code_correct: reasons.append('Code failed independent inputs')
             except (OSError,ValueError,subprocess.TimeoutExpired) as error:
+                code_correct = False
                 reasons.append('Code check failed: '+str(error))
     return {'passed':not reasons,'reason':'; '.join(reasons),
-            'protocolCleaned':raw != answer}
+            'protocolCleaned':raw != answer,
+            'codeCorrect':code_correct,'codeFormattingValid':code_formatted}
 
 def report(suite, results):
     index = {(r['model'],r['caseID']):r for r in results}

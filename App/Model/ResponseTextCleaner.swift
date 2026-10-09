@@ -45,6 +45,14 @@ enum ResponseTextCleaner {
     )
 
     static func clean(_ raw: String, streaming: Bool = false) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Some local models return a complete JavaScript function without its
+        // Markdown fence. Reuse the copyable code renderer without editing code
+        // or guessing that ordinary prose is a programming language.
+        if !streaming, trimmed.range(of: #"(?s)^(?:async\s+)?function\s+[$\p{L}_][$\p{L}\p{N}_]*\s*\([^\n]*\)\s*\{.*\}\s*;?$"#,
+                                     options: .regularExpression) != nil {
+            return "```javascript\n\(trimmed)\n```"
+        }
         var result = ""
         var inFence = false
         for line in raw.components(separatedBy: "\n") {

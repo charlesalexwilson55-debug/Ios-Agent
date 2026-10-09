@@ -30,6 +30,21 @@ class EvaluationTests(unittest.TestCase):
     def test_runaway_code_is_bounded(self):
         case=suite.make_cases()[0]
         self.assertFalse(scorer.score(case,{'status':'completed','answer':'```javascript\nfunction solve(){while(true){}}\n```'})['passed'])
+    def test_unfenced_code_accuracy_is_measured_without_hiding_format_failure(self):
+        case=suite.make_cases()[0]
+        result=scorer.score(case,{'status':'completed','answer':'function solve(input){ return input.reduce((a,b)=>a+b,0); }'})
+        self.assertFalse(result['passed'])
+        self.assertIn('Missing fenced JavaScript',result['reason'])
+        self.assertTrue(result.get('codeCorrect'))
+        self.assertFalse(result.get('codeFormattingValid'))
+        bad=scorer.score(case,{'status':'completed','answer':'function solve(input){ return 0; }'})
+        self.assertFalse(bad.get('codeCorrect'))
+        self.assertIn('Code failed independent inputs',bad['reason'])
+    def test_prose_is_not_guessed_to_be_executable_code(self):
+        case=suite.make_cases()[0]
+        result=scorer.score(case,{'status':'completed','answer':'The function solve(input) should add the numbers.'})
+        self.assertFalse(result['passed'])
+        self.assertIsNone(result.get('codeCorrect'))
     def test_actions_check_arguments_and_honesty(self):
         case=next(c for c in suite.make_cases() if c['id']=='tasks-01')
         good={'status':'completed','answer':'Draft ready. Tap Send.',
