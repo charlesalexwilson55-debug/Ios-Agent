@@ -78,6 +78,8 @@ jobs:
             xcrun swiftc -swift-version 5 -parse-as-library App/Files/FileProject.swift App/Model/ModelWheel.swift scripts/artifact-tests.swift -o artifacts/artifact-tests
             artifacts/artifact-tests artifacts/project-fixture.zip
             python3 scripts/verify-artifact-zip.py artifacts/project-fixture.zip
+            xcrun swiftc -swift-version 5 -parse-as-library App/Web/GitHubReference.swift App/Agent/TaskRouter.swift App/Agent/ToolKit.swift App/Agent/SystemPrompt.swift scripts/resource-tests.swift -o artifacts/resource-tests
+            artifacts/resource-tests
             xcrun swiftc -swift-version 5 -parse-as-library App/Model/MiniCPMToolDecoder.swift scripts/minicpm-tool-tests.swift -o artifacts/minicpm-tool-tests
             artifacts/minicpm-tool-tests
             xcrun swiftc -swift-version 5 -parse-as-library App/Agent/ToolKit.swift App/Agent/SystemPrompt.swift scripts/calculator-prompt-tests.swift -o artifacts/calculator-prompt-tests

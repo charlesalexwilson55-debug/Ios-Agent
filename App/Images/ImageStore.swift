@@ -44,6 +44,8 @@ final class ImageStore {
     private static var indexURL: URL { folder.appendingPathComponent("index.json") }
 
     init() {
+        cache.totalCostLimit = 48 * 1_048_576
+        cache.countLimit = 24
         if let data = try? Data(contentsOf: Self.indexURL),
            let saved = try? JSONDecoder().decode([StoredImage].self, from: data) {
             images = saved
@@ -60,9 +62,17 @@ final class ImageStore {
 
     /// Saves a picture the user attached. Returns nil when the data is not an image.
     func addPhoto(_ data: Data, prompt: String) -> StoredImage? {
-        guard let image = UIImage(data: data), let jpeg = image.jpegData(compressionQuality: 0.9) else { return nil }
-        let stored = StoredImage(kind: .read, prompt: prompt, fileExtension: "jpg")
-        return save(jpeg, as: stored)
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              CGImageSourceGetCount(source) > 0, let type = CGImageSourceGetType(source),
+              let ext = UTType(type as String)?.preferredFilenameExtension,
+              CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: 64,
+              ] as CFDictionary) != nil else { return nil }
+        // Preserve encoded originals without decoding/re-encoding full-resolution photos.
+        let stored = StoredImage(kind: .read, prompt: prompt, fileExtension: ext)
+        return save(data, as: stored)
     }
 
     /// Saves an image Conduit made.
@@ -82,8 +92,7 @@ final class ImageStore {
         guard let image = record(id: id) else { return }
         try? FileManager.default.removeItem(at: url(for: image))
         images.removeAll { $0.id == id }
-        cache.removeObject(forKey: "\(id)-full" as NSString)
-        cache.removeObject(forKey: "\(id)-thumb" as NSString)
+        cache.removeAllObjects()
         persist()
     }
 
@@ -91,21 +100,21 @@ final class ImageStore {
     func image(_ id: UUID) -> UIImage? {
         let key = "\(id)-full" as NSString
         if let cached = cache.object(forKey: key) { return cached }
-        guard let record = record(id: id), let image = UIImage(contentsOfFile: url(for: record).path) else {
+        guard let record = record(id: id), let image = Self.downsample(url(for: record), maxPixels: 2048) else {
             return nil
         }
-        cache.setObject(image, forKey: key)
+        cache.setObject(image, forKey: key, cost: Int(image.size.width * image.size.height * 4))
         return image
     }
 
     /// A small copy for grids and chat bubbles.
     func thumbnail(_ id: UUID, size: CGFloat = 360) -> UIImage? {
-        let key = "\(id)-thumb" as NSString
+        let key = "\(id)-thumb-\(Int(size))" as NSString
         if let cached = cache.object(forKey: key) { return cached }
         guard let record = record(id: id),
               let image = Self.downsample(url(for: record), maxPixels: size)
         else { return nil }
-        cache.setObject(image, forKey: key)
+        cache.setObject(image, forKey: key, cost: Int(image.size.width * image.size.height * 4))
         return image
     }
 

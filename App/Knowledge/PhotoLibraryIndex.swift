@@ -149,7 +149,7 @@ final class PhotoLibraryIndex {
             && operation.contains(where: { text.contains($0) })
     }
 
-    private static func searchTerms(_ query: String) -> [String] {
+    static func searchTerms(_ query: String) -> [String] {
         let personPattern = #"(?i)\b(?:messages?|texts?|chats?)\s+(?:to|with|from)\s+([\p{L}][\p{L}\p{N}'-]*)"#
         if let regex = try? NSRegularExpression(pattern: personPattern),
            let match = regex.firstMatch(in: query, range: NSRange(query.startIndex..., in: query)),

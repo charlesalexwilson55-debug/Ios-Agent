@@ -1,13 +1,13 @@
 import Foundation
 
 enum GitHubReference {
-    static func search(_ query: String) async throws -> String {
+    static func search(_ query: String, session: URLSession = .shared) async throws -> String {
         var components = URLComponents(string: "https://api.github.com/search/repositories")!
         components.queryItems = [URLQueryItem(name: "q", value: String(query.prefix(500))), URLQueryItem(name: "per_page", value: "6")]
         var request = URLRequest(url: components.url!, timeoutInterval: 20)
         request.setValue("Conduit", forHTTPHeaderField: "User-Agent")
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
         guard http.statusCode == 200 else {
             if http.statusCode == 403 || http.statusCode == 429 { throw ReferenceError.rateLimit }

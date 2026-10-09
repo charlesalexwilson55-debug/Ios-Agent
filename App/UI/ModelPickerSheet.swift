@@ -43,7 +43,7 @@ struct ModelPickerSheet: View {
                             if let warning = selected.memoryWarning {
                                 Text(warning).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
                             }
-                            HStack(spacing: 8) {
+                            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 5), spacing: 4) {
                                 ForEach(AccentPalette.palette) { swatch in
                                     Button {
                                         modelColors = ModelColors.setting(swatch.hex, for: selected.id, in: modelColors)
