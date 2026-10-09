@@ -41,12 +41,14 @@ def make_cases():
         ('What is the largest ocean on Earth?', ['pacific']),
         ('Who wrote Pride and Prejudice?', ['jane austen']),
         ('How many sides does a hexagon have?', ['six','6']),
-        ('What is the square root of 144?', ['12','twelve']),
+        ('Use run_javascript to calculate (137 * 29) + Math.sqrt(196). Reply with the integer.', ['3987']),
         ('Why is the daytime sky blue? Explain briefly.', ['rayleigh','scatter','scattered','scattering']),
-        ('What is 15 percent of 240? Reply with the number.', ['36']),
+        ('Use run_javascript to calculate 500 * Math.pow(1.07, 3). Round to two decimal places and reply with the number.', ['612.52']),
     ]
     for prompt, terms in knowledge:
-        add('knowledge', prompt, {'kind':'terms', 'any':terms, 'forbid':['cannot answer','not a mathematician']})
+        tools = ['run_javascript'] if 'run_javascript' in prompt else []
+        add('knowledge', prompt, {'kind':'terms', 'any':terms, 'required':tools,
+                                 'forbid':['cannot answer','not a mathematician']}, tools)
     time = {'ok':True,'detail':{'now':'2026-10-09T12:00:00+11:00','date':'2026-10-09','weekday':'Friday','timezone':'Australia/Sydney'}}
     contact = {'ok':True,'detail':{'contacts':[{'name':'Alex Example','phone':'+15550101001','email':'alex@example.invalid'}]}}
     staged = {'ok':True,'status':'awaiting_user_confirmation','note':'Drafted only. The user must tap Send.'}

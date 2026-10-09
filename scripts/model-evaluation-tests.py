@@ -52,5 +52,10 @@ class EvaluationTests(unittest.TestCase):
         case=next(c for c in suite.make_cases() if 'gold' in c['prompt'])
         self.assertFalse(scorer.score(case,{'status':'completed','answer':'Because I cannot tell you.'})['passed'])
         self.assertTrue(scorer.score(case,{'status':'completed','answer':'Au.'})['passed'])
+    def test_calculation_requires_the_actual_calculator_route(self):
+        case=next(c for c in suite.make_cases() if 'Math.sqrt' in c['prompt'])
+        answer={'status':'completed','answer':'3987'}
+        self.assertFalse(scorer.score(case,answer)['passed'])
+        self.assertTrue(scorer.score(case,{**answer,'calls':[{'name':'run_javascript','arguments':{'code':'137*29+Math.sqrt(196)'}}]})['passed'])
 
 if __name__=='__main__': unittest.main()
