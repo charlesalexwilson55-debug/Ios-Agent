@@ -26,7 +26,7 @@ struct TranscriptView: View {
     var onCancelActivity: (UUID, UUID) -> Void = { _, _ in }
     var isWorking: Bool = false
     @AppStorage("conduit.thinking") private var thinkingEnabled = true
-    var onSelectResearchCandidate: (String, UUID) -> Void = { _, _ in }
+    var onSelectResearchCandidate: ([String], UUID) -> Void = { _, _ in }
     var onRejectResearchCandidate: (String, UUID) -> Void = { _, _ in }
     @State private var scrollTask: Task<Void, Never>?
     @State private var following = TranscriptFollow()
@@ -142,7 +142,7 @@ struct TranscriptView: View {
                     }
                 if !entry.researchCandidates.isEmpty {
                     ResearchCandidatesView(candidates: entry.researchCandidates, isWorking: isWorking,
-                        onSelect: { onSelectResearchCandidate($0.id, entry.id) },
+                        onSelect: { onSelectResearchCandidate($0.map(\.id), entry.id) },
                         onReject: { onRejectResearchCandidate($0.id, entry.id) })
                 }
             }

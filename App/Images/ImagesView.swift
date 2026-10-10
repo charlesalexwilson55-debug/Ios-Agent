@@ -14,11 +14,21 @@ struct StoredImageView: View {
     var body: some View {
         Group {
             if let image = ImageStore.shared.thumbnail(id, size: 720) {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxHeight: maxHeight)
-                    .clipShape(.rect(cornerRadius: cornerRadius))
+                Group {
+                    if ImageStore.shared.record(id: id)?.kind == .created {
+                        GeometryReader { geometry in
+                            let side = min(geometry.size.width, maxHeight)
+                            Image(uiImage: image).resizable().scaledToFill()
+                                .frame(width: side, height: side)
+                                .offset(x: -side * 0.25)
+                                .frame(width: side * 0.75, height: side, alignment: .leading)
+                                .clipped().clipShape(.rect(cornerRadius: cornerRadius))
+                        }.frame(height: maxHeight)
+                    } else {
+                        Image(uiImage: image).resizable().scaledToFit()
+                            .frame(maxHeight: maxHeight).clipShape(.rect(cornerRadius: cornerRadius))
+                    }
+                }
                     .onTapGesture { showing = true }
                     .accessibilityLabel(ImageStore.shared.record(id: id)?.prompt ?? "Picture")
                     .accessibilityAddTraits(.isButton)

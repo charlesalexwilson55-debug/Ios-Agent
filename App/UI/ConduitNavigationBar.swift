@@ -17,24 +17,16 @@ enum NavigationStyle: String, CaseIterable, Identifiable {
 struct ConduitNavigationBar: View {
     @Binding var selected: AppPage
     let onSettings: () -> Void
-    @AppStorage(NavigationStyle.storageKey) private var style = NavigationStyle.icons.rawValue
     @State private var dragLocation: CGFloat?
 
     private let pages = AppPage.allCases
 
     var body: some View {
-        Group {
-            if style == NavigationStyle.compact.rawValue {
-                compactBar
-            } else {
-                iconBar(showText: style == NavigationStyle.labels.rawValue)
-            }
-        }
+        iconBar(showText: false)
         .padding(.horizontal, 16)
         .padding(.top, 4)
         .padding(.bottom, 3)
         .onChange(of: selected) { _, _ in dragLocation = nil }
-        .onChange(of: style) { _, _ in dragLocation = nil }
     }
 
     private func iconBar(showText: Bool) -> some View {

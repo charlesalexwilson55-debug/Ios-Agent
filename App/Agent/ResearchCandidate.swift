@@ -25,13 +25,13 @@ struct ResearchCandidate: Identifiable, Codable, Sendable {
     static func visible(_ candidates: [Self], earlier: [Self], selectedID: String? = nil) -> [Self] {
         var result = candidates.map { candidate in
             var result = candidate
-            result.decision = earlier.last(where: { $0.decision != nil && ($0.id == candidate.id || $0.identityKey == candidate.identityKey) })?.decision
+            result.decision = earlier.last(where: { $0.decision != nil && ($0.id == candidate.id || ($0.decision == "rejected" && $0.identityKey == candidate.identityKey)) })?.decision
             if selectedID == candidate.id { result.decision = "selected" }
             return result
         }
         for index in result.indices where result[index].decision == nil {
             let key = result[index].identityKey
-            let decision = result.first(where: { $0.identityKey == key && $0.decision != nil })?.decision
+            let decision = result.first(where: { $0.identityKey == key && $0.decision == "rejected" })?.decision
             result[index].decision = decision
         }
         return result.filter { $0.decision != "rejected" }
@@ -41,4 +41,5 @@ struct ResearchCandidate: Identifiable, Codable, Sendable {
 struct ResearchSelection: Sendable {
     let request: String
     let candidate: ResearchCandidate
+    var additionalCandidates: [ResearchCandidate] = []
 }

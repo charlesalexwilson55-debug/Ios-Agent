@@ -12,10 +12,12 @@ struct GlassCommandBar: View {
     let onSend: () -> Void
     let onStop: () -> Void
     var onNewConversation: () -> Void = {}
+    var onAttachPhotos: () -> Void = {}
+    var hasAttachments = false
     @FocusState private var focused: Bool
 
     private var canSend: Bool {
-        isModelLoaded && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        isModelLoaded && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || hasAttachments)
     }
 
     var body: some View {
@@ -61,6 +63,14 @@ struct GlassCommandBar: View {
         .overlay(alignment: .bottomLeading) {
             if menuOpen {
                 VStack(spacing: 4) {
+                    Button {
+                        menuOpen = false
+                        onAttachPhotos()
+                    } label: {
+                        Label("Add images", systemImage: "photo.on.rectangle")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 8).frame(minHeight: 44)
+                    }.buttonStyle(.plain).disabled(isWorking)
                     option("Think", symbol: "brain", value: $thinking)
                     option("Online", symbol: "globe", value: $online)
                     option("Research", symbol: "magnifyingglass", value: $research)

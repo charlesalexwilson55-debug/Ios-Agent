@@ -6,7 +6,8 @@ import SwiftUI
 struct ResearchCandidatesView: View {
     let candidates: [ResearchCandidate]
     let isWorking: Bool
-    let onSelect: (ResearchCandidate) -> Void
+    let onSelect: ([ResearchCandidate]) -> Void
+    @State private var checked: Set<String> = []
     var onReject: (ResearchCandidate) -> Void = { _ in }
 
     var body: some View {
@@ -20,14 +21,13 @@ struct ResearchCandidatesView: View {
                         Text("Shared attributes are not proof of the same identity.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
-                    if let candidate = members.first { candidateCard(candidate) }
-                    if members.count > 1 {
-                        ForEach(members.dropFirst()) { candidate in
-                            Link(candidate.url.host ?? "Source", destination: candidate.url).font(.caption)
-                        }
-                    }
+                    ForEach(members) { candidate in candidateCard(candidate) }
                 }
             }
+            Button("Research selected (\(checked.count))") {
+                onSelect(candidates.filter { checked.contains($0.id) })
+            }.buttonStyle(.borderedProminent).tint(Color.conduitAccent)
+                .disabled(checked.isEmpty || isWorking)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -88,12 +88,14 @@ struct ResearchCandidatesView: View {
 
                 Spacer(minLength: 0)
 
-                if candidate.decision == "selected" {
-                    Label("Selected", systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(.green)
-                } else if candidate.decision == nil {
-                    Button("This person") { onSelect(candidate) }
-                        .buttonStyle(.borderedProminent).controlSize(.small)
-                        .tint(Color.conduitAccent).disabled(isWorking)
+                if candidate.decision != "rejected" {
+                    Button {
+                        if checked.contains(candidate.id) { checked.remove(candidate.id) }
+                        else { checked.insert(candidate.id) }
+                    } label: {
+                        Label(checked.contains(candidate.id) ? "Selected" : "Select source",
+                              systemImage: checked.contains(candidate.id) ? "checkmark.circle.fill" : "circle")
+                    }.buttonStyle(.bordered).controlSize(.small).disabled(isWorking)
                 }
                 if candidate.decision != "rejected" {
                     Button("Not this person") { onReject(candidate) }

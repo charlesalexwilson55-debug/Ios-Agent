@@ -37,6 +37,8 @@ struct ResearchRun: Codable, Identifiable, Sendable {
     var paused = false
     var plan: ResearchPlan?
     var selection: ResearchCandidate?
+    var additionalSelections: [ResearchCandidate]?
+    var selectedProfiles: [ResearchCandidate] { (selection.map { [$0] } ?? []) + (additionalSelections ?? []) }
     var budget: ResearchEngine.Budget
     var graph = ResearchGraph()
     var pendingQueries: [ResearchQuery] = []
@@ -61,9 +63,10 @@ struct ResearchRun: Codable, Identifiable, Sendable {
     var limitations: [String] = []
     var stopReason = ""
 
-    init(request: String, budget: ResearchEngine.Budget, selection: ResearchCandidate? = nil) {
+    init(request: String, budget: ResearchEngine.Budget, selection: ResearchCandidate? = nil, additionalSelections: [ResearchCandidate] = []) {
         id = UUID(); created = Date(); updated = created
         self.request = request; self.budget = budget; self.selection = selection
+        self.additionalSelections = additionalSelections.isEmpty ? nil : additionalSelections
     }
 
     var canResume: Bool { !completed }

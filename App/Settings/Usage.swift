@@ -194,30 +194,6 @@ struct PowerSettingsView: View {
                 .padding(.vertical, 8)
             }
 
-            Section {
-                ForEach(comparisons.indices, id: \.self) { index in
-                    let item = comparisons[index]
-                    HStack(spacing: 12) {
-                        Image(systemName: item.symbol)
-                            .font(.system(size: 24))
-                            .foregroundStyle(Color.conduitAccent)
-                            .frame(width: 34)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(item.name).font(.subheadline.weight(.medium))
-                            ProgressView(value: min(totalWh / item.wattHours, 1))
-                                .tint(Color.conduitAccent)
-                            Text(String(format: "%.2f of this example · %.0f Wh", totalWh / item.wattHours, item.wattHours))
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                    .padding(.vertical, 3)
-                }
-            } header: {
-                Text("Energy in context")
-            } footer: {
-                Text("Comparisons use rounded example capacities. Energy is estimated from generation time at 6 W; iOS does not provide a direct per-app power meter. A 9V battery stores less energy than a phone charge.")
-            }
-
             if !store.ranked.isEmpty {
                 Section("By model") {
                     ForEach(store.ranked) { entry in

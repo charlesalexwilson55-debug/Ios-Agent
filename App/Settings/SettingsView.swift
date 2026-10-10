@@ -106,9 +106,7 @@ struct SettingsView: View {
         VStack(spacing: 9) {
             Button { withAnimation { selectedTab = .you } } label: {
                 VStack(spacing: 8) {
-                Image(systemName: "person.crop.circle.fill")
-                    .font(.system(size: 47, weight: .ultraLight))
-                    .foregroundStyle(Color.conduitAccent)
+                ProfilePhotoView()
                 Text(profile.profile.name.isEmpty ? "Your profile" : profile.profile.name)
                     .font(.title3.bold())
                 if !email.isEmpty {
@@ -119,14 +117,7 @@ struct SettingsView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Edit profile")
             ModelBadge(usage: usage.ranked.first, held: $badgeHeld)
-            if !usage.ranked.isEmpty {
-                VStack(spacing: 5) {
-                    ForEach(Array(usage.ranked.prefix(3))) { item in
-                        Text("\(item.model) · \(item.replies) generations · \(Int(item.seconds / max(usage.totalSeconds, 1) * 100))% of AI time")
-                            .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                    }
-                }
-            }
+
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 14)

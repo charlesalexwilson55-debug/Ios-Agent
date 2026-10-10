@@ -61,9 +61,10 @@ import Foundation
     init(request: String, budget: Budget, ask: @escaping Ask, activity: ActivityReporter,
          search: @escaping Search = { try await WebSearch.research($0) },
          selection: ResearchCandidate? = nil,
+         additionalSelections: [ResearchCandidate] = [],
          read: @escaping Read = { try await PageReader.read($0).text },
          extract: Extract? = nil, store: ResearchStore? = nil, resume: ResearchRun? = nil) {
-        coordinator = ResearchCoordinator(run: resume ?? ResearchRun(request: request, budget: budget, selection: selection),
+        coordinator = ResearchCoordinator(run: resume ?? ResearchRun(request: request, budget: budget, selection: selection, additionalSelections: additionalSelections),
             ask: ask, search: search, read: read, extract: extract, activity: activity, store: store)
     }
     func run() async throws -> Findings { try await coordinator.run() }

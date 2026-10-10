@@ -7,7 +7,8 @@ import Foundation
         var duplicate = chosen
         duplicate.decision = nil
         duplicate = ResearchCandidate(title: "Other source", url: URL(string: "https://example.net/b")!, snippet: "", status: .possible, reason: "", matchedClues: [], displayGroupID: "same")
-        precondition(ResearchCandidate.visible([duplicate], earlier: [chosen]).first?.decision == "selected")
+        precondition(ResearchCandidate.visible([duplicate], earlier: [chosen]).first?.decision == nil,
+            "A different source card must not be selected automatically")
         chosen.decision = "rejected"
         precondition(ResearchCandidate.visible([duplicate], earlier: [chosen]).isEmpty)
         let restoredCandidate = try JSONDecoder().decode(ResearchCandidate.self, from: JSONEncoder().encode(chosen))

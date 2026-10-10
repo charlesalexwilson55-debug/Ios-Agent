@@ -1,6 +1,8 @@
 import Foundation
 import Observation
 import SwiftUI
+import PhotosUI
+import UIKit
 import UniformTypeIdentifiers
 
 /// What the user tells Conduit about themselves.
@@ -203,6 +205,9 @@ extension TextExtractor {
 /// Settings > You.
 struct ProfileSettingsView: View {
     @State private var store = ProfileStore.shared
+    @AppStorage("conduit.profile.photo") private var photoData = Data()
+    @State private var photoItem: PhotosPickerItem?
+    @State private var photoError: String?
     @State private var draft = ProfileStore.shared.profile
     @AppStorage("conduit.profile.email") private var email = ""
     @State private var importService: String?
@@ -212,6 +217,13 @@ struct ProfileSettingsView: View {
 
     var body: some View {
         Form {
+            Section("Profile picture") {
+                PhotosPicker(selection: $photoItem, matching: .images) {
+                    HStack { ProfilePhotoView(size: 64); Text("Change profile picture") }
+                }
+                if !photoData.isEmpty { Button("Remove picture", role: .destructive) { photoData = Data() } }
+                if let photoError { Text(photoError).font(.caption).foregroundStyle(.red) }
+            }
             Section {
                 TextField("Name", text: $draft.name)
                 TextField("Email", text: $email)
@@ -249,6 +261,22 @@ struct ProfileSettingsView: View {
             }
         }
         .scrollContentBackground(.hidden)
+        .task(id: photoItem) {
+            guard let photoItem else { return }
+            do {
+                guard let data = try await photoItem.loadTransferable(type: Data.self), let image = UIImage(data: data) else { return }
+                try Task.checkCancellation()
+                let side: CGFloat = 256
+                let scale = side / min(image.size.width, image.size.height)
+                let resized = UIGraphicsImageRenderer(size: CGSize(width: side, height: side)).image { _ in
+                    image.draw(in: CGRect(x: (side - image.size.width * scale) / 2,
+                        y: (side - image.size.height * scale) / 2, width: image.size.width * scale, height: image.size.height * scale))
+                }
+                photoData = resized.jpegData(compressionQuality: 0.85) ?? Data()
+                photoError = nil
+            } catch is CancellationError { }
+            catch { photoError = "Could not load profile picture." }
+        }
         .onChange(of: draft) { _, updated in store.save(updated) }
         .fileImporter(isPresented: $showingImporter,
                       allowedContentTypes: [.zip, .folder, .json, .html, .plainText, .commaSeparatedText]) { result in

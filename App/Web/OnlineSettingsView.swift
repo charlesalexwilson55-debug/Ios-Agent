@@ -4,12 +4,10 @@ import SwiftUI
 /// the phone.
 struct OnlineSettingsView: View {
     @AppStorage("conduit.online") private var online = true
-    @AppStorage("conduit.research.depth") private var researchDepth = "advanced"
     @State private var connectivity = Connectivity.shared
     @State private var hasExaKey = SearchKeyStore.hasExaKey
     @State private var hasTavilyKey = SearchKeyStore.hasTavilyKey
-    @State private var exaDraft = ""
-    @State private var tavilyDraft = ""
+    @State private var keyDraft = ""
     @State private var testingProvider: WebSearch.Provider?
     @State private var exaTestResult: TestResult?
     @State private var tavilyTestResult: TestResult?
@@ -62,63 +60,29 @@ struct OnlineSettingsView: View {
                     Text("Public search works without a key. Exa and Tavily are optional providers for more consistent discovery. Search engines may block automated requests; Conduit reports that rather than claiming nothing was found.")
                 }
 
-                Section("Research quality") {
-                    Picker("Tavily discovery", selection: $researchDepth) {
-                        Text("Thorough").tag("advanced")
-                        Text("Standard").tag("basic")
+                Section {
+                    SecureField("Import a Tavily or Exa key", text: $keyDraft)
+                        .textContentType(.password).autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                    if keyDraft.count >= 20, SearchKeyKind.detect(keyDraft) == nil {
+                        Text("Key format not recognised. Paste the full Tavily or Exa key.")
+                            .font(.footnote).foregroundStyle(.secondary)
                     }
-                    Text("Thorough searches retrieve more relevant evidence and use more provider credits. Research keeps full names in each query and never falls back to Wikipedia alone.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-
-                providerSection(
-                    provider: .exa,
-                    hasKey: hasExaKey,
-                    draft: $exaDraft,
-                    result: exaTestResult,
-                    placeholder: "Paste your Exa API key",
-                    save: {
-                        SearchKeyStore.saveExa(exaDraft)
-                        exaDraft = ""
-                        hasExaKey = SearchKeyStore.hasExaKey
-                        exaTestResult = nil
-                    },
-                    remove: {
-                        SearchKeyStore.saveExa(nil)
-                        hasExaKey = false
-                        exaTestResult = nil
+                    if hasExaKey {
+                        Label("Exa key saved", systemImage: "checkmark.seal.fill").foregroundStyle(.green)
+                        Button("Remove Exa key", role: .destructive) { SearchKeyStore.saveExa(nil); refreshKeyState(); exaTestResult = nil }
                     }
-                )
-
-                providerSection(
-                    provider: .tavily,
-                    hasKey: hasTavilyKey,
-                    draft: $tavilyDraft,
-                    result: tavilyTestResult,
-                    placeholder: "Paste your Tavily API key",
-                    save: {
-                        SearchKeyStore.saveTavily(tavilyDraft)
-                        tavilyDraft = ""
-                        hasTavilyKey = SearchKeyStore.hasTavilyKey
-                        tavilyTestResult = nil
-                    },
-                    remove: {
-                        SearchKeyStore.saveTavily(nil)
-                        hasTavilyKey = false
-                        tavilyTestResult = nil
+                    if hasTavilyKey {
+                        Label("Tavily key saved", systemImage: "checkmark.seal.fill").foregroundStyle(.green)
+                        Button("Remove Tavily key", role: .destructive) { SearchKeyStore.saveTavily(nil); refreshKeyState(); tavilyTestResult = nil }
                     }
-                )
-
-                Section("Provider setup") {
-                    setupStep(1, "Create an API key with Exa, Tavily, or both.")
-                    setupStep(2, "Paste each key in its own section and tap its Save button.")
-                    setupStep(3, "Test each saved key separately before relying on research.")
-                    if let exaSetup = URL(string: "https://dashboard.exa.ai/api-keys") {
-                        Link("Open Exa setup", destination: exaSetup)
-                    }
-                    if let tavilySetup = URL(string: "https://app.tavily.com") {
-                        Link("Open Tavily setup", destination: tavilySetup)
-                    }
+                    if testingProvider != nil { ProgressView("Checking key…") }
+                    if let result = exaTestResult { Text(result.message).font(.footnote).foregroundStyle(result.color) }
+                    if let result = tavilyTestResult { Text(result.message).font(.footnote).foregroundStyle(result.color) }
+                } header: {
+                    Text("Search keys")
+                } footer: {
+                    Text("Paste either key here. Conduit identifies its provider and saves it automatically. Research always uses thorough discovery.")
                 }
 
                 Section("What goes online") {
@@ -137,56 +101,21 @@ struct OnlineSettingsView: View {
             .scrollContentBackground(.hidden)
             .navigationTitle("Web Searching")
             .onAppear { refreshKeyState() }
+            .task(id: keyDraft) {
+                do { try await Task.sleep(for: .milliseconds(700)); try Task.checkCancellation(); importKey() }
+                catch { }
+            }
         }
     }
 
-    @ViewBuilder
-    private func providerSection(
-        provider: WebSearch.Provider,
-        hasKey: Bool,
-        draft: Binding<String>,
-        result: TestResult?,
-        placeholder: String,
-        save: @escaping () -> Void,
-        remove: @escaping () -> Void
-    ) -> some View {
-        Section {
-            if hasKey {
-                Label("\(provider.displayName) key saved", systemImage: "checkmark.seal.fill")
-                    .foregroundStyle(.green)
-                Button {
-                    test(provider)
-                } label: {
-                    HStack {
-                        Text("Test \(provider.displayName)")
-                        Spacer()
-                        if testingProvider == provider { ProgressView() }
-                    }
-                }
-                .disabled(testingProvider != nil || !connectivity.isOnline)
-                Button("Remove \(provider.displayName) key", role: .destructive, action: remove)
-            } else {
-                SecureField(placeholder, text: draft)
-                    .textContentType(.password)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                Button("Save \(provider.displayName) key", action: save)
-                    .disabled(draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-            if let result {
-                Label(result.message, systemImage: result.symbol)
-                    .font(.footnote)
-                    .foregroundStyle(result.color)
-            }
-        } header: {
-            Text(provider == .exa ? "Exa discovery" : "Tavily augmentation")
-        } footer: {
-            if provider == .exa {
-                Text("Exa finds the primary research source pool. Discovery returns metadata and short highlights; full text is requested only for selected pages.")
-            } else {
-                Text("Tavily adds a second source pool within the two-call research budget and provides fallback discovery when Exa fails.")
-            }
-        }
+    private func importKey() {
+        guard let kind = SearchKeyKind.detect(keyDraft) else { return }
+        let provider: WebSearch.Provider = kind == .tavily ? .tavily : .exa
+        if kind == .tavily { SearchKeyStore.saveTavily(keyDraft); tavilyTestResult = nil }
+        else { SearchKeyStore.saveExa(keyDraft); exaTestResult = nil }
+        keyDraft = ""
+        refreshKeyState()
+        if online && connectivity.isOnline && testingProvider == nil { test(provider) }
     }
 
     private var statusText: String {

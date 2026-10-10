@@ -15,6 +15,13 @@ private actor SearchConcurrencyProbe {
 
 @main struct ResearchTests {
     @MainActor static func main() async throws {
+        let firstChoice = ResearchCandidate(title: "James Fagan", url: URL(string: "https://school.example/james")!, snippet: "James Fagan teaches in Melbourne", status: .possible, reason: "Source", matchedClues: ["Melbourne"])
+        let secondChoice = ResearchCandidate(title: "James Fagan", url: URL(string: "https://tutor.example/james")!, snippet: "James Fagan tutors in Cheltenham", status: .possible, reason: "Source", matchedClues: ["Cheltenham"])
+        let multiRun = ResearchRun(request: "James Fagan, Melbourne", budget: .normal, selection: firstChoice, additionalSelections: [secondChoice])
+        let restoredMulti = try JSONDecoder().decode(ResearchRun.self, from: JSONEncoder().encode(multiRun))
+        precondition(restoredMulti.selectedProfiles.map(\.id) == [firstChoice.id, secondChoice.id])
+        let chooser = ResearchClarification(request: multiRun.request, choices: [.init(candidate: firstChoice, details: [], fields: []), .init(candidate: secondChoice, details: [], fields: [])])
+        precondition(!chooser.question.contains("James Fagan"), "Cards supply the names; prompt must not repeat them")
         let searchProbe = SearchConcurrencyProbe()
         let parallelEngine = ResearchEngine(request: "Morgan Example, Harbour NSW, soccer", budget: .normal,
             ask: { _, _ in "[]" }, activity: ActivityReporter { _ in }, search: { _ in
@@ -230,6 +237,15 @@ private actor SearchConcurrencyProbe {
         let focused = try await selected.run()
         precondition(focused.facts.count == 1 && focused.facts[0].url == source.url)
         precondition(focused.identitySummary.contains("not a verified identity match"))
+        let extraSentence = "Jane Example is a doctor teaching students at Harbour Clinic in Melbourne."
+        let extraChoice = ResearchCandidate(title: source.title, url: URL(string: "https://second-source.example/jane")!,
+            snippet: extraSentence, status: .possible, reason: "Selected source", matchedClues: [], sourceText: extraSentence)
+        let multiple = ResearchEngine(request: request, budget: .normal, ask: { _, _ in "" }, activity: reporter,
+            search: { _ in WebSearch.Response(provider: .tavily, results: []) }, selection: recovered.candidates[0],
+            additionalSelections: [extraChoice], read: { $0 == extraChoice.url ? extraSentence : sentence })
+        let multiFindings = try await multiple.run()
+        precondition(multiFindings.facts.contains { $0.url == source.url })
+        precondition(multiFindings.facts.contains { $0.url == extraChoice.url }, "Both selected sources must reach the report")
         let otherSource = WebSearch.Result(title: "Jane Example doctor", url: URL(string: "https://different-clinic.example/jane")!, site: "different-clinic.example", summary: "Jane Example in Melbourne", published: nil, rawContent: "Jane Example is a doctor in Melbourne at Different Clinic." + String(repeating: " Clinic info.", count: 20))
         let selectionWithOther = ResearchEngine(request: request, budget: .normal, ask: { _, _ in "" }, activity: reporter, search: { _ in WebSearch.Response(provider: .tavily, results: [otherSource]) }, selection: recovered.candidates[0], read: { url in url == otherSource.url ? otherSource.rawContent! : sentence })
         let separated = try await selectionWithOther.run()

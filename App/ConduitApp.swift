@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import PhotosUI
 
 @main
 struct ConduitApp: App {
@@ -52,6 +53,11 @@ struct RootView: View {
     @State private var page: AppPage = .chat
     @State private var showingSettings = false
     @State private var menuOpen = false
+    @State private var attachingPhotos = false
+    @State private var chosenPhotos: [PhotosPickerItem] = []
+    @State private var attachmentData: [Data] = []
+    @State private var attachmentError: String?
+    @State private var loadingPhotos = false
     @State private var startupReady = false
     @State private var startupVisible = true
     /// Views that draw with the chosen accent colour and text size are
@@ -71,11 +77,6 @@ struct RootView: View {
                 .opacity(page == .chat ? 1 : 0)
                 .allowsHitTesting(page == .chat)
                 .accessibilityHidden(page != .chat)
-            if page == .libraries {
-                LibrariesView(onAskPhoto: { id, question in
-                    session?.submit(question, libraryPhotoID: id)
-                }, entries: session?.transcript ?? [], isWorking: session?.isWorking ?? false)
-            }
             if page == .models {
                 ModelPickerSheet(onSelect: selectFromPage, loadingState: loadingState,
                                  showsDoneButton: false)
@@ -88,6 +89,7 @@ struct RootView: View {
             // than relying on safe-area insets during keyboard and row changes.
             VStack(spacing: 4) {
                 if page == .chat {
+                    ChatAttachments(data: $attachmentData, isLoading: loadingPhotos, error: attachmentError)
                     GlassCommandBar(
                         draft: $draft,
                         thinking: $thinking,
@@ -95,10 +97,12 @@ struct RootView: View {
                         research: $research,
                         menuOpen: $menuOpen,
                         isWorking: session?.isWorking ?? false,
-                        isModelLoaded: isReady,
+                        isModelLoaded: isReady && !loadingPhotos,
                         onSend: send,
                         onStop: { session?.cancel() },
-                        onNewConversation: { session?.clear() }
+                        onNewConversation: { session?.clear(); attachmentData = [] },
+                        onAttachPhotos: { attachingPhotos = true },
+                        hasAttachments: !attachmentData.isEmpty
                     )
                     .zIndex(1)
                 }
@@ -120,6 +124,26 @@ struct RootView: View {
         .overlay { if evaluation.isRunning { DeviceEvaluationView(evaluation: evaluation) } }
         .tint(Color.conduitAccent)
         .sheet(isPresented: $showingSettings) { settingsSheet }
+        .photosPicker(isPresented: $attachingPhotos, selection: $chosenPhotos, maxSelectionCount: 4, matching: .images)
+        .task(id: chosenPhotos) {
+            guard !chosenPhotos.isEmpty else { return }
+            loadingPhotos = true
+            defer { loadingPhotos = false }
+            var loaded: [Data] = []
+            do {
+                for item in chosenPhotos.prefix(4) {
+                    try Task.checkCancellation()
+                    if let data = try await item.loadTransferable(type: Data.self), UIImage(data: data) != nil {
+                        loaded.append(data)
+                    }
+                }
+                try Task.checkCancellation()
+                attachmentData = Array((attachmentData + loaded).prefix(4))
+                attachmentError = nil
+                chosenPhotos = []
+            } catch is CancellationError { }
+            catch { attachmentError = "Could not load images. Try selecting them again." }
+        }
         .task {
             // Clear obsolete personality and effort choices from earlier builds.
             UserDefaults.standard.removeObject(forKey: "conduit.personas")
@@ -237,7 +261,7 @@ struct RootView: View {
             accent: Color(hex: ModelColors.hex(for: catalog.selectedModelID, in: modelColors)) ?? .blue,
             onCancelActivity: { id, entryID in session?.cancelActivity(id, in: entryID) },
             isWorking: session?.isWorking ?? false,
-            onSelectResearchCandidate: { id, entryID in session?.selectResearchCandidate(id, in: entryID) },
+            onSelectResearchCandidate: { id, entryID in session?.selectResearchCandidates(id, in: entryID) },
             onRejectResearchCandidate: { id, entryID in session?.rejectResearchCandidate(id, in: entryID) }
         )
         .overlay(alignment: .top) {
@@ -309,7 +333,9 @@ struct RootView: View {
     private func send() {
         let text = draft
         draft = ""
-        session?.submit(text)
+        let images = attachmentData
+        attachmentData = []
+        session?.submit(text.isEmpty && !images.isEmpty ? "Describe these images." : text, imageData: images)
     }
 
     /// Runs a task handed over by Siri or a Shortcut.

@@ -75,6 +75,8 @@ jobs:
             python3 scripts/download-minilm.py
             xcrun swiftc -swift-version 5 -parse-as-library App/Agent/ResearchPlan.swift App/Agent/ResearchPlanner.swift App/Agent/SemanticSearch.swift scripts/semantic-tests.swift -o artifacts/semantic-tests
             artifacts/semantic-tests App/Resources/SemanticSearch
+            xcrun swiftc -swift-version 5 -parse-as-library App/Web/SearchKeyKind.swift scripts/settings-tests.swift -o artifacts/settings-tests
+            artifacts/settings-tests
             node scripts/page-reader-tests.js
             python3 scripts/model-evaluation-tests.py
             python3 scripts/pc-outbox-tests.py

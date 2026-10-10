@@ -193,8 +193,10 @@ final class AgentSession {
             let previous = transcript.reversed().filter { entry in
                 entry.researchRequest.flatMap(ResearchPlanner.requestName).map { ResearchPlan.normalized($0) == ResearchPlan.normalized(subject) } ?? false
             }
-            if let candidate = previous.flatMap(\.researchCandidates).first(where: { $0.decision == "selected" }) {
-                selected = ResearchSelection(request: researchRequest, candidate: candidate)
+            var seen = Set<String>()
+            let selectedSources = previous.flatMap(\.researchCandidates).filter { $0.decision == "selected" && seen.insert($0.id).inserted }
+            if let candidate = selectedSources.first {
+                selected = ResearchSelection(request: researchRequest, candidate: candidate, additionalCandidates: Array(selectedSources.dropFirst()))
             }
         }
         pendingRefinedResearch = false
@@ -236,21 +238,26 @@ final class AgentSession {
     }
 
     func selectResearchCandidate(_ candidateID: String, in entryID: UUID) {
-        guard !isWorking,
-              let entry = transcript.first(where: { $0.id == entryID }),
-              let request = entry.researchRequest,
-              let candidate = entry.researchCandidates.first(where: { $0.id == candidateID }), candidate.decision == nil else { return }
-        let focusedRequest = researchClarification?.request(for: candidate) ?? request
-        markResearchCandidate(candidate, decision: "selected", request: request)
-        submit("Research \(candidate.profileLabel)",
-               researchSelection: ResearchSelection(request: focusedRequest, candidate: candidate))
+        selectResearchCandidates([candidateID], in: entryID)
+    }
+
+    func selectResearchCandidates(_ candidateIDs: [String], in entryID: UUID) {
+        guard !isWorking, let entry = transcript.first(where: { $0.id == entryID }),
+              let request = entry.researchRequest else { return }
+        let chosen = entry.researchCandidates.filter { candidateIDs.contains($0.id) && $0.decision != "rejected" }
+        guard let first = chosen.first else { return }
+        for candidate in chosen { markResearchCandidate(candidate, decision: "selected", request: request) }
+        // Multiple checked cards are user-selected sources for one person.
+        // Keep evidence separate; selection does not prove identity or resolve contradictions.
+        submit("Research selected sources", researchSelection: ResearchSelection(request: request,
+            candidate: first, additionalCandidates: Array(chosen.dropFirst())))
     }
 
     private func markResearchCandidate(_ candidate: ResearchCandidate, decision: String, request: String) {
         for index in transcript.indices where transcript[index].researchRequest == request {
             for item in transcript[index].researchCandidates.indices {
                 let other = transcript[index].researchCandidates[item]
-                if other.id == candidate.id || other.identityKey == candidate.identityKey {
+                if other.id == candidate.id || (decision == "rejected" && other.identityKey == candidate.identityKey) {
                     transcript[index].researchCandidates[item].decision = decision
                 }
             }
@@ -807,6 +814,7 @@ final class AgentSession {
                 return try await WebSearch.research(query)
             },
             selection: selection?.candidate,
+            additionalSelections: selection?.additionalCandidates ?? [],
             read: { url in
                 try await researchRunner.prepareForWeb(rendered: true)
                 return try await PageReader.read(url).text
@@ -863,7 +871,7 @@ final class AgentSession {
         let writing = reporter.begin("Writing evidence report", detail: "Keeping each source profile and its quotations separate")
         let rejectedURLs = Set(earlier.filter { $0.decision == "rejected" }.map(\.url))
         var replyText = findings.run.map { run in
-            let focus = run.graph.focusedSourceIDs(selection: run.selection)
+            let focus = run.graph.focusedSourceIDs(selection: run.selection, additionalSelections: run.additionalSelections ?? [])
             let allowed = Set(run.graph.sources.filter { !rejectedURLs.contains($0.url) && (focus?.contains($0.id) ?? true) }.map(\.id))
             return run.graph.report(sourceIDs: allowed)
         }

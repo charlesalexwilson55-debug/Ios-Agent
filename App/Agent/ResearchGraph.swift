@@ -308,7 +308,12 @@ struct ResearchGraph: Codable, Sendable {
         }
     }
 
-    func focusedSourceIDs(selection: ResearchCandidate?) -> Set<String>? {
+    func focusedSourceIDs(selection: ResearchCandidate?, additionalSelections: [ResearchCandidate] = []) -> Set<String>? {
+        if !additionalSelections.isEmpty {
+            return ((selection.map { [$0] } ?? []) + additionalSelections).reduce(into: Set<String>()) { result, profile in
+                result.formUnion(focusedSourceIDs(selection: profile) ?? [])
+            }
+        }
         guard let selection else { return nil }
         guard let source = sources.first(where: { ResearchSourcePolicy.canonical($0.url) == ResearchSourcePolicy.canonical(selection.url) }),
               let candidate = candidates.first(where: { $0.sourceID == source.id }) else { return [] }

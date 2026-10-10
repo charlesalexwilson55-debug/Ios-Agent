@@ -20,25 +20,23 @@ struct ConduitLiveWidget: Widget {
             .activitySystemActionForegroundColor(.blue)
         } dynamicIsland: { context in
             DynamicIsland {
-                DynamicIslandExpandedRegion(.leading) { ConduitActivityMark(paused: context.state.paused) }
-                DynamicIslandExpandedRegion(.trailing) { orb(paused: context.state.paused) }
-                DynamicIslandExpandedRegion(.bottom) {
-                    Text(context.state.status).font(.caption).foregroundStyle(.white)
+                DynamicIslandExpandedRegion(.center) {
+                    ConduitActivityMark(paused: context.state.paused)
+                        .allowsHitTesting(false)
                 }
             } compactLeading: {
-                Capsule().strokeBorder(.white.opacity(0.85), lineWidth: 1)
-                    .frame(width: 19, height: 9)
+                EmptyView()
             } compactTrailing: {
-                orb(paused: context.state.paused)
+                orb(paused: context.state.paused).allowsHitTesting(false)
             } minimal: {
-                orb(paused: context.state.paused)
+                orb(paused: context.state.paused).allowsHitTesting(false)
             }
             .keylineTint(.white.opacity(0.8))
         }
     }
 
     private func orb(paused: Bool) -> some View {
-        Circle().fill(Color.blue.gradient).frame(width: 8, height: 8)
+        Circle().fill(Color.blue.gradient).frame(width: 12, height: 12)
             .opacity(paused ? 0.55 : 1)
             .shadow(color: .blue.opacity(0.65), radius: 3)
             .accessibilityLabel(paused ? "Paused" : "Working")

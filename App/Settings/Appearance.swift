@@ -138,19 +138,10 @@ struct AppearanceSettingsView: View {
     @AppStorage("conduit.photos.downloadCloud") private var downloadCloudPhotos = false
     @AppStorage(Appearance.startupEnabledKey) private var startupEnabled = true
     @AppStorage(Appearance.startupOrbKey) private var startupOrbHex = AccentPalette.palette[0].hex
-    @AppStorage(NavigationStyle.storageKey) private var navigationStyle = NavigationStyle.icons.rawValue
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         Form {
-            Section("Navigation bar") {
-                Picker("Navigation bar", selection: $navigationStyle) {
-                    ForEach(NavigationStyle.allCases) { option in
-                        Text(option.title).tag(option.rawValue)
-                    }
-                }
-                .pickerStyle(.segmented)
-            }
             Section("Startup") {
                 Toggle("Show startup animation", isOn: $startupEnabled)
                 ColorPicker("Orb colour", selection: Binding(

@@ -109,7 +109,8 @@ import Foundation
         let plan = ResearchPlanner.make(request: state.request, reply: reply)
         state.plan = plan
         var queries = plan.queries
-        if let selection = state.selection, let host = selection.url.host {
+        for selection in state.selectedProfiles {
+            guard let host = selection.url.host else { continue }
             queries.insert(plan.anchor("site:" + host), at: 0)
             state.pendingSources.append(.init(title: selection.title, url: selection.url, summary: selection.snippet,
                 published: nil, text: selection.sourceText, provider: "Selected profile"))
@@ -157,12 +158,11 @@ import Foundation
         state.pendingQueries = []
         // Copy comparator inputs before mutating another field of the same
         // value. Reading state inside sort violates Swift's exclusive access.
-        let selectedURL = state.selection?.url
+        let selectedURLs = Set(state.selectedProfiles.map(\.url))
         let rankingPlan = state.plan
         state.pendingSources.sort { a, b in
             if a.url == b.url { return false }
-            if a.url == selectedURL { return true }
-            if b.url == selectedURL { return false }
+            if selectedURLs.contains(a.url) != selectedURLs.contains(b.url) { return selectedURLs.contains(a.url) }
             return (rankingPlan?.score(title: a.title, summary: a.summary, url: a.url) ?? 0) > (rankingPlan?.score(title: b.title, summary: b.summary, url: b.url) ?? 0)
         }
         state.stage = .extracting
@@ -318,7 +318,7 @@ import Foundation
                     if let rejected = ResearchSourcePolicy.rejectReason(text) {
                         activity.updateItem(item, subtitle: rejected, status: .skipped)
                     } else if let sourceID = state.graph.addSource(url: page.url, title: page.title, text: page.text ?? "", published: page.published, provider: page.provider) {
-                        let selected = ResearchSourcePolicy.canonical(page.url) == state.selection.flatMap { ResearchSourcePolicy.canonical($0.url) }
+                        let selected = state.selectedProfiles.contains { ResearchSourcePolicy.canonical(page.url) == ResearchSourcePolicy.canonical($0.url) }
                         let before = state.graph.claims.count
                         if selected {
                             state.graph.extract("", sourceID: sourceID, plan: plan, selected: true)
@@ -362,11 +362,13 @@ import Foundation
     }
 
     private func focusCompatible(_ text: String, plan: ResearchPlan) -> Bool {
-        guard let selection = state.selection else { return true }
-        let selectedQuotes = plan.selectedStatements(selection.sourceText ?? "").joined(separator: "\n")
-        let anchors = Set(plan.matchedClues(in: selectedQuotes))
-        return plan.selectedStatements(text).contains { quote in
-            anchors.intersection(plan.matchedClues(in: quote)).count >= 2
+        guard !state.selectedProfiles.isEmpty else { return true }
+        return state.selectedProfiles.contains { selection in
+            let selectedQuotes = plan.selectedStatements(selection.sourceText ?? "").joined(separator: "\n")
+            let anchors = Set(plan.matchedClues(in: selectedQuotes))
+            return plan.selectedStatements(text).contains { quote in
+                anchors.intersection(plan.matchedClues(in: quote)).count >= 2
+            }
         }
     }
 
@@ -437,7 +439,7 @@ import Foundation
     private func findings() -> ResearchEngine.Findings {
         if let plan = state.plan { state.graph.resolve(plan: plan) }
         let graph = state.graph
-        let focusedIDs = graph.focusedSourceIDs(selection: state.selection)
+        let focusedIDs = graph.focusedSourceIDs(selection: state.selection, additionalSelections: state.additionalSelections ?? [])
         let displayGroups = graph.displayGroups()
         var seenFacts = Set<String>()
         let facts: [ResearchEngine.Fact] = graph.claims.compactMap { claim in

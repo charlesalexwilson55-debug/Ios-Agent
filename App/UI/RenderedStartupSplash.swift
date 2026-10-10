@@ -15,6 +15,7 @@ struct StartupSplash: View {
     @State private var finishing = false
     @State private var finale: Task<Void, Never>?
     @State private var washOpacity: Double = 0
+    @State private var washExpansion: CGFloat = 0
     @State private var backdropOpacity: Double = 1
     @State private var trail = false
 
@@ -47,8 +48,12 @@ struct StartupSplash: View {
                 }
                 .opacity(markOpacity)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                // A uniform tint cannot leave a bright patch beside a dark one.
-                color.opacity(washOpacity).ignoresSafeArea().allowsHitTesting(false)
+                // The explosion spreads from the orb and becomes one uniform colour.
+                Circle().fill(color)
+                    .frame(width: 2, height: 2)
+                    .scaleEffect(washExpansion * hypot(geometry.size.width, geometry.size.height))
+                    .offset(x: (position - 0.5) * width * 0.72)
+                    .opacity(washOpacity).allowsHitTesting(false)
                 VStack {
                     Spacer()
                     Text("CONDUIT").font(.custom("Archivo-SemiBold", size: 19))
@@ -71,19 +76,21 @@ struct StartupSplash: View {
         finishing = true
         finale = Task { @MainActor in
             do {
-                try await Task.sleep(for: .milliseconds(120))
+                try await Task.sleep(for: .milliseconds(220))
                 if !reduceMotion {
                     trail = true
-                    withAnimation(.timingCurve(0.2, 0, 0.1, 1, duration: 0.22)) { position = 0.08; halo = 0.6 }
-                    try await Task.sleep(for: .milliseconds(220))
+                    withAnimation(.timingCurve(0.2, 0, 0.1, 1, duration: 0.42)) { position = 0.08; halo = 0.6 }
+                    try await Task.sleep(for: .milliseconds(420))
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    withAnimation(.easeOut(duration: 0.1)) { washOpacity = 0.14; orbOpacity = 0; stretch = 1.015 }
-                    try await Task.sleep(for: .milliseconds(100))
+                    washOpacity = 1
+                    orbOpacity = 0
+                    withAnimation(.easeOut(duration: 0.36)) { washExpansion = 1; stretch = 1.015 }
+                    try await Task.sleep(for: .milliseconds(360))
                 }
-                withAnimation(.easeOut(duration: 0.18)) {
+                withAnimation(.easeOut(duration: 0.20)) {
                     markOpacity = 0; halo = 0; washOpacity = 0; backdropOpacity = 0; stretch = 1
                 }
-                try await Task.sleep(for: .milliseconds(180))
+                try await Task.sleep(for: .milliseconds(200))
                 try Task.checkCancellation()
                 onComplete()
             } catch { /* Leaving the view cancels its completion callback. */ }

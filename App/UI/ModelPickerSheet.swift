@@ -171,6 +171,7 @@ private struct ModelBrandIcon: View {
     let model: DiscoveredModel
     private var asset: String? {
         let name = model.displayName.lowercased()
+        if name.contains("ornith") { return "ModelBrandOrnith" }
         if name.contains("qwen") { return "ModelBrandQwen" }
         if name.contains("minicpm") { return "ModelBrandMiniCPM" }
         if name.contains("edge0") { return "ModelBrandEdge0" }

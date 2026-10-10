@@ -48,8 +48,7 @@ struct ResearchClarification: Sendable {
     }
 
     var question: String {
-        let options = choices.enumerated().map { "\($0.offset + 1). \($0.element.label)" }.joined(separator: "\n")
-        return "I found separate profiles with this name. Which person do you mean? Choose a profile below, reply with its number, or tell me their job, city or organisation.\n\n" + options
+        return "I found separate profiles with this name. Which person do you mean? Select one or more source cards below, or tell me their job, city or organisation."
     }
 
     func selection(for reply: String) -> ResearchCandidate? {
