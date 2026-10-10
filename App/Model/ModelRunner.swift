@@ -210,9 +210,10 @@ actor ModelRunner {
             let weights = Self.weightsSize(directory)
             if weights + Self.reserveBytes > headroom {
                 throw RunnerError.insufficientMemory(String(
-                    format: "This model needs about %.1f GB but only %.1f GB is available to "
-                        + "Conduit. Close other apps, or choose a smaller model.",
-                    Double(weights) / 1e9, Double(headroom) / 1e9))
+                    format: "This model needs at least %.1f GB including working memory, but iOS currently "
+                        + "leaves %.1f GB available to Conduit. Choose a smaller model, or re-sign "
+                        + "with the increased-memory entitlement before trying again.",
+                    Double(weights + Self.reserveBytes) / 1e9, Double(headroom) / 1e9))
             }
         }
 

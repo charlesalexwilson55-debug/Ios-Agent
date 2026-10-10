@@ -22,6 +22,9 @@ enum TaskRouter {
     static let webToolNames: Set<String> = ["web_search", "read_page", "get_weather", "github_search"]
 
     static func mode(for request: String, previousTurnUsedPhoneTools: Bool) -> SystemPrompt.Mode {
+        let literal = request.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        if literal.range(of: #"^(?:reply|respond|answer|say)(?: only)?(?: with)? (?:hello|hi|hey)[.!]?$"#,
+                         options: .regularExpression) != nil { return .answer }
         if looksLikePhoneTask(request) { return .task }
         // "Yes, the second one" or "make it 5pm" continues a phone task.
         if previousTurnUsedPhoneTools, wordCount(request) <= 8 { return .task }

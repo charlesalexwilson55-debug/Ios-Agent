@@ -18,6 +18,8 @@ enum ModelTaskRouter {
         let heavy: Set<String> = ["debug", "refactor", "implement", "algorithm", "prove", "proof"]
         if !words.isDisjoint(with: heavy) || lower.contains("write code") || lower.contains("write a program") { return .heavy }
         if ["hello", "hi", "hey"].contains(lower) { return .quickText }
+        if lower.range(of: #"^(?:reply|respond|answer|say)(?: only)?(?: with)? (?:hello|hi|hey)[.!]?$"#,
+                       options: .regularExpression) != nil { return .quickText }
         if ["rewrite this", "translate this", "rephrase this"].contains(where: lower.hasPrefix),
            lower.count < 2_000 { return .quickText }
         return .chat

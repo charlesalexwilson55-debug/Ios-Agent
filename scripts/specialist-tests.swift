@@ -9,6 +9,8 @@ import Foundation
         precondition(ModelTaskRouter.role(for: "rewrite this from https://example.com", research: false) == .chat)
         precondition(ModelTaskRouter.role(for: "debug this Swift code", research: false) == .heavy)
         precondition(ModelTaskRouter.role(for: "hello", research: true) == .researchCheck)
+        precondition(ModelTaskRouter.role(for: "Reply with hello.", research: false) == .quickText)
+        precondition(ModelTaskRouter.role(for: "Reply to Sam with hello", research: false) == .chat)
         precondition(ModelTaskRouter.role(for: "what is a computer?", research: false) == .chat)
         print("Specialist routing preserves actions, photos, web access and heavy code work")
     }

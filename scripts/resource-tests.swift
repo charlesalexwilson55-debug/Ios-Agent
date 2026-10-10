@@ -15,6 +15,9 @@ final class GitHubFixture: URLProtocol {
 
 @main struct ResourceTests {
     static func main() async throws {
+        precondition(TaskRouter.mode(for: "Reply with hello.", previousTurnUsedPhoneTools: false) == .answer,
+            "A literal chat reply must not expose every phone tool")
+        precondition(TaskRouter.mode(for: "Reply to Sam with hello", previousTurnUsedPhoneTools: false) == .task)
         let names = ["search_libraries", "read_library_photo", "create_files", "github_search", "web_search", "read_page", "send_message"]
         let tools = names.map { ToolDescriptor(name: $0, description: "Fixture", params: [], friction: .silent, category: "test") }
         let online = Set(TaskRouter.tools(from: tools, mode: .answer, online: true).map(\.name))
