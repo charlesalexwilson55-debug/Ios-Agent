@@ -31,7 +31,7 @@ struct ModelPickerSheet: View {
                     .buttonStyle(.plain).disabled(copying).accessibilityLabel("Import model folder or ZIP")
                     if copying { ProgressView("Importing…") }
                     if !catalog.models.isEmpty {
-                        ModelSelectionWheel(models: catalog.models, selectedID: catalog.selectedModelID, onSelect: onSelect,
+                        ModelSelectionCarousel(models: catalog.models, selectedID: catalog.selectedModelID, onSelect: onSelect,
                                             onDelete: { model in Task { await catalog.delete(model) } })
                         if let selected = catalog.selectedModel {
                             Text(selected.sizeDescription).font(.caption).foregroundStyle(.secondary)
@@ -89,75 +89,56 @@ struct ModelPickerSheet: View {
     }
 }
 
-/// Drag rotates the wheel; the model loads only after the wheel settles.
-private struct ModelSelectionWheel: View {
+/// One front-facing model per page. Native paging slides the next model in.
+private struct ModelSelectionCarousel: View {
     let models: [DiscoveredModel]
     let selectedID: String?
     let onSelect: (DiscoveredModel) -> Void
     let onDelete: (DiscoveredModel) -> Void
-    @State private var rotation = 0.0
-    @State private var lastAngle: Double?
-    @State private var dragging = false
-    private var step: Double { 360 / Double(max(models.count, 1)) }
-    private var focus: Int { ModelWheel.index(rotation: rotation, count: models.count) ?? 0 }
+    private var focus: Int { models.firstIndex { $0.id == selectedID } ?? 0 }
+    private var selection: Binding<String> {
+        Binding(get: { models.isEmpty ? "" : models[focus].id }, set: { id in
+            guard id != selectedID, let model = models.first(where: { $0.id == id }) else { return }
+            UISelectionFeedbackGenerator().selectionChanged()
+            onSelect(model)
+        })
+    }
     var body: some View {
         VStack(spacing: 16) {
-            GeometryReader { geometry in
-                let size = min(geometry.size.width, geometry.size.height)
-                let radius = max(70, size / 2 - 34)
-                let center = CGPoint(x: geometry.size.width / 2, y: geometry.size.height / 2)
-                ZStack {
-                    Circle().stroke(.white.opacity(0.12), lineWidth: 1).frame(width: radius * 2, height: radius * 2)
-                    ModelBrandIcon(model: models[focus]).frame(width: 78, height: 78)
-                    if models.count > 1 {
-                        ForEach(Array(models.indices), id: \.self) { index in
-                            let model = models[index]
-                            let angle = (Double(index) * step + rotation - 90) * .pi / 180
-                            Button { settle(at: index) } label: {
-                                ModelBrandIcon(model: model).padding(8).frame(width: 54, height: 54)
-                                    .background(.black.opacity(0.6), in: .circle)
-                                    .overlay { Circle().strokeBorder(index == focus ? Color.conduitAccent : .white.opacity(0.12), lineWidth: index == focus ? 2 : 1) }
-                            }.buttonStyle(.plain)
-                            .position(x: center.x + CGFloat(cos(angle)) * radius, y: center.y + CGFloat(sin(angle)) * radius)
-                            .accessibilityLabel("Select \(model.displayName)")
-                            .contextMenu { Button("Delete model", systemImage: "trash", role: .destructive) { onDelete(model) } }
-                        }
+            TabView(selection: selection) {
+                ForEach(models) { model in
+                    VStack(spacing: 24) {
+                        ModelBrandIcon(model: model)
+                            .frame(width: 104, height: 104)
+                        Text(model.displayName)
+                            .font(.title3.weight(.semibold))
+                            .multilineTextAlignment(.center)
+                            .lineLimit(3)
+                            .frame(maxWidth: .infinity)
+                    }
+                    .padding(.horizontal, 24)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .contentShape(.rect)
+                    .tag(model.id)
+                    .contextMenu {
+                        Button("Delete model", systemImage: "trash", role: .destructive) { onDelete(model) }
                     }
                 }
-                .frame(width: geometry.size.width, height: geometry.size.height)
-                .contentShape(.circle)
-                .gesture(DragGesture(minimumDistance: 6).onChanged { value in
-                    guard models.count > 1 else { return }
-                    dragging = true
-                    let angle = atan2(Double(value.location.y - center.y), Double(value.location.x - center.x)) * 180 / .pi
-                    let previous = lastAngle ?? atan2(Double(value.startLocation.y - center.y), Double(value.startLocation.x - center.x)) * 180 / .pi
-                    var delta = angle - previous
-                    if delta > 180 { delta -= 360 }; if delta < -180 { delta += 360 }
-                    rotation += delta; lastAngle = angle
-                }.onEnded { _ in
-                    lastAngle = nil; dragging = false
-                    let selected = focus
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { rotation = (rotation / step).rounded() * step }
-                    choose(selected)
-                })
-            }.frame(height: 275)
-            Text(models[focus].displayName).font(.headline).multilineTextAlignment(.center).lineLimit(3)
-                .frame(maxWidth: .infinity).padding(.horizontal, 16)
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .frame(height: 230)
+            if models.count > 1 {
+                Text("Swipe to change model")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
-        .onAppear { align() }
-        .onChange(of: selectedID) { _, _ in if !dragging { align() } }
-        .onChange(of: models.map(\.id)) { _, _ in align() }
-        .accessibilityElement(children: .contain).accessibilityLabel("Model wheel").accessibilityValue(models[focus].displayName)
-        .accessibilityAdjustableAction { direction in settle(at: (focus + (direction == .increment ? 1 : models.count - 1)) % models.count) }
-    }
-    private func align() { rotation = -Double(models.firstIndex { $0.id == selectedID } ?? 0) * step }
-    private func settle(at index: Int) {
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { rotation = -Double(index) * step }
-        choose(index)
-    }
-    private func choose(_ index: Int) {
-        UISelectionFeedbackGenerator().selectionChanged()
-        if models[index].id != selectedID { onSelect(models[index]) }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Model carousel")
+        .accessibilityAdjustableAction { direction in
+            guard !models.isEmpty else { return }
+            let next = (focus + (direction == .increment ? 1 : models.count - 1)) % models.count
+            withAnimation(.easeInOut(duration: 0.24)) { selection.wrappedValue = models[next].id }
+        }
     }
 }
 

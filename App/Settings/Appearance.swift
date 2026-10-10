@@ -15,20 +15,21 @@ enum Appearance {
     static let startupOrbKey = "conduit.appearance.startupOrb"
 
     enum Theme: String, CaseIterable, Identifiable {
-        case system, light, dark
+        case system, light, dark, oled
         var id: String { rawValue }
         var title: String {
             switch self {
             case .system: "Match iPhone"
             case .light: "Light"
             case .dark: "Dark"
+            case .oled: "OLED black"
             }
         }
         var scheme: ColorScheme? {
             switch self {
             case .system: return nil
             case .light: return .light
-            case .dark: return .dark
+            case .dark, .oled: return .dark
             }
         }
     }
@@ -162,7 +163,7 @@ struct AppearanceSettingsView: View {
                 Picker("Theme", selection: $theme) {
                     ForEach(Appearance.Theme.allCases) { Text($0.title).tag($0.rawValue) }
                 }
-                .pickerStyle(.segmented)
+                .pickerStyle(.menu)
             }
 
             Section {
@@ -180,6 +181,10 @@ struct AppearanceSettingsView: View {
             }
 
             Section("Background") {
+                if theme == Appearance.Theme.oled.rawValue {
+                    Text("OLED black uses a pure black background. Your background choice returns when you change theme.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 ForEach(Appearance.Backdrop.allCases) { style in
                     Button {
                         backdrop = style.rawValue
@@ -201,6 +206,7 @@ struct AppearanceSettingsView: View {
                         .contentShape(.rect)
                     }
                     .buttonStyle(.plain)
+                    .disabled(theme == Appearance.Theme.oled.rawValue)
                 }
             }
 

@@ -60,6 +60,7 @@ struct RootView: View {
     @AppStorage(ModelColors.storageKey) private var modelColors = ""
     @AppStorage(Appearance.textSizeKey) private var textSize = ""
     @AppStorage(Appearance.backdropKey) private var backdrop = Appearance.Backdrop.aurora.rawValue
+    @AppStorage(Appearance.themeKey) private var theme = Appearance.Theme.system.rawValue
     @AppStorage(Appearance.startupEnabledKey) private var startupEnabled = true
     @AppStorage(Appearance.startupOrbKey) private var startupOrbHex = AccentPalette.palette[0].hex
 
@@ -110,9 +111,8 @@ struct RootView: View {
         .background(BackdropView())
         .overlay {
             if startupEnabled && startupVisible {
-                StartupSplash(ready: startupReady,
-                              color: Color(hex: startupOrbHex) ?? .blue,
-                              onComplete: { withAnimation(.easeOut(duration: 0.28)) { startupVisible = false } })
+                StartupSplash(color: Color(hex: startupOrbHex) ?? .blue,
+                              onComplete: { startupVisible = false })
                     .ignoresSafeArea()
                     .transition(.opacity)
             }
@@ -240,6 +240,15 @@ struct RootView: View {
             onSelectResearchCandidate: { id, entryID in session?.selectResearchCandidate(id, in: entryID) },
             onRejectResearchCandidate: { id, entryID in session?.rejectResearchCandidate(id, in: entryID) }
         )
+        .overlay(alignment: .top) {
+            if case .loading(let status) = loadingState {
+                ProgressView(status)
+                    .font(.caption)
+                    .padding(12)
+                    .glassEffect(.regular, in: .rect(cornerRadius: 16))
+                    .padding(.top, 12)
+            }
+        }
         .overlay {
             if menuOpen {
                 Color.black.opacity(0.06)
@@ -293,7 +302,8 @@ struct RootView: View {
                      }, onClose: { showingSettings = false })
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
-            .presentationBackground(.ultraThinMaterial)
+            .presentationBackground(theme == Appearance.Theme.oled.rawValue
+                ? AnyShapeStyle(Color.black) : AnyShapeStyle(Material.ultraThin))
     }
 
     private func send() {
@@ -387,13 +397,20 @@ struct RootView: View {
 struct BackdropView: View {
     @Environment(\.colorScheme) private var colorScheme
     @AppStorage(Appearance.backdropKey) private var backdrop = Appearance.Backdrop.aurora.rawValue
+    @AppStorage(Appearance.themeKey) private var theme = Appearance.Theme.system.rawValue
 
     var body: some View {
-        LinearGradient(
-            colors: (Appearance.Backdrop(rawValue: backdrop) ?? .aurora).colors(dark: colorScheme == .dark),
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
+        Group {
+            if theme == Appearance.Theme.oled.rawValue {
+                Color.black
+            } else {
+                LinearGradient(
+                    colors: (Appearance.Backdrop(rawValue: backdrop) ?? .aurora).colors(dark: colorScheme == .dark),
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            }
+        }
         .ignoresSafeArea()
     }
 }

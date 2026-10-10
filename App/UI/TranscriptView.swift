@@ -21,14 +21,15 @@ struct TranscriptView: View {
     @State private var scrollTask: Task<Void, Never>?
 
     var body: some View {
-        VStack(spacing: 0) {
+        ZStack(alignment: .bottom) {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 14) {
+                // Exact row heights avoid lazy estimates shifting the scroll
+                // position while the assistant publishes reasoning tokens.
+                VStack(alignment: .leading, spacing: 14) {
                     ForEach(entries) { entry in
                         row(for: entry)
                             .id(entry.id)
-                            .transition(.opacity.combined(with: .move(edge: .bottom)))
                     }
                     // Anchor for auto-scroll. Scrolling to the last entry's own
                     // id stops short while that entry is still growing during
@@ -40,27 +41,24 @@ struct TranscriptView: View {
                 }
                 .padding(.horizontal, 18)
                 .padding(.top, 12)
+                .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { _ in scroll(proxy) }
             }
             // The glass bar floats over the top edge of the scroll content;
             // this keeps the system's edge-fade consistent with it.
             .scrollDismissesKeyboard(.interactively)
             .onChange(of: entries.count) { _, _ in scroll(proxy) }
-            .onChange(of: entries.last?.text) { _, _ in scroll(proxy) }
-            .onChange(of: entries.last?.reasoning) { _, _ in scroll(proxy) }
-            .onChange(of: entries.compactMap(\.activity)) { _, _ in scroll(proxy) }
+            // Follow visible height changes, not hidden reasoning mutations.
             .onChange(of: isWorking) { _, _ in scroll(proxy) }
             .onGeometryChange(for: CGSize.self, of: { $0.size }) { _ in scroll(proxy) }
             .onDisappear { scrollTask?.cancel() }
         }
         if isWorking {
-            // One owner outside lazy scroll rows: research placeholders cannot
-            // restart the animation or move it underneath the composer.
+            // Overlay the reserved tail space without resizing the viewport.
             ConduitLoader(color: accent, status: activityLabel)
                 .padding(.horizontal, 18)
                 .padding(.vertical, 8)
         }
         }
-        .background(BackdropView())
     }
 
     private static let bottomAnchor = "conduit.transcript.bottom"
@@ -81,7 +79,9 @@ struct TranscriptView: View {
             try? await Task.sleep(for: .milliseconds(30))
             guard !Task.isCancelled else { return }
             if isWorking {
-                proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
+                var transaction = Transaction(animation: nil)
+                transaction.disablesAnimations = true
+                withTransaction(transaction) { proxy.scrollTo(Self.bottomAnchor, anchor: .bottom) }
             } else {
                 withAnimation(.easeOut(duration: 0.18)) {
                     proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
