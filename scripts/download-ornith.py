@@ -3,6 +3,7 @@ import hashlib
 import json
 from pathlib import Path
 import urllib.request
+import urllib.error
 import time
 
 MODEL = "ornith-ai/Ornith-1.5-9B-MLX-4bit"
@@ -22,17 +23,21 @@ def main():
             temporary = path.with_suffix(path.suffix + ".part")
             if path.exists() and not temporary.exists():
                 path.replace(temporary)
-            for attempt in range(12):
+            failures = 0
+            while failures < 12:
                 offset = temporary.stat().st_size if temporary.exists() else 0
                 if offset == file["size"]:
                     break
-                request = urllib.request.Request(f"https://huggingface.co/{MODEL}/resolve/{REVISION}/{name}?download=true&offset={offset}",
-                    headers={"Range": f"bytes={offset}-"} if offset else {})
+                end = min(offset + 64 * 1024 * 1024, file["size"]) - 1
+                request = urllib.request.Request(f"https://huggingface.co/{MODEL}/resolve/{REVISION}/{name}?download=true&offset={offset}&end={end}",
+                    headers={"Range": f"bytes={offset}-{end}"})
                 try:
                     with urllib.request.urlopen(request, timeout=120) as response:
-                        resumed = offset > 0 and response.status == 206
-                        if resumed and not response.headers.get("Content-Range", "").startswith(f"bytes {offset}-"):
+                        resumed = response.status == 206
+                        if resumed and response.headers.get("Content-Range", "") != f"bytes {offset}-{end}/{file['size']}":
                             raise RuntimeError("Unexpected download range")
+                        if offset and not resumed:
+                            raise OSError("Server ignored resume range")
                         with temporary.open("ab" if resumed else "wb") as output:
                             total = offset if resumed else 0
                             while chunk := response.read(8 * 1024 * 1024):
@@ -42,8 +47,13 @@ def main():
                                     raise RuntimeError("Unexpected download size")
                                 if total // (256 * 1024 * 1024) != (total - len(chunk)) // (256 * 1024 * 1024):
                                     print(f"{name}: {total / 1e9:.2f} GB", flush=True)
+                        if total != (end + 1 if resumed else file["size"]):
+                            raise OSError("Response ended before requested range completed")
+                        failures = 0
                 except (OSError, TimeoutError) as error:
-                    print(f"Retrying interrupted {name}: {type(error).__name__}", flush=True)
+                    failures += 1
+                    detail = f"HTTP {error.code}" if isinstance(error, urllib.error.HTTPError) else str(error).split("https://")[0][:160]
+                    print(f"Retrying interrupted {name}: {type(error).__name__}: {detail}", flush=True)
                     time.sleep(2)
             if not temporary.exists() or temporary.stat().st_size != file["size"]:
                 raise RuntimeError(f"Incomplete download: {name}")

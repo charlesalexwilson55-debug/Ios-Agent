@@ -237,12 +237,12 @@ private actor SearchConcurrencyProbe {
         let focused = try await selected.run()
         precondition(focused.facts.count == 1 && focused.facts[0].url == source.url)
         precondition(focused.identitySummary.contains("not a verified identity match"))
-        let extraSentence = "Jane Example is a doctor teaching students at Harbour Clinic in Melbourne."
+        let selectedExtraSentence = "Jane Example is a doctor teaching students at Harbour Clinic in Melbourne."
         let extraChoice = ResearchCandidate(title: source.title, url: URL(string: "https://second-source.example/jane")!,
-            snippet: extraSentence, status: .possible, reason: "Selected source", matchedClues: [], sourceText: extraSentence)
+            snippet: selectedExtraSentence, status: .possible, reason: "Selected source", matchedClues: [], sourceText: selectedExtraSentence)
         let multiple = ResearchEngine(request: request, budget: .normal, ask: { _, _ in "" }, activity: reporter,
             search: { _ in WebSearch.Response(provider: .tavily, results: []) }, selection: recovered.candidates[0],
-            additionalSelections: [extraChoice], read: { $0 == extraChoice.url ? extraSentence : sentence })
+            additionalSelections: [extraChoice], read: { $0 == extraChoice.url ? selectedExtraSentence : sentence })
         let multiFindings = try await multiple.run()
         precondition(multiFindings.facts.contains { $0.url == source.url })
         precondition(multiFindings.facts.contains { $0.url == extraChoice.url }, "Both selected sources must reach the report")
