@@ -119,23 +119,27 @@ struct FileProject: Codable, Identifiable {
 }
 
 enum ArtifactParser {
+    static func path(for header: String, existingPaths: [String]) -> String? {
+        let parts = header.split(whereSeparator: \.isWhitespace).map(String.init)
+        let language = parts.first ?? ""
+        if let explicit = parts.first(where: { $0.hasPrefix("filename=") })?.dropFirst(9) {
+            return String(explicit).trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+        }
+        if language.contains(".") { return language }
+        let extensions = ["html": "html", "css": "css", "javascript": "js", "js": "js",
+                          "typescript": "ts", "python": "py", "swift": "swift", "json": "json"]
+        guard let suffix = extensions[language.lowercased()] else { return nil }
+        return suffix == "html" && !existingPaths.contains("index.html")
+            ? "index.html" : "file-\(existingPaths.count + 1).\(suffix)"
+    }
+
     static func files(from text: String, complete: Bool) -> [VirtualFile] {
         guard complete else { return [] }
         var files: [VirtualFile] = [], header: String?, lines: [String] = []
         for line in text.components(separatedBy: "\n") {
             if line.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
                 if let value = header {
-                    let parts = value.split(whereSeparator: \.isWhitespace).map(String.init)
-                    let language = parts.first ?? ""
-                    let explicit = parts.first { $0.hasPrefix("filename=") }?.dropFirst(9)
-                    let ext = ["html": "html", "css": "css", "javascript": "js", "js": "js", "typescript": "ts", "python": "py", "swift": "swift", "json": "json"]
-                    let path: String?
-                    if let explicit { path = String(explicit).trimmingCharacters(in: CharacterSet(charactersIn: "\"'")) }
-                    else if language.contains(".") { path = language }
-                    else if let suffix = ext[language.lowercased()] {
-                        path = suffix == "html" && !files.contains(where: { $0.path == "index.html" }) ? "index.html" : "file-\(files.count + 1).\(suffix)"
-                    } else { path = nil }
-                    guard let path else { return [] }
+                    guard let path = Self.path(for: value, existingPaths: files.map(\.path)) else { return [] }
                     files.append(VirtualFile(path: path, content: lines.joined(separator: "\n")))
                     header = nil; lines = []
                 } else { header = String(line.trimmingCharacters(in: .whitespaces).dropFirst(3)); lines = [] }

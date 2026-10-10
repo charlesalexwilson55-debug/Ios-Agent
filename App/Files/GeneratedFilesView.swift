@@ -4,35 +4,23 @@ import WebKit
 
 struct GeneratedFilesView: View {
     let project: FileProject
-    @State private var selection: VirtualFile?
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(project.files) { file in GeneratedFileCard(file: file) }
+            GeneratedProjectActions(project: project)
+        }
+    }
+}
+
+/// Whole-project actions stay available without replacing the streaming cards.
+struct GeneratedProjectActions: View {
+    let project: FileProject
     @State private var preview = false
     @State private var archiveURL: URL?
     @State private var error: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            ForEach(project.files) { file in
-                HStack(spacing: 12) {
-                    Button { selection = file } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: "doc.text").font(.title2).foregroundStyle(Color.conduitAccent)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(file.path).font(.subheadline.weight(.semibold)).lineLimit(2)
-                                Text(ByteCountFormatter.string(fromByteCount: Int64(file.content.utf8.count), countStyle: .file))
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
-                            Spacer(minLength: 0)
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    Button { UIPasteboard.general.string = file.content; UIImpactFeedbackGenerator(style: .light).impactOccurred() } label: {
-                        Image(systemName: "doc.on.doc").frame(width: 36, height: 36)
-                    }.buttonStyle(.plain).accessibilityLabel("Copy \(file.path)")
-                }
-                .padding(14)
-                .background(.black.opacity(0.5), in: .rect(cornerRadius: 18))
-                .glassEffect(.regular.tint(.black.opacity(0.5)), in: .rect(cornerRadius: 18))
-            }
             HStack(spacing: 16) {
                 if let archiveURL { ShareLink(item: archiveURL) { Label("ZIP", systemImage: "square.and.arrow.up") } }
                 if project.entryPoint != nil { Button { preview = true } label: { Label("Preview", systemImage: "safari") } }
@@ -45,19 +33,6 @@ struct GeneratedFilesView: View {
         .task(id: project.id) {
             do { archiveURL = try project.export() }
             catch { self.error = error.localizedDescription }
-        }
-        .sheet(item: $selection) { file in
-            NavigationStack {
-                ScrollView([.horizontal, .vertical]) {
-                    Text(file.content).font(.system(size: 13, design: .monospaced)).textSelection(.enabled).padding(18)
-                }
-                .background(BackdropView())
-                .navigationTitle(file.path).navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) { Button("Done") { selection = nil } }
-                    ToolbarItem(placement: .topBarTrailing) { Button("Copy") { UIPasteboard.general.string = file.content } }
-                }
-            }
         }
         .sheet(isPresented: $preview) {
             NavigationStack {

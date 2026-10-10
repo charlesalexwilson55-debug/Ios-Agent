@@ -186,12 +186,13 @@ private struct AssistantText: View {
                     switch segment.kind {
                     case .prose(let prose):
                         ProseText(markdown: prose)
-                    case .code(let language, let code):
-                        if inferredProject == nil { CodeBlockView(language: language, code: code) }
+                    case .code(let block):
+                        GeneratedFileCard(file: VirtualFile(path: block.path, content: block.code),
+                                          isWriting: entry.isStreaming && !block.isClosed)
                     }
                 }
 
-            if let inferredProject { GeneratedFilesView(project: inferredProject) }
+            if let inferredProject { GeneratedProjectActions(project: inferredProject) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .task(id: entry.isStreaming) {
@@ -209,56 +210,6 @@ private struct AssistantText: View {
         }
     }
 
-}
-
-struct MessageSegment: Identifiable {
-    enum Kind {
-        case prose(String)
-        case code(language: String, code: String)
-    }
-
-    let id: Int
-    let kind: Kind
-
-    static func parse(_ text: String) -> [MessageSegment] {
-        var segments: [MessageSegment] = []
-        var prose: [Substring] = []
-        var code: [Substring] = []
-        var language: String?
-
-        func push(_ kind: Kind) {
-            segments.append(MessageSegment(id: segments.count, kind: kind))
-        }
-        func flushProse() {
-            let joined = prose.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-            if !joined.isEmpty { push(.prose(joined)) }
-            prose.removeAll()
-        }
-
-        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("```") {
-                if let open = language {
-                    push(.code(language: open, code: code.joined(separator: "\n")))
-                    code.removeAll()
-                    language = nil
-                } else {
-                    flushProse()
-                    language = String(trimmed.dropFirst(3)).trimmingCharacters(in: .whitespaces)
-                }
-            } else if language != nil {
-                code.append(line)
-            } else {
-                prose.append(line)
-            }
-        }
-
-        if let open = language {
-            push(.code(language: open, code: code.joined(separator: "\n")))
-        }
-        flushProse()
-        return segments
-    }
 }
 
 private struct ProseText: View {
@@ -282,56 +233,6 @@ private struct ProseText: View {
         let prose = ResponseTextCleaner.displayProse(markdown)
         return (try? AttributedString(markdown: prose, options: options))
             ?? AttributedString(prose)
-    }
-}
-
-private struct CodeBlockView: View {
-    let language: String
-    let code: String
-
-    @State private var copied = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text(language.isEmpty ? "Text" : language)
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.65))
-                Spacer()
-                Button {
-                    UIPasteboard.general.string = code
-                    copied = true
-                    Task {
-                        try? await Task.sleep(for: .seconds(1.5))
-                        copied = false
-                    }
-                } label: {
-                    Label(copied ? "Copied" : "Copy",
-                          systemImage: copied ? "checkmark" : "doc.on.doc")
-                        .font(.system(size: 12, weight: .medium))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(copied ? Color.green : Color.white.opacity(0.75))
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-
-            Divider().opacity(0.4)
-
-            // Horizontal scroll rather than wrapping: wrapped code loses its
-            // indentation, which in Python changes what the code means.
-            ScrollView(.horizontal, showsIndicators: false) {
-                Text(code)
-                    .font(.system(size: 13 * Appearance.textScale, design: .monospaced))
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: true, vertical: true)
-                    .padding(12)
-                    .foregroundStyle(.white.opacity(0.92))
-            }
-        }
-        .background(Color.black.opacity(0.7), in: .rect(cornerRadius: 12))
-        .glassEffect(.regular.tint(.black.opacity(0.65)), in: .rect(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.white.opacity(0.08)))
     }
 }
 
