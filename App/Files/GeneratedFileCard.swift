@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 struct GeneratedFileCard: View {
     let file: VirtualFile
     var isWriting = false
+    @Environment(\.pauseTranscriptFollowing) private var pauseFollowing
     @Environment(\.colorScheme) private var colorScheme
     @State private var expanded = false
     @State private var copied = false
@@ -53,6 +54,7 @@ struct GeneratedFileCard: View {
                 .accessibilityLabel("Download \(file.path)")
                 .disabled(file.content.isEmpty)
                 Button {
+                    pauseFollowing()
                     withAnimation(.easeInOut(duration: 0.18)) { expanded.toggle() }
                 } label: {
                     Image(systemName: "chevron.right")

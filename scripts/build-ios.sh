@@ -38,6 +38,7 @@ fi
 
 echo "==> Generating icons"
 python3 scripts/make-icons.py
+python3 scripts/download-minilm.py
 
 echo "==> Generating Xcode project"
 rm -rf "$APP_NAME.xcodeproj"

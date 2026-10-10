@@ -70,6 +70,13 @@ def main():
 
     with zipfile.ZipFile(path) as z:
         names = z.namelist()
+        check(z.testzip() is None, "IPA ZIP contains corrupt data")
+        check(any(n.startswith(APP + "MiniLM.mlmodelc/") for n in names), "Compiled offline MiniLM model is missing")
+        vocab = APP + "minilm-vocab.txt"
+        check(vocab in names, "MiniLM WordPiece vocabulary is missing")
+        if vocab in names:
+            data = z.read(vocab)
+            check(hashlib.sha1(f"blob {len(data)}\0".encode() + data).hexdigest() == "fb140275c155a9c7c5a3b3e0e77a9e839594a938", "MiniLM vocabulary hash mismatch")
 
         check(any(n.startswith(APP) for n in names),
               f"Expected an app bundle at {APP}")

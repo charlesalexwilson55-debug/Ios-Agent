@@ -105,6 +105,17 @@ enum ResearchPlanner {
         // "in" label. Keep the town as the identity anchor; the state remains
         // a search keyword, since captions commonly mention only the town.
         for detail in request.components(separatedBy: CharacterSet(charactersIn: ",;\n")).dropFirst() {
+            let compact = detail.trimmingCharacters(in: .whitespacesAndNewlines)
+            let words = ResearchPlan.words(compact)
+            let soft: Set<String> = ["male", "female", "man", "woman", "mid", "early", "late", "age", "aged", "years", "old", "teacher", "tutor", "educator", "doctor", "professor", "researcher", "engineer", "lawyer", "nurse"]
+            if !words.isEmpty, words.count <= 6,
+               !words.contains(where: { soft.contains($0) || contextTerms.contains($0) || $0.contains(where: \.isNumber) }),
+               capture(#"(?i)\s(NSW|VIC|QLD|SA|WA|TAS|ACT|NT|New South Wales|Victoria|Queensland)\s*$"#, in: compact) == nil,
+               !compact.contains(":"), !compact.contains("="),
+               !words.contains(where: { ["in", "from", "at", "who", "works", "working"].contains($0) }),
+               seen.insert(ResearchPlan.normalized(compact)).inserted {
+                result.append(compact)
+            }
             if let town = capture(#"(?i)^\s*(.+?)\s+(?:NSW|VIC|QLD|SA|WA|TAS|ACT|NT|New South Wales|Victoria|Queensland)\s*$"#, in: detail),
                ResearchPlan.words(town).count <= 6, seen.insert(ResearchPlan.normalized(town)).inserted {
                 result.append(town.trimmingCharacters(in: .whitespaces))

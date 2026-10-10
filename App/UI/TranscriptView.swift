@@ -1,6 +1,16 @@
 import SwiftUI
 import UIKit
 
+private struct PauseTranscriptFollowingKey: EnvironmentKey {
+    static let defaultValue: () -> Void = {}
+}
+extension EnvironmentValues {
+    var pauseTranscriptFollowing: () -> Void {
+        get { self[PauseTranscriptFollowingKey.self] }
+        set { self[PauseTranscriptFollowingKey.self] = newValue }
+    }
+}
+
 /// The conversation above the command bar.
 ///
 /// Tool activity is rendered as a narrow chip rather than a chat bubble. That
@@ -19,6 +29,7 @@ struct TranscriptView: View {
     var onSelectResearchCandidate: (String, UUID) -> Void = { _, _ in }
     var onRejectResearchCandidate: (String, UUID) -> Void = { _, _ in }
     @State private var scrollTask: Task<Void, Never>?
+    @State private var following = TranscriptFollow()
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -46,11 +57,28 @@ struct TranscriptView: View {
             // The glass bar floats over the top edge of the scroll content;
             // this keeps the system's edge-fade consistent with it.
             .scrollDismissesKeyboard(.interactively)
+            .onScrollPhaseChange { _, phase in
+                if phase == .interacting { pauseFollowing() }
+            }
+            .environment(\.pauseTranscriptFollowing, pauseFollowing)
+            .onChange(of: entries.last(where: { $0.kind == .user })?.id) { _, _ in
+                following.resume()
+                scroll(proxy)
+            }
             .onChange(of: entries.count) { _, _ in scroll(proxy) }
             // Follow visible height changes, not hidden reasoning mutations.
             .onChange(of: isWorking) { _, _ in scroll(proxy) }
             .onGeometryChange(for: CGSize.self, of: { $0.size }) { _ in scroll(proxy) }
             .onDisappear { scrollTask?.cancel() }
+            .overlay(alignment: .bottomTrailing) {
+                if !following.isFollowing {
+                    Button { following.resume(); scroll(proxy) } label: {
+                        Label("Latest", systemImage: "arrow.down")
+                            .font(.caption.weight(.semibold)).padding(10)
+                            .background(.regularMaterial, in: .capsule)
+                    }.padding(.trailing, 18).padding(.bottom, isWorking ? 56 : 12)
+                }
+            }
         }
         if isWorking {
             // Overlay the reserved tail space without resizing the viewport.
@@ -73,11 +101,12 @@ struct TranscriptView: View {
 
     private func scroll(_ proxy: ScrollViewProxy) {
         scrollTask?.cancel()
+        guard following.isFollowing else { return }
         scrollTask = Task { @MainActor in
             // Row heights update after the text mutation. Scroll after that
             // layout, without overlapping animations for every streamed token.
             try? await Task.sleep(for: .milliseconds(30))
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, following.isFollowing else { return }
             if isWorking {
                 var transaction = Transaction(animation: nil)
                 transaction.disablesAnimations = true
@@ -88,6 +117,11 @@ struct TranscriptView: View {
                 }
             }
         }
+    }
+
+    private func pauseFollowing() {
+        following.pause()
+        scrollTask?.cancel()
     }
 
     @ViewBuilder
@@ -239,11 +273,15 @@ private struct ProseText: View {
 private struct ReasoningView: View {
     let reasoning: String
     let isThinking: Bool
+    @Environment(\.pauseTranscriptFollowing) private var pauseFollowing
 
     @State private var expanded = false
 
     var body: some View {
-        DisclosureGroup(isExpanded: $expanded) {
+        DisclosureGroup(isExpanded: Binding(get: { expanded }, set: {
+            pauseFollowing()
+            expanded = $0
+        })) {
             ProseText(markdown: ResponseTextCleaner.clean(reasoning))
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)

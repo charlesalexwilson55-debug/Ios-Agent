@@ -89,55 +89,80 @@ struct ModelPickerSheet: View {
     }
 }
 
-/// One front-facing model per page. Native paging slides the next model in.
+/// Three visible slots keep the next swipe discoverable in either direction.
 private struct ModelSelectionCarousel: View {
     let models: [DiscoveredModel]
     let selectedID: String?
     let onSelect: (DiscoveredModel) -> Void
     let onDelete: (DiscoveredModel) -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var drag: CGFloat = 0
+    @State private var settling = false
     private var focus: Int { models.firstIndex { $0.id == selectedID } ?? 0 }
-    private var selection: Binding<String> {
-        Binding(get: { models.isEmpty ? "" : models[focus].id }, set: { id in
-            guard id != selectedID, let model = models.first(where: { $0.id == id }) else { return }
-            UISelectionFeedbackGenerator().selectionChanged()
-            onSelect(model)
-        })
-    }
+
     var body: some View {
         VStack(spacing: 16) {
-            TabView(selection: selection) {
-                ForEach(models) { model in
-                    VStack(spacing: 24) {
-                        ModelBrandIcon(model: model)
-                            .frame(width: 104, height: 104)
-                        Text(model.displayName)
-                            .font(.title3.weight(.semibold))
-                            .multilineTextAlignment(.center)
-                            .lineLimit(3)
-                            .frame(maxWidth: .infinity)
+            GeometryReader { geometry in
+                let stride = geometry.size.width / 2 + 12
+                ZStack {
+                    ForEach(models.isEmpty ? [] : models.count > 1 ? Array(-2...2) : [0], id: \.self) { slot in
+                        let model = models[CarouselIndex.wrapped(focus + slot, count: models.count)]
+                        VStack(spacing: 24) {
+                            ModelBrandIcon(model: model).frame(width: 104, height: 104)
+                            Text(model.displayName).font(.title3.weight(.semibold))
+                                .multilineTextAlignment(.center).lineLimit(3)
+                        }
+                        .frame(width: stride - 12, height: 230)
+                        .scaleEffect(slot == 0 ? 1 : 0.82)
+                        .opacity(slot == 0 ? 1 : 0.55)
+                        .offset(x: CGFloat(slot) * stride + drag)
+                        .accessibilityHidden(slot != 0)
+                        .contextMenu {
+                            Button("Delete model", systemImage: "trash", role: .destructive) { onDelete(model) }
+                        }
                     }
-                    .padding(.horizontal, 24)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .contentShape(.rect)
-                    .tag(model.id)
-                    .contextMenu {
-                        Button("Delete model", systemImage: "trash", role: .destructive) { onDelete(model) }
+                }.frame(width: geometry.size.width, height: 230).clipped()
+                .contentShape(.rect)
+                .gesture(DragGesture(minimumDistance: 18)
+                    .onChanged { value in
+                        guard models.count > 1, !settling,
+                              abs(value.translation.width) > abs(value.translation.height) else { return }
+                        drag = max(-stride, min(stride, value.translation.width))
                     }
-                }
-            }
-            .tabViewStyle(.page(indexDisplayMode: .never))
-            .frame(height: 230)
-            if models.count > 1 {
-                Text("Swipe to change model")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
+                    .onEnded { value in
+                        guard models.count > 1, !settling else { return }
+                        let horizontal = abs(value.translation.width) > abs(value.translation.height)
+                        let direction = horizontal && abs(value.predictedEndTranslation.width) > stride * 0.22
+                            ? (value.translation.width < 0 ? 1 : -1) : 0
+                        settle(direction, stride: stride)
+                    })
+            }.frame(height: 230)
+            if models.count > 1 { Text("Swipe to change model").font(.caption).foregroundStyle(.secondary) }
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Model carousel")
+        .accessibilityElement(children: .contain).accessibilityLabel("Model carousel")
         .accessibilityAdjustableAction { direction in
-            guard !models.isEmpty else { return }
-            let next = (focus + (direction == .increment ? 1 : models.count - 1)) % models.count
-            withAnimation(.easeInOut(duration: 0.24)) { selection.wrappedValue = models[next].id }
+            guard models.count > 1, !settling else { return }
+            select(direction == .increment ? 1 : -1)
+        }
+        .onChange(of: models.map(\.id)) { _, _ in drag = 0; settling = false }
+    }
+
+    private func select(_ direction: Int) {
+        guard !models.isEmpty else { return }
+        let model = models[CarouselIndex.wrapped(focus + direction, count: models.count)]
+        guard model.id != selectedID else { return }
+        UISelectionFeedbackGenerator().selectionChanged()
+        onSelect(model)
+    }
+
+    private func settle(_ direction: Int, stride: CGFloat) {
+        settling = true
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.20), completionCriteria: .logicallyComplete) {
+            drag = -CGFloat(direction) * stride
+        } completion: {
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { select(direction); drag = 0; settling = false }
         }
     }
 }

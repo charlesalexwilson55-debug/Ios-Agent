@@ -72,6 +72,9 @@ jobs:
           set -o pipefail
           mkdir -p artifacts build
           {
+            python3 scripts/download-minilm.py
+            xcrun swiftc -swift-version 5 -parse-as-library App/Agent/ResearchPlan.swift App/Agent/ResearchPlanner.swift App/Agent/SemanticSearch.swift scripts/semantic-tests.swift -o artifacts/semantic-tests
+            artifacts/semantic-tests App/Resources/SemanticSearch
             node scripts/page-reader-tests.js
             python3 scripts/model-evaluation-tests.py
             python3 scripts/pc-outbox-tests.py
@@ -92,11 +95,11 @@ jobs:
             artifacts/specialist-tests
             xcrun swiftc -swift-version 5 -parse-as-library App/Model/Edge0Packing.swift App/Model/Edge0Protocol.swift scripts/edge0-tests.swift -o artifacts/edge0-tests
             artifacts/edge0-tests
-            xcrun swiftc -swift-version 5 -parse-as-library App/Settings/UsageRank.swift App/UI/ConduitMotion.swift scripts/experience-tests.swift -o artifacts/experience-tests
+            xcrun swiftc -swift-version 5 -parse-as-library App/Settings/UsageRank.swift App/UI/ConduitMotion.swift App/UI/TranscriptFollow.swift scripts/experience-tests.swift -o artifacts/experience-tests
             artifacts/experience-tests
             xcrun swiftc -swift-version 5 -parse-as-library App/Knowledge/KnowledgeIndex.swift App/Knowledge/LibraryStore.swift App/Knowledge/Recall.swift scripts/library-test-support.swift scripts/library-tests.swift -o artifacts/library-tests
             artifacts/library-tests
-            sources=(App/Agent/ResearchPlan.swift App/Agent/ResearchPlanner.swift App/Agent/ResearchCandidate.swift
+            sources=(App/Agent/ResearchPlan.swift App/Agent/ResearchPlanner.swift App/Agent/SemanticSearch.swift App/Agent/ResearchCandidate.swift
               App/Agent/ResearchEngine.swift App/Agent/ResearchCoordinator.swift App/Agent/ResearchGraph.swift
               App/Agent/ResearchRun.swift App/Agent/ResearchStore.swift App/Agent/ResearchClarification.swift App/Agent/ResearchPresentation.swift App/Agent/Activity.swift
               App/Web/WebSearch.swift App/Web/BrowserSearch.swift scripts/research-test-support.swift)

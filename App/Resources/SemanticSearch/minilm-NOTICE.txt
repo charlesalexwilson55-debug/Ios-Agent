@@ -1,0 +1,6 @@
+Offline semantic search uses sentence-transformers/all-MiniLM-L6-v2.
+Original model: https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2
+License: Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0).
+Core ML conversion: https://huggingface.co/haihengh/all-MiniLM-L6-v2-coreml
+Pinned conversion revision: c683f20435a63c9884472f5de9f56865e865fd99.
+MiniLM ranks literal public source passages. Similarity is not identity evidence.

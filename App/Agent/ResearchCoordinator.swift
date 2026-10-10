@@ -176,6 +176,7 @@ import Foundation
             }
             if let limitation = response.limitation { state.limitations.append(limitation) }
             updateSearch(record.id, status: "done", provider: response.provider.rawValue, urls: response.results.map(\.url))
+            let firstNewSource = state.pendingSources.count
             for result in response.results {
                 if let plan = state.plan, ResearchSourcePolicy.isMinorProfile(result.rawContent ?? result.summary, plan: plan) {
                     state.limitations.append("A profile identified the subject as a minor and was excluded.")
@@ -190,6 +191,23 @@ import Foundation
                 state.pendingSources.append(.init(title: ResearchSourcePolicy.publicText(result.title), url: url,
                     summary: ResearchSourcePolicy.publicText(result.summary), published: result.published,
                     text: result.rawContent.flatMap { ResearchSourcePolicy.rejectReason($0) == nil ? ResearchSourcePolicy.publicText($0) : nil }, provider: response.provider.rawValue))
+            }
+            if let plan = state.plan, state.pendingSources.count > firstNewSource + 1 {
+                let added = Array(state.pendingSources.dropFirst(firstNewSource))
+                do {
+                    let order = try await SemanticSearch.shared.rankedIndices(query: state.request,
+                        passages: added.map { $0.title + "\n" + $0.summary })
+                    // Explicit supplied clues remain stronger than semantic similarity.
+                    let ranked = order.sorted {
+                        let first = plan.matchedClues(in: added[$0].title + " " + added[$0].summary).count
+                        let second = plan.matchedClues(in: added[$1].title + " " + added[$1].summary).count
+                        return first == second ? order.firstIndex(of: $0)! < order.firstIndex(of: $1)! : first > second
+                    }
+                    state.pendingSources.replaceSubrange(firstNewSource..., with: ranked.map { added[$0] })
+                } catch {
+                    if Task.isCancelled || error is CancellationError { throw CancellationError() }
+                    // The original provider order remains usable without embeddings.
+                }
             }
             activity.updateItem(item, subtitle: "\(response.results.count) results · \(response.provider.rawValue)", status: .done)
             return false
@@ -284,7 +302,15 @@ import Foundation
                         try checkpoint()
                         continue
                     }
-                    page.text = plan.excerpt(text, limit: 7000)
+                    do {
+                        page.text = try await SemanticSearch.shared.excerpt(text, plan: plan)
+                    } catch is CancellationError {
+                        throw CancellationError()
+                    } catch {
+                        page.text = plan.excerpt(text, limit: 7000)
+                        let limitation = "Offline semantic ranking was unavailable; source passages were selected by literal name and clues."
+                        if !state.limitations.contains(limitation) { state.limitations.append(limitation) }
+                    }
                     // Persist read content before generation, allowing a resume without re-fetching.
                     page.text = ResearchSourcePolicy.publicText(page.text ?? "")
                     state.pendingSources[0] = page

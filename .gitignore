@@ -29,6 +29,8 @@ training/mlx/
 # Models (never commit multi-GB weights)
 models/
 *.npz
+App/Resources/SemanticSearch/MiniLM.mlpackage/
+App/Resources/SemanticSearch/minilm-vocab.txt
 
 # Secrets
 *.p12

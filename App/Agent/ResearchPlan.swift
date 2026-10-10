@@ -21,7 +21,7 @@ struct ResearchPlan: Codable, Sendable {
     }
 
     private static let medical = ["doctor", "physician", "surgeon", "gp", "dentist", "cardiologist", "psychiatrist"]
-    private static let roles = Set(medical + ["dr", "professor", "researcher", "scientist", "lawyer", "solicitor", "architect", "engineer", "software", "teacher", "author", "nurse", "a", "an", "the"])
+    private static let roles = Set(medical + ["dr", "professor", "researcher", "scientist", "lawyer", "solicitor", "architect", "engineer", "software", "teacher", "tutor", "educator", "author", "nurse", "a", "an", "the"])
     private var isMedical: Bool { Self.words(request).contains { Self.medical.contains($0) } }
     var wantsAdditionalInformation: Bool {
         ["more", "additional", "extra", "everything", "background", "history"].contains { Self.words(request).contains($0) }
@@ -44,6 +44,11 @@ struct ResearchPlan: Codable, Sendable {
         let name = "\"\(subject)\""
         let context = keywords.filter { !Self.contains($0, in: subject) }.joined(separator: " ")
         var result = ["\(name) \(context)", "\(name) \(clues.joined(separator: " "))", name]
+        if Self.words(request).contains(where: { ["teacher", "tutor", "educator"].contains($0) }) {
+            let profession = Self.words(request).filter { ["teacher", "tutor", "educator"].contains($0) }.joined(separator: " OR ")
+            result.insert("\(name) (\(profession)) professional profile", at: 1)
+            for clue in clues { result.insert("\(name) (\(profession)) \(clue)", at: min(3, result.count)) }
+        }
         if !sports.isEmpty {
             let sport = sports.joined(separator: " ")
             let location = clues.joined(separator: " ")

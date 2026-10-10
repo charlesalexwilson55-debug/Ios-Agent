@@ -2,6 +2,15 @@ import Foundation
 
 @main struct ExperienceTests {
     static func main() {
+        precondition(CarouselIndex.wrapped(-1, count: 3) == 2)
+        precondition(CarouselIndex.wrapped(3, count: 3) == 0)
+        precondition(CarouselIndex.wrapped(-8, count: 1) == 0)
+        precondition(CarouselIndex.wrapped(1, count: 0) == 0)
+        var following = TranscriptFollow()
+        following.pause()
+        for _ in 0..<100 { precondition(!following.isFollowing) }
+        following.resume()
+        precondition(following.isFollowing)
         precondition(UsageRank.level(replies: 0) == 0)
         precondition(UsageRank.level(replies: 5) == 1)
         precondition(UsageRank.level(replies: 100_000) == 14)
